@@ -1,0 +1,9 @@
+[server]
+host = "0.0.0.0"
+port = 8000
+
+[upstream]
+base_url = "https://api.openai.com/v1"
+# Prefer environment variable UPSTREAM_API_KEY in real usage.
+api_key = "sk-your-openai-key-here"
+

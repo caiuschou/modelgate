@@ -1,0 +1,29 @@
+[#] Place into /etc/systemd/system/modelgate.service (or your SERVICE_NAME)
+[Unit]
+Description=modelgate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=modelgate
+Group=modelgate
+WorkingDirectory=/opt/modelgate/current
+
+# Prefer env file for secrets like UPSTREAM_API_KEY
+EnvironmentFile=-/etc/modelgate/modelgate.env
+
+ExecStart=/opt/modelgate/current/modelgate
+Restart=always
+RestartSec=2
+
+# Hardening (tweak as needed)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/modelgate
+
+[Install]
+WantedBy=multi-user.target
+
