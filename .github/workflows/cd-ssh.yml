@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp "target/release/modelgate" "dist/modelgate"
-          cp "config.toml" "dist/config.toml"
+          cp "config.example.toml" "dist/config.toml"
           tar -C dist -czf "modelgate-${GITHUB_SHA}.tar.gz" .
 
       - name: Upload package to server (SCP)

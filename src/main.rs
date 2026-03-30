@@ -2,13 +2,12 @@ mod config;
 
 use actix_cors::Cors;
 use actix_web::{
-    dev::{ServiceRequest, ServiceResponse},
-    dev::Service,
     body::{BoxBody, EitherBody},
+    dev::Service,
+    dev::{ServiceRequest, ServiceResponse},
     http::StatusCode as ActixStatusCode,
     web, App, HttpResponse, HttpServer,
 };
-use bytes::Bytes;
 use futures_util::StreamExt;
 use serde_json::Value;
 use tracing::{error, info};
@@ -62,7 +61,10 @@ async fn chat_completions(state: web::Data<AppState>, body: web::Bytes) -> HttpR
     let mut req_builder = state
         .http
         .post(upstream_url.clone())
-        .header("Authorization", format!("Bearer {}", state.cfg.upstream.api_key))
+        .header(
+            "Authorization",
+            format!("Bearer {}", state.cfg.upstream.api_key),
+        )
         .header("Content-Type", "application/json")
         .body(body.clone());
 
@@ -95,16 +97,15 @@ async fn chat_completions(state: web::Data<AppState>, body: web::Bytes) -> HttpR
     };
 
     let status = upstream_resp.status();
-    let status = ActixStatusCode::from_u16(status.as_u16())
-        .unwrap_or(ActixStatusCode::BAD_GATEWAY);
+    let status = ActixStatusCode::from_u16(status.as_u16()).unwrap_or(ActixStatusCode::BAD_GATEWAY);
 
     if is_stream {
-        let stream = upstream_resp
-            .bytes_stream()
-            .map(|chunk| chunk.map(Bytes::from).map_err(|e| {
+        let stream = upstream_resp.bytes_stream().map(|chunk| {
+            chunk.map_err(|e| {
                 error!(error = %e, "upstream stream read failed");
                 actix_web::error::ErrorBadGateway("upstream stream read failed")
-            }));
+            })
+        });
 
         HttpResponse::build(status)
             .content_type("text/event-stream")
@@ -214,4 +215,3 @@ async fn main() -> std::io::Result<()> {
     .run()
     .await
 }
-

@@ -41,4 +41,3 @@ pub fn load_config() -> Result<AppConfig, config::ConfigError> {
     }
     Ok(cfg)
 }
-
