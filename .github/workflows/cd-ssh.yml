@@ -57,23 +57,23 @@ jobs:
             SHA="${{ github.sha }}"
             RELEASE_DIR="${DEPLOY_ROOT}/releases/${SHA}"
 
-            sudo mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared"
-            sudo mkdir -p "${RELEASE_DIR}"
-            sudo tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
+            mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared"
+            mkdir -p "${RELEASE_DIR}"
+            tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
 
             # Ensure executable bit
-            sudo chmod +x "${RELEASE_DIR}/modelgate"
+            chmod +x "${RELEASE_DIR}/modelgate"
 
             # Point "current" to this release
-            sudo ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
+            ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
 
             # (Optional) keep a stable config path for systemd
-            sudo ln -sfn "${DEPLOY_ROOT}/current/config.toml" "${DEPLOY_ROOT}/shared/config.toml"
+            ln -sfn "${DEPLOY_ROOT}/current/config.toml" "${DEPLOY_ROOT}/shared/config.toml"
 
             # Restart service
-            sudo systemctl daemon-reload || true
-            sudo systemctl restart "${SERVICE_NAME}"
-            sudo systemctl --no-pager --full status "${SERVICE_NAME}" || true
+            systemctl daemon-reload || true
+            systemctl restart "${SERVICE_NAME}"
+            systemctl --no-pager --full status "${SERVICE_NAME}" || true
 
             # Basic health check (adjust port if needed)
             curl -fsS "http://127.0.0.1:8000/healthz" >/dev/null
