@@ -1,4 +1,4 @@
-[#] Place into /etc/systemd/system/modelgate.service (or your SERVICE_NAME)
+# Place into /etc/systemd/system/modelgate.service (or your SERVICE_NAME)
 [Unit]
 Description=modelgate
 After=network-online.target

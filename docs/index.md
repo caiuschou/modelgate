@@ -25,6 +25,7 @@
 
 - **[API 文档](development/api.md)** - API 接口说明（待完善）
 - **[部署文档](development/deployment.md)** - 部署指南（待完善）
+- **[Rust 代码架构](architecture/rust-code-architecture.md)** - Rust 项目结构与组件设计
 - **[更新日志](development/changelog.md)** - 版本更新记录（待完善）
 
 ---

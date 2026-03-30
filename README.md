@@ -127,6 +127,7 @@ curl http://localhost:8080/v1/chat/completions \
 - [应用场景](docs/product/scenarios.md) — 企业内部网关、API 分发等场景
 - [设计文档](docs/design/interaction/overview.md) — 交互设计规范、组件库
 - [API 文档](docs/development/api.md) — API 接口说明
+- [Rust 代码架构](docs/architecture/rust-code-architecture.md) — Rust 项目结构与组件设计
 
 ---
 

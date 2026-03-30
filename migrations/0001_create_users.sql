@@ -1,0 +1,6 @@
+CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    api_key TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+);

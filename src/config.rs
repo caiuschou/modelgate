@@ -4,6 +4,7 @@ use serde::Deserialize;
 pub struct AppConfig {
     pub server: ServerConfig,
     pub upstream: UpstreamConfig,
+    pub sqlite: SqliteConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -18,12 +19,18 @@ pub struct UpstreamConfig {
     pub api_key: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct SqliteConfig {
+    pub path: String,
+}
+
 pub fn load_config() -> Result<AppConfig, config::ConfigError> {
     let mut builder = config::Config::builder()
         .set_default("server.host", "0.0.0.0")?
         .set_default("server.port", 8000)?
         .set_default("upstream.base_url", "https://api.openai.com/v1")?
         .set_default("upstream.api_key", "")?
+        .set_default("sqlite.path", "modelgate.db")?
         .add_source(config::File::with_name("config").required(false))
         .add_source(config::Environment::default().separator("__"));
 
