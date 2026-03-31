@@ -67,8 +67,10 @@ jobs:
             # Point "current" to this release
             ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
 
-            # (Optional) keep a stable config path for systemd
-            ln -sfn "${DEPLOY_ROOT}/current/config.toml" "${DEPLOY_ROOT}/shared/config.toml"
+            # Keep existing config if present, otherwise use the example
+            if [ ! -f "${DEPLOY_ROOT}/shared/config.toml" ]; then
+                ln -sfn "${DEPLOY_ROOT}/current/config.toml" "${DEPLOY_ROOT}/shared/config.toml"
+            fi
 
             # Restart service
             systemctl daemon-reload || true
