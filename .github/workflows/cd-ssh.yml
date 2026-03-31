@@ -75,6 +75,8 @@ jobs:
             # Restart service
             systemctl daemon-reload || true
             systemctl restart "${SERVICE_NAME}"
+            sleep 2
+            journalctl -u "${SERVICE_NAME}" -n 20 --no-pager || true
             systemctl --no-pager --full status "${SERVICE_NAME}" || true
 
             # Basic health check (adjust port if needed)
