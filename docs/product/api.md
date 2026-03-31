@@ -71,7 +71,25 @@ curl https://api.modelgate.com/v1/chat/completions \
   "usage": {
     "prompt_tokens": 10,
     "completion_tokens": 9,
-    "total_tokens": 19
+    "total_tokens": 19,
+    "cost": 0.0015,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.0015,
+      "upstream_inference_prompt_cost": 0.0005,
+      "upstream_inference_completions_cost": 0.001
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 0,
+      "image_tokens": 0,
+      "audio_tokens": 0
+    },
+    "is_byok": false
   }
 }
 ```
