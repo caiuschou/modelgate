@@ -84,10 +84,26 @@ mod tests {
     #[actix_web::test]
     async fn all_error_types_are_mapped() {
         let cases = vec![
-            (ApiError::Unauthorized("u".into()), "authentication_error", StatusCode::UNAUTHORIZED),
-            (ApiError::Conflict("c".into()), "conflict_error", StatusCode::CONFLICT),
-            (ApiError::NotFound("n".into()), "not_found_error", StatusCode::NOT_FOUND),
-            (ApiError::InternalError("i".into()), "internal_error", StatusCode::INTERNAL_SERVER_ERROR),
+            (
+                ApiError::Unauthorized("u".into()),
+                "authentication_error",
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                ApiError::Conflict("c".into()),
+                "conflict_error",
+                StatusCode::CONFLICT,
+            ),
+            (
+                ApiError::NotFound("n".into()),
+                "not_found_error",
+                StatusCode::NOT_FOUND,
+            ),
+            (
+                ApiError::InternalError("i".into()),
+                "internal_error",
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
         ];
 
         for (err, err_type, status) in cases {

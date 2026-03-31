@@ -4,12 +4,16 @@ pub mod db;
 pub mod errors;
 pub mod handlers;
 pub mod routes;
-pub mod upstream;
 #[cfg(test)]
 pub(crate) mod test_utils;
+pub mod upstream;
 
 use actix_cors::Cors;
-use actix_web::{body::{BoxBody, EitherBody}, dev::{Service, ServiceRequest, ServiceResponse}, web, App, HttpServer};
+use actix_web::{
+    body::{BoxBody, EitherBody},
+    dev::{Service, ServiceRequest, ServiceResponse},
+    web, App, HttpServer,
+};
 use rusqlite::Connection;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -41,8 +45,6 @@ pub fn build_state(cfg: AppConfig) -> AppState {
         db: Arc::new(Mutex::new(db)),
     }
 }
-
-
 
 pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::io::Result<()> {
     let cfg = config::load_config_from_dir(dir).unwrap_or_else(|e| {
@@ -119,13 +121,17 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
             .app_data(web::Data::new(state))
             .configure(routes::configure_routes)
     })
-        .bind((host.as_str(), port))?
-        .run()
-        .await
+    .bind((host.as_str(), port))?
+    .run()
+    .await
 }
 
 pub async fn app_main(test_mode: bool) -> std::io::Result<()> {
-    app_main_with_dir(std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf()), test_mode).await
+    app_main_with_dir(
+        std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf()),
+        test_mode,
+    )
+    .await
 }
 
 #[actix_web::main]
@@ -136,9 +142,9 @@ async fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{http::StatusCode, test};
     use crate::config::{AppConfig, ServerConfig, SqliteConfig, UpstreamConfig};
     use crate::test_utils::with_env_lock_async;
+    use actix_web::{http::StatusCode, test};
     use rusqlite::Connection;
     use std::env;
 
@@ -233,7 +239,8 @@ mod tests {
                 })
                 .app_data(web::Data::new(state))
                 .configure(routes::configure_routes)
-        }).await;
+        })
+        .await;
         let req = test::TestRequest::get().uri("/healthz").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);

@@ -5,16 +5,22 @@ use crate::handlers;
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(handlers::health))
         .route("/users", web::post().to(handlers::create_user))
-        .route("/users/{username}/keys", web::post().to(handlers::create_user_api_key))
-        .route("/v1/chat/completions", web::post().to(handlers::chat_completions))
+        .route(
+            "/users/{username}/keys",
+            web::post().to(handlers::create_user_api_key),
+        )
+        .route(
+            "/v1/chat/completions",
+            web::post().to(handlers::chat_completions),
+        )
         .default_service(web::route().to(handlers::not_found));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{test, App};
     use actix_web::http::StatusCode;
+    use actix_web::{test, App};
 
     #[actix_web::test]
     async fn health_route_is_registered() {

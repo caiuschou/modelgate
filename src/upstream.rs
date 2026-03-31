@@ -30,22 +30,34 @@ mod tests {
 
     #[test]
     fn build_chat_completions_url_returns_existing_chat_url() {
-        assert_eq!(build_chat_completions_url("https://api.example.com/v1/chat/completions"), "https://api.example.com/v1/chat/completions");
+        assert_eq!(
+            build_chat_completions_url("https://api.example.com/v1/chat/completions"),
+            "https://api.example.com/v1/chat/completions"
+        );
     }
 
     #[test]
     fn build_chat_completions_url_appends_v1_chat_for_v1_base() {
-        assert_eq!(build_chat_completions_url("https://api.example.com/v1"), "https://api.example.com/v1/chat/completions");
+        assert_eq!(
+            build_chat_completions_url("https://api.example.com/v1"),
+            "https://api.example.com/v1/chat/completions"
+        );
     }
 
     #[test]
     fn build_chat_completions_url_appends_v1_chat_for_api_base() {
-        assert_eq!(build_chat_completions_url("https://api.example.com/api"), "https://api.example.com/api/v1/chat/completions");
+        assert_eq!(
+            build_chat_completions_url("https://api.example.com/api"),
+            "https://api.example.com/api/v1/chat/completions"
+        );
     }
 
     #[test]
     fn build_chat_completions_url_defaults_to_v1_chat() {
-        assert_eq!(build_chat_completions_url("https://api.example.com"), "https://api.example.com/v1/chat/completions");
+        assert_eq!(
+            build_chat_completions_url("https://api.example.com"),
+            "https://api.example.com/v1/chat/completions"
+        );
     }
 
     #[test]

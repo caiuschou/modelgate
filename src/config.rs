@@ -26,7 +26,8 @@ pub struct SqliteConfig {
 
 use std::path::Path;
 
-fn config_builder() -> Result<config::ConfigBuilder<config::builder::DefaultState>, config::ConfigError> {
+fn config_builder(
+) -> Result<config::ConfigBuilder<config::builder::DefaultState>, config::ConfigError> {
     config::Config::builder()
         .set_default("server.host", "0.0.0.0")?
         .set_default("server.port", 8000)?
@@ -115,7 +116,11 @@ mod tests {
             create_dir_all(&dir).expect("create config dir");
 
             let mut file = File::create(dir.join("config.toml")).expect("create config file");
-            writeln!(file, "[upstream]\napi_key = \"file-key\"\n[server]\nhost = \"127.0.0.1\"\nport = 9000\n").expect("write config file");
+            writeln!(
+                file,
+                "[upstream]\napi_key = \"file-key\"\n[server]\nhost = \"127.0.0.1\"\nport = 9000\n"
+            )
+            .expect("write config file");
 
             let cfg = load_config_from_dir(&dir).expect("load config from file");
             assert_eq!(cfg.upstream.api_key, "file-key");

@@ -57,12 +57,10 @@ pub async fn create_user(
         .as_secs();
 
     let mut conn = db::lock_db(&state.db);
-    let tx = conn
-        .transaction()
-        .map_err(|err| {
-            error!(error = %err, "failed to begin transaction");
-            ApiError::InternalError("Failed to create user".into())
-        })?;
+    let tx = conn.transaction().map_err(|err| {
+        error!(error = %err, "failed to begin transaction");
+        ApiError::InternalError("Failed to create user".into())
+    })?;
 
     if let Err(err) = tx.execute(
         "INSERT INTO users (username, created_at) VALUES (?1, ?2)",
@@ -195,13 +193,15 @@ pub async fn chat_completions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_utils::with_env_lock_async;
+    use crate::{config, AppConfig, AppState};
     use actix_cors::Cors;
     use actix_web::body::{to_bytes, BoxBody, EitherBody};
     use actix_web::dev::{Service, ServiceRequest, ServiceResponse};
     use actix_web::http::{header, StatusCode as ActixStatusCode};
-    use actix_web::{test::TestRequest, web, App, HttpRequest, HttpResponse, HttpServer, ResponseError};
-    use crate::{config, AppConfig, AppState};
-    use crate::test_utils::with_env_lock_async;
+    use actix_web::{
+        test::TestRequest, web, App, HttpRequest, HttpResponse, HttpServer, ResponseError,
+    };
     use reqwest::StatusCode as ReqwestStatusCode;
     use rusqlite::Connection;
     use serde_json::json;
@@ -404,10 +404,15 @@ mod tests {
             .uri("/v1/chat/completions")
             .insert_header((header::AUTHORIZATION, "Bearer valid-key"))
             .to_http_request();
-        let body = web::Bytes::from_static(b"{\"model\": \"gpt-4\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]} ");
+        let body = web::Bytes::from_static(
+            b"{\"model\": \"gpt-4\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]} ",
+        );
 
         let err = chat_completions(req, state, body).await.unwrap_err();
-        assert_eq!(err.error_response().status(), ActixStatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            err.error_response().status(),
+            ActixStatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[tokio::test]
@@ -417,9 +422,7 @@ mod tests {
         let upstream_server = HttpServer::new(|| {
             App::new().route(
                 "/v1/chat/completions",
-                web::post().to(|| async {
-                    HttpResponse::Ok().body("streaming response")
-                }),
+                web::post().to(|| async { HttpResponse::Ok().body("streaming response") }),
             )
         })
         .listen(upstream_listener)
@@ -610,7 +613,10 @@ mod tests {
                 .app_data(web::Data::new(app_state.clone()))
                 .route("/healthz", web::get().to(health))
                 .route("/users", web::post().to(create_user))
-                .route("/users/{username}/keys", web::post().to(create_user_api_key))
+                .route(
+                    "/users/{username}/keys",
+                    web::post().to(create_user_api_key),
+                )
                 .route("/v1/chat/completions", web::post().to(chat_completions))
                 .default_service(web::route().to(not_found))
         })
