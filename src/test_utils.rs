@@ -16,9 +16,11 @@ pub(crate) fn with_env_lock<F: FnOnce()>(f: F) {
 pub(crate) async fn with_env_lock_async<F, Fut>(f: F) -> Fut::Output
 where
     F: FnOnce() -> Fut,
-    Fut: Future,
+    Fut: Future<Output = ()>,
 {
     let lock = ENV_LOCK.get_or_init(|| Mutex::new(()));
-    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-    f().await
+    let guard = lock.lock().unwrap_or_else(|e| e.into_inner());
+    let future = f();
+    drop(guard);
+    future.await
 }

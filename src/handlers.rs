@@ -1,7 +1,7 @@
 use actix_web::{http::StatusCode as ActixStatusCode, web, HttpRequest, HttpResponse};
 use futures_util::StreamExt;
 use reqwest::header as reqwest_header;
-use rusqlite::{params, ErrorCode};
+use rusqlite::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -135,9 +135,11 @@ pub async fn chat_completions(
     let api_key = auth::extract_bearer_token(&req)
         .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
 
-    let db = db::lock_db(&state.db);
-    if !auth::validate_api_key(&db, api_key) {
-        return Err(ApiError::Unauthorized("Invalid or missing API key".into()));
+    {
+        let db = db::lock_db(&state.db);
+        if !auth::validate_api_key(&db, api_key) {
+            return Err(ApiError::Unauthorized("Invalid or missing API key".into()));
+        }
     }
 
     let upstream_url = upstream::build_chat_completions_url(&state.cfg.upstream.base_url);
@@ -203,7 +205,7 @@ mod tests {
         test::TestRequest, web, App, HttpRequest, HttpResponse, HttpServer, ResponseError,
     };
     use reqwest::StatusCode as ReqwestStatusCode;
-    use rusqlite::Connection;
+    use rusqlite::{params, Connection};
     use serde_json::json;
     use std::env;
     use std::net::TcpListener;
