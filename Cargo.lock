@@ -1217,6 +1217,7 @@ dependencies = [
  "bytes",
  "config",
  "futures-util",
+ "once_cell",
  "rand 0.8.5",
  "reqwest",
  "rusqlite",
