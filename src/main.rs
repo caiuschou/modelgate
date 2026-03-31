@@ -5,26 +5,25 @@ use actix_web::{
     body::{BoxBody, EitherBody},
     dev::Service,
     dev::{ServiceRequest, ServiceResponse},
-    http::StatusCode as ActixStatusCode,
+    http::{header, StatusCode as ActixStatusCode},
     web, App, HttpRequest, HttpResponse, HttpServer,
 };
 use futures_util::StreamExt;
+use reqwest::header as reqwest_header;
 use rusqlite::{params, Connection, ErrorCode};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use serde_json::{json, Value};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{error, info};
 use uuid::Uuid;
 
 use crate::config::AppConfig;
 
-const MIGRATIONS: [(&str, &str); 1] = [
-    (
-        "0001_create_users.sql",
-        include_str!("../migrations/0001_create_users.sql"),
-    ),
-];
+const MIGRATIONS: [(&str, &str); 1] = [(
+    "0001_create_users.sql",
+    include_str!("../migrations/0001_create_users.sql"),
+)];
 
 fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
@@ -62,6 +61,56 @@ fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn api_error(status: ActixStatusCode, error_type: &str, message: &str) -> HttpResponse {
+    HttpResponse::build(status).json(json!({
+        "error": {
+            "message": message,
+            "type": error_type,
+        }
+    }))
+}
+
+fn bad_request(message: &str) -> HttpResponse {
+    api_error(ActixStatusCode::BAD_REQUEST, "validation_error", message)
+}
+
+fn unauthorized(message: &str) -> HttpResponse {
+    api_error(
+        ActixStatusCode::UNAUTHORIZED,
+        "authentication_error",
+        message,
+    )
+}
+
+fn conflict(message: &str) -> HttpResponse {
+    api_error(ActixStatusCode::CONFLICT, "conflict_error", message)
+}
+
+fn internal_error(message: &str) -> HttpResponse {
+    api_error(
+        ActixStatusCode::INTERNAL_SERVER_ERROR,
+        "internal_error",
+        message,
+    )
+}
+
+fn not_found_error(message: &str) -> HttpResponse {
+    api_error(ActixStatusCode::NOT_FOUND, "not_found_error", message)
+}
+
+fn extract_bearer_token(req: &HttpRequest) -> Option<&str> {
+    req.headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn lock_db(db: &DbConn) -> MutexGuard<'_, Connection> {
+    db.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 pub type DbConn = Arc<Mutex<Connection>>;
 
 #[derive(Debug, Clone)]
@@ -81,6 +130,27 @@ struct CreateUserResponse {
     username: String,
     api_key: String,
     created_at: u64,
+}
+
+fn create_api_key() -> String {
+    Uuid::new_v4().to_string()
+}
+
+fn validate_api_key(conn: &Connection, api_key: &str) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM api_keys WHERE api_key = ?1 AND revoked = 0",
+        params![api_key],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
+fn find_user_id(conn: &Connection, username: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT id FROM users WHERE username = ?1",
+        params![username],
+        |row| row.get(0),
+    )
 }
 
 async fn health() -> HttpResponse {
@@ -115,36 +185,22 @@ fn build_chat_completions_url(base_url: &str) -> String {
         return format!("{base}/v1/chat/completions");
     }
 
-    format!("{base}/chat/completions")
+    format!("{base}/v1/chat/completions")
 }
 
-async fn chat_completions(req: HttpRequest, state: web::Data<AppState>, body: web::Bytes) -> HttpResponse {
-    let auth_header = req
-        .headers()
-        .get("Authorization")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+async fn chat_completions(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    body: web::Bytes,
+) -> HttpResponse {
+    let api_key = match extract_bearer_token(&req) {
+        Some(key) => key,
+        None => return unauthorized("Invalid or missing API key"),
+    };
 
-    let valid_api_key = auth_header
-        .strip_prefix("Bearer ")
-        .map(str::trim)
-        .filter(|key| {
-            let db = state.db.lock().expect("db lock");
-            db.query_row(
-                "SELECT 1 FROM users WHERE api_key = ?1",
-                params![*key],
-                |_| Ok(()),
-            )
-            .is_ok()
-        });
-
-    if valid_api_key.is_none() {
-        return HttpResponse::Unauthorized().json(serde_json::json!({
-            "error": {
-                "message": "Invalid or missing API key",
-                "type": "authentication_error"
-            }
-        }));
+    let db = lock_db(&state.db);
+    if !validate_api_key(&db, api_key) {
+        return unauthorized("Invalid or missing API key");
     }
 
     let upstream_url = build_chat_completions_url(&state.cfg.upstream.base_url);
@@ -153,10 +209,10 @@ async fn chat_completions(req: HttpRequest, state: web::Data<AppState>, body: we
         .http
         .post(upstream_url.clone())
         .header(
-            "Authorization",
+            reqwest_header::AUTHORIZATION,
             format!("Bearer {}", state.cfg.upstream.api_key),
         )
-        .header("Content-Type", "application/json")
+        .header(reqwest_header::CONTENT_TYPE, "application/json")
         .body(body.clone());
 
     // Detect stream=true to keep SSE content-type.
@@ -178,12 +234,7 @@ async fn chat_completions(req: HttpRequest, state: web::Data<AppState>, body: we
         Ok(r) => r,
         Err(e) => {
             error!(error = %e, "upstream request failed");
-            return HttpResponse::BadGateway().json(serde_json::json!({
-                "error": {
-                    "message": "Upstream request failed",
-                    "type": "upstream_error"
-                }
-            }));
+            return internal_error("Upstream request failed");
         }
     };
 
@@ -208,12 +259,7 @@ async fn chat_completions(req: HttpRequest, state: web::Data<AppState>, body: we
                 .body(b),
             Err(e) => {
                 error!(error = %e, "upstream response read failed");
-                HttpResponse::BadGateway().json(serde_json::json!({
-                    "error": {
-                        "message": "Failed to read upstream response",
-                        "type": "upstream_error"
-                    }
-                }))
+                internal_error("Failed to read upstream response")
             }
         }
     }
@@ -308,6 +354,10 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(state.clone()))
             .route("/healthz", web::get().to(health))
             .route("/users", web::post().to(create_user))
+            .route(
+                "/users/{username}/keys",
+                web::post().to(create_user_api_key),
+            )
             .route("/v1/chat/completions", web::post().to(chat_completions))
             .default_service(web::route().to(not_found))
     })
@@ -316,15 +366,13 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-async fn create_user(state: web::Data<AppState>, req: web::Json<CreateUserRequest>) -> HttpResponse {
+async fn create_user(
+    state: web::Data<AppState>,
+    req: web::Json<CreateUserRequest>,
+) -> HttpResponse {
     let username = req.username.trim();
     if username.is_empty() {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": {
-                "message": "username is required",
-                "type": "validation_error"
-            }
-        }));
+        return bad_request("username is required");
     }
 
     let api_key = Uuid::new_v4().to_string();
@@ -333,31 +381,50 @@ async fn create_user(state: web::Data<AppState>, req: web::Json<CreateUserReques
         .unwrap_or_default()
         .as_secs();
 
-    let conn = state.db.lock().expect("db lock");
-    let result = conn.execute(
-        "INSERT INTO users (username, api_key, created_at) VALUES (?1, ?2, ?3)",
-        params![username, api_key, created_at],
+    let mut conn = lock_db(&state.db);
+    let tx = match conn.transaction() {
+        Ok(tx) => tx,
+        Err(err) => {
+            error!(error = %err, "failed to begin transaction");
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": {
+                    "message": "Failed to create user",
+                    "type": "internal_error"
+                }
+            }));
+        }
+    };
+
+    let result = tx.execute(
+        "INSERT INTO users (username, created_at) VALUES (?1, ?2)",
+        params![username, created_at],
     );
 
     if let Err(err) = result {
         if let rusqlite::Error::SqliteFailure(err_code, _) = &err {
             if err_code.code == ErrorCode::ConstraintViolation {
-                return HttpResponse::Conflict().json(serde_json::json!({
-                    "error": {
-                        "message": "username already exists",
-                        "type": "conflict_error"
-                    }
-                }));
+                return conflict("username already exists");
             }
         }
 
         error!(error = %err, "failed to create user");
-        return HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": {
-                "message": "Failed to create user",
-                "type": "internal_error"
-            }
-        }));
+        return internal_error("Failed to create user");
+    }
+
+    let user_id = tx.last_insert_rowid();
+    let key_result = tx.execute(
+        "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
+        params![user_id, api_key, created_at],
+    );
+
+    if let Err(err) = key_result {
+        error!(error = %err, "failed to create user api key");
+        return internal_error("Failed to create user");
+    }
+
+    if let Err(err) = tx.commit() {
+        error!(error = %err, "failed to commit transaction");
+        return internal_error("Failed to create user");
     }
 
     HttpResponse::Created().json(CreateUserResponse {
@@ -367,11 +434,40 @@ async fn create_user(state: web::Data<AppState>, req: web::Json<CreateUserReques
     })
 }
 
+async fn create_user_api_key(state: web::Data<AppState>, path: web::Path<String>) -> HttpResponse {
+    let username = path.into_inner();
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let api_key = create_api_key();
+
+    let conn = lock_db(&state.db);
+    let user_id = match find_user_id(&conn, &username) {
+        Ok(id) => id,
+        Err(_) => return not_found_error("user not found"),
+    };
+
+    if let Err(err) = conn.execute(
+        "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
+        params![user_id, api_key, created_at],
+    ) {
+        error!(error = %err, "failed to create api key for user");
+        return internal_error("Failed to create api key");
+    }
+
+    HttpResponse::Created().json(CreateUserResponse {
+        username,
+        api_key,
+        created_at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use actix_web::{App, HttpResponse, HttpServer, web};
     use actix_web::http::StatusCode as ActixStatusCode;
+    use actix_web::{web, App, HttpResponse, HttpServer};
     use reqwest::StatusCode as ReqwestStatusCode;
     use rusqlite::Connection;
     use serde_json::json;
@@ -418,9 +514,13 @@ mod tests {
         let resp = create_user(state.clone(), req).await;
         assert_eq!(resp.status(), ActixStatusCode::CREATED);
 
-        let conn = state.db.lock().expect("db lock");
+        let conn = lock_db(&state.db);
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM users WHERE username = ?1", params!["alice"], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM users WHERE username = ?1",
+                params!["alice"],
+                |row| row.get(0),
+            )
             .expect("query count");
         assert_eq!(count, 1);
     }
@@ -443,22 +543,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_additional_api_key_for_existing_user() {
+        let state = web::Data::new(test_state());
+        let req = web::Json(CreateUserRequest {
+            username: "charlie".into(),
+        });
+        let resp = create_user(state.clone(), req).await;
+        assert_eq!(resp.status(), ActixStatusCode::CREATED);
+
+        let path = web::Path::from("charlie".to_string());
+        let create_key_resp = create_user_api_key(state.clone(), path).await;
+        assert_eq!(create_key_resp.status(), ActixStatusCode::CREATED);
+
+        let conn = lock_db(&state.db);
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM api_keys WHERE user_id = (SELECT id FROM users WHERE username = ?1)",
+                params!["charlie"],
+                |row| row.get(0),
+            )
+            .expect("query key count");
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
     async fn e2e_create_user_and_chat_completions() {
         let upstream_listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind upstream");
         let upstream_addr = upstream_listener.local_addr().expect("local addr");
         let upstream_server = HttpServer::new(|| {
-            App::new().route("/v1/chat/completions", web::post().to(|| async {
-                HttpResponse::Ok().json(json!({
+            App::new().route(
+                "/v1/chat/completions",
+                web::post().to(|| async {
+                    HttpResponse::Ok().json(json!({
                     "id": "chatcmpl-123",
                     "object": "chat.completion",
                     "choices": [{"message": {"role": "assistant", "content": "Hello from mock"}}]
                 }))
-            }))
+                }),
+            )
         })
         .listen(upstream_listener)
         .expect("listen upstream")
         .run();
-        let _upstream_handle = tokio::spawn(upstream_server);
+        let upstream_handle = tokio::spawn(upstream_server);
 
         let cfg = AppConfig {
             server: config::ServerConfig {
@@ -548,15 +675,22 @@ mod tests {
                 .app_data(web::Data::new(app_state.clone()))
                 .route("/healthz", web::get().to(health))
                 .route("/users", web::post().to(create_user))
+                .route(
+                    "/users/{username}/keys",
+                    web::post().to(create_user_api_key),
+                )
                 .route("/v1/chat/completions", web::post().to(chat_completions))
                 .default_service(web::route().to(not_found))
         })
         .listen(app_listener)
         .expect("listen app")
         .run();
-        let _app_handle = tokio::spawn(app_server);
+        let app_handle = tokio::spawn(app_server);
         let app_url = format!("http://{}", app_addr);
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("failed to build test client");
 
         let create_resp = client
             .post(format!("{}/users", app_url))
@@ -566,23 +700,49 @@ mod tests {
             .expect("create user request");
 
         assert_eq!(create_resp.status(), ReqwestStatusCode::CREATED);
-        let create_body: serde_json::Value = create_resp.json().await.expect("parse create response");
+        let create_body: serde_json::Value =
+            create_resp.json().await.expect("parse create response");
         let api_key = create_body["api_key"].as_str().expect("api_key exists");
         assert!(!api_key.is_empty());
 
-        let conn = state.db.lock().expect("db lock");
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM users WHERE username = ?1",
-                params!["testuser"],
-                |row| row.get(0),
-            )
-            .expect("query count");
-        assert_eq!(count, 1);
+        {
+            let conn = lock_db(&state.db);
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM users WHERE username = ?1",
+                    params!["testuser"],
+                    |row| row.get(0),
+                )
+                .expect("query count");
+            assert_eq!(count, 1);
+        }
+
+        let create_key_resp = client
+            .post(format!("{}/users/{}/keys", app_url, "testuser"))
+            .send()
+            .await
+            .expect("create api key request");
+        let create_key_status = create_key_resp.status();
+        let create_key_body: serde_json::Value = if create_key_status != ReqwestStatusCode::CREATED
+        {
+            let _body = create_key_resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<body error: {}>", e));
+            panic!("unexpected create key status: {}", create_key_status);
+        } else {
+            create_key_resp
+                .json()
+                .await
+                .expect("parse create key response")
+        };
+        assert_eq!(create_key_status, ReqwestStatusCode::CREATED);
+        let additional_api_key = create_key_body["api_key"].as_str().expect("api_key exists");
+        assert!(!additional_api_key.is_empty());
 
         let chat_resp = client
             .post(format!("{}/v1/chat/completions", app_url))
-            .bearer_auth(api_key)
+            .bearer_auth(additional_api_key)
             .json(&json!({
                 "model": "gpt-4",
                 "messages": [{"role": "user", "content": "hi"}],
@@ -590,9 +750,23 @@ mod tests {
             .send()
             .await
             .expect("chat request");
+        let chat_status = chat_resp.status();
+        let chat_body: serde_json::Value = if chat_status != ReqwestStatusCode::OK {
+            let _ = chat_resp
+                .text()
+                .await
+                .unwrap_or_else(|e| format!("<body error: {}>", e));
+            panic!("unexpected chat status: {}", chat_status);
+        } else {
+            chat_resp.json().await.expect("parse chat response")
+        };
+        assert_eq!(chat_status, ReqwestStatusCode::OK);
+        assert_eq!(
+            chat_body["choices"][0]["message"]["content"],
+            "Hello from mock"
+        );
 
-        assert_eq!(chat_resp.status(), ReqwestStatusCode::OK);
-        let chat_body: serde_json::Value = chat_resp.json().await.expect("parse chat response");
-        assert_eq!(chat_body["choices"][0]["message"]["content"], "Hello from mock");
+        app_handle.abort();
+        upstream_handle.abort();
     }
 }
