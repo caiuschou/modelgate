@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::error;
-use uuid::Uuid;
+use rand::Rng;
 
 use crate::{auth, db, errors::ApiError, upstream, AppState};
 
@@ -23,7 +23,9 @@ pub struct CreateUserResponse {
 }
 
 fn create_api_key() -> String {
-    Uuid::new_v4().to_string()
+    let mut rng = rand::thread_rng();
+    let random_part: String = (0..32).map(|_| format!("{:x}", rng.gen::<u8>() % 16)).collect();
+    format!("sk-or-v1-{}", random_part)
 }
 
 pub async fn health() -> HttpResponse {
