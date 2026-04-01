@@ -1,0 +1,356 @@
+# 审计日志开发实现方案
+
+**版本:** 1.0
+**编写日期:** 2026年4月1日
+**适用范围:** ModelGate 审计日志功能的开发实现细节
+
+---
+
+## 1. 目的
+
+本文件补充 `docs/architecture/audit-log-technical-solution.md` 的实现层面内容，给出具体代码模块、数据结构、数据库迁移、配置、请求拦截、异步写入、查询接口和权限控制方案。
+
+---
+
+## 2. 模块划分
+
+- `src/config.rs`
+  - 新增 `AuditConfig`
+  - 支持审计文件目录、保留周期、批量写入参数、导出目录
+- `src/main.rs`
+  - 初始化 `tokio::sync::mpsc` 审计队列
+  - 扩展 `AppState`，增加 `audit_sender` 与 `audit_config`
+  - 注册审计中间件
+  - 启动后台审计写入任务
+- `src/audit.rs`
+  - 定义 `AuditRecord` 和 `AuditMessage`
+  - 实现请求/响应体写文件
+  - 实现批量异步写入 SQLite
+  - 实现失败重试与日志记录
+- `src/db.rs`
+  - 新增 `insert_audit_log`
+  - 新增 `query_audit_logs`
+  - 新增 `get_audit_log_by_request_id`
+- `src/handlers/audit.rs`
+  - 实现查询、详情、导出接口
+- `src/routes.rs`
+  - 注册审计日志相关路由
+
+---
+
+## 3. 配置设计
+
+### 3.1 config.toml 示例
+
+```toml
+[audit]
+log_dir = "./audit_logs"
+retention_days = 90
+batch_size = 50
+flush_interval_seconds = 5
+export_dir = "./exports"
+```
+
+### 3.2 `AuditConfig` 结构
+
+```rust
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AuditConfig {
+    pub log_dir: String,
+    pub retention_days: u32,
+    pub batch_size: usize,
+    pub flush_interval_seconds: u64,
+    pub export_dir: String,
+}
+```
+
+---
+
+## 4. 数据模型与迁移
+
+### 4.1 SQLite 表结构
+
+- 表名：`audit_logs`
+- 主键：`request_id`
+
+```sql
+CREATE TABLE IF NOT EXISTS audit_logs (
+    request_id TEXT PRIMARY KEY,
+    user_id TEXT,
+    token_id TEXT,
+    channel_id TEXT,
+    model TEXT,
+    request_type TEXT,
+    request_body_path TEXT,
+    response_body_path TEXT,
+    status_code INTEGER,
+    error_message TEXT,
+    prompt_tokens INTEGER,
+    completion_tokens INTEGER,
+    total_tokens INTEGER,
+    cost REAL,
+    latency_ms INTEGER,
+    metadata TEXT,
+    created_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs (user_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_token_id ON audit_logs (token_id);
+```
+
+### 4.2 扩展字段说明
+
+- `metadata`：JSON 格式的扩展字段，包含：
+  - `prompt_tokens_details`
+  - `completion_tokens_details`
+  - `cost_details`
+  - `is_byok`
+
+---
+
+## 5. 核心结构设计
+
+### 5.1 `AuditRecord`
+
+```rust
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct AuditRecord {
+    pub request_id: String,
+    pub user_id: Option<String>,
+    pub token_id: Option<String>,
+    pub channel_id: Option<String>,
+    pub model: Option<String>,
+    pub request_type: Option<String>,
+    pub request_body_path: Option<String>,
+    pub response_body_path: Option<String>,
+    pub status_code: Option<u16>,
+    pub error_message: Option<String>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub cost: Option<f64>,
+    pub latency_ms: Option<i64>,
+    pub metadata: Option<serde_json::Value>,
+    pub created_at: String,
+}
+```
+
+### 5.2 `AuditMessage`
+
+```rust
+pub enum AuditMessage {
+    Record(AuditRecord),
+}
+```
+
+### 5.3 `AppState` 扩展
+
+```rust
+pub struct AppState {
+    pub cfg: AppConfig,
+    pub http: reqwest::Client,
+    pub db: DbConn,
+    pub audit_sender: tokio::sync::mpsc::Sender<AuditMessage>,
+    pub audit_config: AuditConfig,
+}
+```
+
+---
+
+## 6. 审计中间件设计
+
+### 6.1 中间件职责
+
+- 生成 `request_id`
+- 收集元信息：IP、User-Agent、请求路径、请求方法、请求体、用户身份、渠道、模型、类型
+- 将请求体写入文件存储
+- 记录请求开始时间
+- 在请求完成后收集响应结果
+- 发送 `AuditMessage` 到后台队列
+
+### 6.2 中间件伪代码
+
+```rust
+async fn audit_middleware(
+    req: ServiceRequest,
+    srv: &dyn Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
+) -> Result<ServiceResponse, Error> {
+    let request_id = Uuid::new_v4().to_string();
+    let start = Instant::now();
+    let request_body = read_request_body(&req).await?;
+    let request_body_path = save_body_to_file(&state.audit_config, &request_id, "request", &request_body)?;
+
+    let res = srv.call(req).await;
+    let elapsed_ms = start.elapsed().as_millis() as i64;
+
+    match &res {
+        Ok(response) => {
+            let status_code = response.status().as_u16();
+            let response_body = extract_response_body(response).await?;
+            let response_body_path = save_body_to_file(&state.audit_config, &request_id, "response", &response_body)?;
+            let audit_record = build_audit_record(...);
+            let _ = state.audit_sender.send(AuditMessage::Record(audit_record)).await;
+        }
+        Err(err) => {
+            let audit_record = build_audit_record_with_error(...);
+            let _ = state.audit_sender.send(AuditMessage::Record(audit_record)).await;
+        }
+    }
+
+    res
+}
+```
+
+### 6.3 请求/响应体写文件
+
+- 存储目录：`{log_dir}/{YYYY}/{MM}/{request_id}-{type}.json`
+- 只保存路径到数据库
+- 对于大请求体，建议限制单条最大大小并按需截断
+
+---
+
+## 7. 后台写入任务
+
+### 7.1 任务职责
+
+- 消费 `mpsc` 队列
+- 批量写入数据库
+- 按 `batch_size` 或超时 `flush_interval_seconds` 刷新
+- 捕获写入错误并记录
+
+### 7.2 任务伪代码
+
+```rust
+async fn audit_writer_loop(
+    mut receiver: tokio::sync::mpsc::Receiver<AuditMessage>,
+    db: DbConn,
+    config: AuditConfig,
+) {
+    let mut buffer = Vec::new();
+    let mut interval = tokio::time::interval(Duration::from_secs(config.flush_interval_seconds));
+
+    loop {
+        tokio::select! {
+            Some(msg) = receiver.recv() => {
+                if let AuditMessage::Record(record) = msg {
+                    buffer.push(record);
+                }
+            }
+            _ = interval.tick() => {}
+        }
+
+        if !buffer.is_empty() && (buffer.len() >= config.batch_size) {
+            if let Err(err) = insert_audit_logs(&db, &buffer).await {
+                log::error!("audit insert failed: {err}");
+            }
+            buffer.clear();
+        }
+    }
+}
+```
+
+### 7.3 失败保护
+
+- 若数据库写入失败，可将审计消息写入本地日志文件或备用队列
+- 报错应不影响主请求路径
+
+---
+
+## 8. 数据库接口
+
+### 8.1 `insert_audit_log`
+
+- 单条插入
+- 批量插入
+
+```rust
+pub fn insert_audit_log(conn: &Connection, record: &AuditRecord) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO audit_logs (...) VALUES (...)",
+        rusqlite::params![...],
+    )?;
+    Ok(())
+}
+```
+
+### 8.2 `query_audit_logs`
+
+- 支持分页参数：`limit`、`offset`
+- 支持过滤条件：`created_at`、`user_id`、`token_id`、`channel_id`、`model`、`status_code`
+- 仅返回元数据（默认不包含 request/response 路径）
+
+### 8.3 `get_audit_log_by_request_id`
+
+- 查询单条完整审计记录
+- 可根据权限决定是否返回 `request_body_path` / `response_body_path`
+
+---
+
+## 9. 路由与 Handler
+
+### 9.1 路由定义
+
+```rust
+pub fn configure_routes(cfg: &mut web::ServiceConfig) {
+    cfg.service(
+        web::scope("/api/v1/logs")
+            .route("/request", web::get().to(handlers::audit::list_audit_logs))
+            .route("/request/{request_id}", web::get().to(handlers::audit::get_audit_log))
+            .route("/export", web::post().to(handlers::audit::export_audit_logs)),
+    );
+}
+```
+
+### 9.2 `list_audit_logs`
+
+- 解析查询参数
+- 校验权限
+- 调用 `query_audit_logs`
+- 返回分页结果
+
+### 9.3 `get_audit_log`
+
+- 解析 `request_id`
+- 校验权限
+- 返回完整审计记录
+
+### 9.4 `export_audit_logs`
+
+- 支持 `format=json` 或 `format=csv`
+- 使用后台任务生成导出文件
+- 返回 `export_id` 和 `download_url`
+
+---
+
+## 10. 文件存储与清理
+
+### 10.1 文件存储规则
+
+- `request_body` 保存为 `request-{request_id}.json`
+- `response_body` 保存为 `response-{request_id}.json`
+- 文件路径写入数据库
+- 存储目录按年月分区
+
+### 10.2 清理策略
+
+- 定时任务扫描 `log_dir`
+- 删除超过 `retention_days` 的日志文件和对应数据库记录
+
+---
+
+## 11. 权限与安全
+
+- 仅管理员可访问导出接口
+- 普通用户仅能查看自己的审计记录
+- 详情接口返回文件路径时应检查权限
+- 请求内容和响应内容应按规则脱敏
+
+---
+
+## 12. 测试建议
+
+- 单元测试：`insert_audit_log`、`query_audit_logs`、`get_audit_log_by_request_id`
+- 集成测试：审计中间件是否生成 `request_id`、请求后是否发送队列、后台写入是否成功
+- 安全测试：普通用户访问限制、导出权限
+- 性能测试：高并发下 `mpsc` 队列和批量写入是否稳定

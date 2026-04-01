@@ -22,7 +22,7 @@
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| request_id | string | 唯一请求ID，格式：`req_{timestamp}_{random}` |
+| request_id | string | 唯一请求ID，格式：`{timestamp}_{random}` |
 | user_id | int | 用户ID |
 | token_id | int | 令牌ID |
 | channel_id | int | 渠道ID |
@@ -158,7 +158,7 @@
 
 **请求：**
 ```
-GET /api/v1/logs/request?start_time=2026-01-01&end_time=2026-03-31&user_id=1
+GET /api/v1/logs/request?start_time=2026-01-01&end_time=2026-03-31
 ```
 
 **响应：**
@@ -166,7 +166,7 @@ GET /api/v1/logs/request?start_time=2026-01-01&end_time=2026-03-31&user_id=1
 {
   "data": [
     {
-      "request_id": "req_1234567890_abc",
+      "request_id": "1234567890_abc",
       "user_id": 1,
       "token_id": 10,
       "model": "gpt-4",
@@ -260,6 +260,14 @@ Content-Type: application/json
 1. 按部门用户筛选日志
 2. 统计各模型用量和成本
 3. 导出报表
+
+---
+
+## 八、技术实现说明
+
+技术方案已独立整理为开发技术文档，详见：
+
+- [审计日志技术方案](../architecture/audit-log-technical-solution.md)
 
 ---
 

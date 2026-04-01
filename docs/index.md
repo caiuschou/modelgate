@@ -21,11 +21,16 @@
 - **[设计令牌](design/interaction/design-tokens.md)** - 颜色、字体、间距、组件规范
 - **[移动端设计](design/interaction/mobile.md)** - 移动端适配方案、触控交互
 
+### 架构文档
+
+- **[审计日志技术方案](architecture/audit-log-technical-solution.md)** - 审计日志设计与架构
+- **[Rust 代码架构](architecture/rust-code-architecture.md)** - Rust 项目结构与组件设计
+
 ### 开发文档
 
 - **[API 文档](development/api.md)** - API 接口说明（待完善）
 - **[部署文档](development/deployment.md)** - 部署指南（待完善）
-- **[Rust 代码架构](architecture/rust-code-architecture.md)** - Rust 项目结构与组件设计
+- **[审计日志开发实现](development/audit-log-implementation.md)** - 审计日志开发实现方案
 - **[更新日志](development/changelog.md)** - 版本更新记录（待完善）
 
 ---
