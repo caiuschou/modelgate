@@ -1,0 +1,81 @@
+name: CD Frontend (SSH Deploy)
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/cd-frontend-ssh.yml"
+
+concurrency:
+  group: cd-frontend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify and build
+        run: |
+          npm run lint
+          npm run test
+          npm run build
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C dist -czf "../frontend-${GITHUB_SHA}.tar.gz" .
+
+      - name: Upload package to server (SCP)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "frontend-${{ github.sha }}.tar.gz"
+          target: "/tmp"
+
+      - name: Deploy on server (SSH)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_NAME="frontend"
+            DEPLOY_ROOT="${{ secrets.DEPLOY_ROOT_FRONTEND }}"
+            SHA="${{ github.sha }}"
+            RELEASE_DIR="${DEPLOY_ROOT}/releases/${SHA}"
+
+            mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared"
+            mkdir -p "${RELEASE_DIR}"
+            tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
+
+            ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
+
+            nginx -t
+            systemctl reload nginx
+
+            curl -fsS "http://127.0.0.1/" >/dev/null
+

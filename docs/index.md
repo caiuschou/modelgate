@@ -25,12 +25,17 @@
 
 - **[审计日志技术方案](architecture/audit-log-technical-solution.md)** - 审计日志设计与架构
 - **[Rust 代码架构](architecture/rust-code-architecture.md)** - Rust 项目结构与组件设计
+- **[前端架构](architecture/frontend-architecture.md)** - React + Vite + shadcn/ui + TailwindCSS 前端架构方案
 
 ### 开发文档
 
 - **[API 文档](development/api.md)** - API 接口说明（待完善）
 - **[部署文档](development/deployment.md)** - 部署指南（待完善）
+- **[前端部署方案](development/frontend-deployment-plan.md)** - 前端 staging/prod 部署、回滚与运维规范
+- **[前端开发计划](development/frontend-development-plan.md)** - 前端 8 周开发计划与里程碑
+- **[前端开发约定](development/frontend-conventions.md)** - 命名、分层、提交流程与质量门禁
 - **[审计日志开发实现](development/audit-log-implementation.md)** - 审计日志开发实现方案
+- **[代理处理器重构](development/proxy-handler-refactoring.md)** - proxy.rs 重构方案与实施计划
 - **[更新日志](development/changelog.md)** - 版本更新记录（待完善）
 
 ---

@@ -54,6 +54,21 @@ sudo chmod 600 /etc/modelgate/modelgate.env
 - `CI`: `.github/workflows/ci.yml`（fmt/clippy/test/build）
 - `CD`: `.github/workflows/cd-ssh.yml`（push main 自动 build -> scp -> ssh 解压 -> 切换 current -> systemd restart -> health check）
 
+## API 子域（Rust 后端对外域名）
+
+生产环境将 Rust 服务暴露在 **`api.modelgate.dev`**（与控制台 `modelgate.dev` 同机时，由 Nginx 反代到本机 Actix 端口，默认 `8000`）。
+
+**DNS：** 为 `api.modelgate.dev` 添加 **A 记录** 指向与 `modelgate.dev` 相同的服务器 IP（例如 `165.22.55.30`）。
+
+**Nginx（在服务器执行一次）：**
+
+```bash
+chmod +x ./deploy/api/init-api-nginx.sh
+sudo API_DOMAIN=api.modelgate.dev UPSTREAM=http://127.0.0.1:8000 bash ./deploy/api/init-api-nginx.sh
+```
+
+前端生产构建通过 `frontend/.env.production` 中的 `VITE_API_BASE_URL` 指向该地址；启用 HTTPS 后改为 `https://api.modelgate.dev` 并同步配置证书。
+
 ## 回滚（手动）
 
 服务器上会保留按 commit SHA 命名的目录：
