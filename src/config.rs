@@ -6,6 +6,14 @@ pub struct AppConfig {
     pub upstream: UpstreamConfig,
     pub sqlite: SqliteConfig,
     pub audit: crate::audit::AuditConfig,
+    /// Console registration: invite code must match exactly (see `auth.invite_code`).
+    pub auth: AuthConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthConfig {
+    /// Required for `POST /api/v1/auth/register`. Empty string disables self-service registration.
+    pub invite_code: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -39,7 +47,8 @@ fn config_builder(
         .set_default("audit.retention_days", 90)?
         .set_default("audit.batch_size", 50)?
         .set_default("audit.flush_interval_seconds", 5)?
-        .set_default("audit.export_dir", "./exports")
+        .set_default("audit.export_dir", "./exports")?
+        .set_default("auth.invite_code", "ZW9Z")
 }
 
 pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config::ConfigError> {
@@ -54,6 +63,13 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
         let mut builder = config::Config::builder();
         builder = builder.add_source(config);
         builder = builder.set_override("upstream.api_key", key)?;
+        config = builder.build()?;
+    }
+
+    if let Ok(code) = std::env::var("AUTH_INVITE_CODE") {
+        let mut builder = config::Config::builder();
+        builder = builder.add_source(config);
+        builder = builder.set_override("auth.invite_code", code)?;
         config = builder.build()?;
     }
 

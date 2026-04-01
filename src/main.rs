@@ -208,6 +208,9 @@ mod tests {
                 flush_interval_seconds: 5,
                 export_dir: "./exports".into(),
             },
+            auth: crate::config::AuthConfig {
+                invite_code: "ZW9Z".into(),
+            },
         };
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))

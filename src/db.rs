@@ -4,7 +4,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 2] = [
+const MIGRATIONS: [(&str, &str); 3] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -12,6 +12,10 @@ const MIGRATIONS: [(&str, &str); 2] = [
     (
         "0002_create_audit_logs.sql",
         include_str!("../migrations/0002_create_audit_logs.sql"),
+    ),
+    (
+        "0003_users_password_hash.sql",
+        include_str!("../migrations/0003_users_password_hash.sql"),
     ),
 ];
 
@@ -85,6 +89,48 @@ pub fn find_user_id(conn: &Connection, username: &str) -> rusqlite::Result<i64> 
         params![username],
         |row| row.get(0),
     )
+}
+
+/// Returns `Some((user_id, password_hash))` if the user exists. `password_hash` is `None` for legacy rows.
+pub fn get_user_login_credentials(
+    conn: &Connection,
+    username: &str,
+) -> rusqlite::Result<Option<(i64, Option<String>)>> {
+    let mut stmt = conn.prepare("SELECT id, password_hash FROM users WHERE username = ?1")?;
+    let mut rows = stmt.query_map(params![username], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+    })?;
+    match rows.next() {
+        Some(row) => Ok(Some(row?)),
+        None => Ok(None),
+    }
+}
+
+pub fn insert_user_with_password(
+    conn: &Connection,
+    username: &str,
+    password_hash: &str,
+    created_at: i64,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO users (username, created_at, password_hash) VALUES (?1, ?2, ?3)",
+        params![username, created_at, password_hash],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn get_first_api_key_for_user(
+    conn: &Connection,
+    user_id: i64,
+) -> rusqlite::Result<Option<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT api_key FROM api_keys WHERE user_id = ?1 AND revoked = 0 ORDER BY id DESC LIMIT 1",
+    )?;
+    let mut rows = stmt.query_map(params![user_id], |row| row.get(0))?;
+    match rows.next() {
+        Some(row) => Ok(Some(row?)),
+        None => Ok(None),
+    }
 }
 
 pub fn validate_api_key(conn: &Connection, api_key: &str) -> bool {

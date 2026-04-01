@@ -17,6 +17,7 @@
 ### 设计文档
 
 - **[设计概述](design/interaction/overview.md)** - 设计目标、原则、用户角色
+- **[注册页交互](design/interaction/register.md)** - 简单注册（用户名、密码、邀请码由服务端配置）
 - **[导航设计](design/interaction/navigation.md)** - 全局导航、移动端导航、通知中心
 - **[设计令牌](design/interaction/design-tokens.md)** - 颜色、字体、间距、组件规范
 - **[移动端设计](design/interaction/mobile.md)** - 移动端适配方案、触控交互

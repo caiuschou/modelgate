@@ -2,6 +2,11 @@
 host = "0.0.0.0"
 port = 8000
 
+[auth]
+# Required for POST /api/v1/auth/register. Set to "" to disable self-service registration.
+# Override at runtime: AUTH_INVITE_CODE
+invite_code = "change-me"
+
 [upstream]
 base_url = "https://api.openai.com/v1"
 # Prefer environment variable UPSTREAM_API_KEY in real usage.

@@ -30,6 +30,28 @@ pub trait Repository: Send + Sync {
         api_key: &str,
         created_at: u64,
     ) -> Result<(), RepositoryError>;
+
+    fn register_user_with_password_and_api_key(
+        &self,
+        username: &str,
+        password_hash: &str,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), RepositoryError>;
+
+    fn get_user_login_credentials(
+        &self,
+        username: &str,
+    ) -> Result<Option<(i64, Option<String>)>, RepositoryError>;
+
+    fn get_first_api_key_for_user(&self, user_id: i64) -> Result<Option<String>, RepositoryError>;
+
+    fn create_api_key_for_user_id(
+        &self,
+        user_id: i64,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), RepositoryError>;
 }
 
 #[derive(Clone)]
@@ -146,6 +168,89 @@ impl Repository for SqliteRepository {
         })?;
         Ok(())
     }
+
+    fn register_user_with_password_and_api_key(
+        &self,
+        username: &str,
+        password_hash: &str,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), RepositoryError> {
+        let mut conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let tx = conn.transaction().map_err(|err| {
+            error!(error = %err, "failed to begin transaction");
+            RepositoryError::Internal("Failed to create user".into())
+        })?;
+
+        if let Err(err) = tx.execute(
+            "INSERT INTO users (username, created_at, password_hash) VALUES (?1, ?2, ?3)",
+            rusqlite::params![username, created_at as i64, password_hash],
+        ) {
+            if let rusqlite::Error::SqliteFailure(err_code, _) = &err {
+                if err_code.code == ErrorCode::ConstraintViolation {
+                    return Err(RepositoryError::Conflict("username already exists".into()));
+                }
+            }
+            error!(error = %err, "failed to register user");
+            return Err(RepositoryError::Internal("Failed to create user".into()));
+        }
+
+        let user_id = tx.last_insert_rowid();
+        if let Err(err) = tx.execute(
+            "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![user_id, api_key, created_at as i64],
+        ) {
+            error!(error = %err, "failed to create user api key");
+            return Err(RepositoryError::Internal("Failed to create user".into()));
+        }
+
+        tx.commit().map_err(|err| {
+            error!(error = %err, "failed to commit transaction");
+            RepositoryError::Internal("Failed to create user".into())
+        })?;
+        Ok(())
+    }
+
+    fn get_user_login_credentials(
+        &self,
+        username: &str,
+    ) -> Result<Option<(i64, Option<String>)>, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::get_user_login_credentials(&conn, username)
+            .map_err(|_| RepositoryError::Internal("Failed to load user".into()))
+    }
+
+    fn get_first_api_key_for_user(&self, user_id: i64) -> Result<Option<String>, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::get_first_api_key_for_user(&conn, user_id)
+            .map_err(|_| RepositoryError::Internal("Failed to load api key".into()))
+    }
+
+    fn create_api_key_for_user_id(
+        &self,
+        user_id: i64,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::create_api_key_for_user(&conn, user_id, api_key, created_at as i64).map_err(|err| {
+            error!(error = %err, "failed to create api key for user id");
+            RepositoryError::Internal("Failed to create api key".into())
+        })?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -188,6 +293,23 @@ mod tests {
             RepositoryError::NotFound(msg) => assert!(msg.contains("user not found")),
             _ => panic!("unexpected error variant"),
         }
+    }
+
+    #[test]
+    fn register_with_password_stores_credentials_and_api_key() {
+        let repo = build_repo();
+        let hash = bcrypt::hash("Abcd1234", bcrypt::DEFAULT_COST).expect("hash");
+        repo.register_user_with_password_and_api_key("reguser", &hash, "sk-reg-1", 200)
+            .expect("register");
+        let creds = repo
+            .get_user_login_credentials("reguser")
+            .expect("load creds");
+        let (user_id, stored) = creds.expect("user exists");
+        assert_eq!(stored.as_deref(), Some(hash.as_str()));
+        let key = repo
+            .get_first_api_key_for_user(user_id)
+            .expect("load key");
+        assert_eq!(key.as_deref(), Some("sk-reg-1"));
     }
 }
 

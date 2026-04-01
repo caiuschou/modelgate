@@ -220,6 +220,39 @@ mod tests {
         ) -> Result<(), ServiceError> {
             Ok(())
         }
+
+        fn register_user_with_password_and_api_key(
+            &self,
+            _username: &str,
+            _password_hash: &str,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
+        fn get_user_login_credentials(
+            &self,
+            _username: &str,
+        ) -> Result<Option<(i64, Option<String>)>, ServiceError> {
+            Ok(None)
+        }
+
+        fn get_first_api_key_for_user(
+            &self,
+            _user_id: i64,
+        ) -> Result<Option<String>, ServiceError> {
+            Ok(None)
+        }
+
+        fn create_api_key_for_user_id(
+            &self,
+            _user_id: i64,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<(), ServiceError> {
+            Ok(())
+        }
     }
 
     fn build_test_state() -> AppState {
@@ -241,6 +274,9 @@ mod tests {
                 batch_size: 50,
                 flush_interval_seconds: 5,
                 export_dir: "./exports".into(),
+            },
+            auth: crate::config::AuthConfig {
+                invite_code: "ZW9Z".into(),
             },
         };
         let db_pool = db::create_db_pool(":memory:").expect("create db pool");

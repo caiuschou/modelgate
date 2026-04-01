@@ -16,6 +16,24 @@ pub trait UserService: Send + Sync {
         api_key: &str,
         created_at: u64,
     ) -> Result<(), ServiceError>;
+    fn register_user_with_password_and_api_key(
+        &self,
+        username: &str,
+        password_hash: &str,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), ServiceError>;
+    fn get_user_login_credentials(
+        &self,
+        username: &str,
+    ) -> Result<Option<(i64, Option<String>)>, ServiceError>;
+    fn get_first_api_key_for_user(&self, user_id: i64) -> Result<Option<String>, ServiceError>;
+    fn create_api_key_for_user_id(
+        &self,
+        user_id: i64,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), ServiceError>;
 }
 
 pub struct DefaultUserService {
@@ -48,6 +66,44 @@ impl UserService for DefaultUserService {
     ) -> Result<(), ServiceError> {
         self.repo
             .create_api_key_for_user(username, api_key, created_at)
+            .map_err(ServiceError::from)
+    }
+
+    fn register_user_with_password_and_api_key(
+        &self,
+        username: &str,
+        password_hash: &str,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), ServiceError> {
+        self.repo
+            .register_user_with_password_and_api_key(username, password_hash, api_key, created_at)
+            .map_err(ServiceError::from)
+    }
+
+    fn get_user_login_credentials(
+        &self,
+        username: &str,
+    ) -> Result<Option<(i64, Option<String>)>, ServiceError> {
+        self.repo
+            .get_user_login_credentials(username)
+            .map_err(ServiceError::from)
+    }
+
+    fn get_first_api_key_for_user(&self, user_id: i64) -> Result<Option<String>, ServiceError> {
+        self.repo
+            .get_first_api_key_for_user(user_id)
+            .map_err(ServiceError::from)
+    }
+
+    fn create_api_key_for_user_id(
+        &self,
+        user_id: i64,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<(), ServiceError> {
+        self.repo
+            .create_api_key_for_user_id(user_id, api_key, created_at)
             .map_err(ServiceError::from)
     }
 }
@@ -89,6 +145,35 @@ mod tests {
         fn create_api_key_for_user(
             &self,
             _username: &str,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn register_user_with_password_and_api_key(
+            &self,
+            _username: &str,
+            _password_hash: &str,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn get_user_login_credentials(
+            &self,
+            _username: &str,
+        ) -> Result<Option<(i64, Option<String>)>, RepositoryError> {
+            Ok(None)
+        }
+        fn get_first_api_key_for_user(
+            &self,
+            _user_id: i64,
+        ) -> Result<Option<String>, RepositoryError> {
+            Ok(None)
+        }
+        fn create_api_key_for_user_id(
+            &self,
+            _user_id: i64,
             _api_key: &str,
             _created_at: u64,
         ) -> Result<(), RepositoryError> {

@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { AppLayout } from '@/components/layout/app-layout'
 import { DashboardPage } from '@/features/dashboard/pages/dashboard-page'
 import { LoginPage } from '@/features/auth/pages/login-page'
+import { RegisterPage } from '@/features/auth/pages/register-page'
 import { NotFoundPage } from '@/features/common/pages/not-found-page'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -36,6 +37,7 @@ function PlaceholderPage({ title }: { title: string }) {
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
+  { path: '/register', element: <RegisterPage /> },
   {
     path: '/',
     element: (

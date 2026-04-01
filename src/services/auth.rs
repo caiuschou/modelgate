@@ -68,6 +68,35 @@ mod tests {
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
+        fn register_user_with_password_and_api_key(
+            &self,
+            _username: &str,
+            _password_hash: &str,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn get_user_login_credentials(
+            &self,
+            _username: &str,
+        ) -> Result<Option<(i64, Option<String>)>, RepositoryError> {
+            Ok(None)
+        }
+        fn get_first_api_key_for_user(
+            &self,
+            _user_id: i64,
+        ) -> Result<Option<String>, RepositoryError> {
+            Ok(None)
+        }
+        fn create_api_key_for_user_id(
+            &self,
+            _user_id: i64,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
     }
 
     #[test]

@@ -40,6 +40,8 @@ cp config.example.toml config.toml
 
 # 推荐用环境变量注入 Key（Windows PowerShell）
 $env:UPSTREAM_API_KEY="sk-..."
+# 自助注册邀请码（可选覆盖 config.toml 中的 [auth].invite_code）
+# $env:AUTH_INVITE_CODE="your-invite-code"
 
 # 启动
 cargo run
