@@ -176,18 +176,22 @@ async fn audit_middleware(
     req: ServiceRequest,
     srv: &dyn Service<ServiceRequest, Response = ServiceResponse, Error = Error>,
 ) -> Result<ServiceResponse, Error> {
-    let request_id = Uuid::new_v4().to_string();
+    let request_id = generate_request_id(); // 建议格式: {timestamp}_{random}
     let start = Instant::now();
-    let request_body = read_request_body(&req).await?;
+
+    // 注意：读取请求体后必须重新放回 payload，避免影响后续 handler
+    let (req, request_body) = read_and_restore_request_body(req).await?;
     let request_body_path = save_body_to_file(&state.audit_config, &request_id, "request", &request_body)?;
 
-    let res = srv.call(req).await;
+    let mut res = srv.call(req).await;
     let elapsed_ms = start.elapsed().as_millis() as i64;
 
-    match &res {
+    match &mut res {
         Ok(response) => {
             let status_code = response.status().as_u16();
-            let response_body = extract_response_body(response).await?;
+            // 注意：读取响应体后必须重建 body 返回客户端
+            let (response_body, rebuilt_response) = extract_and_rebuild_response_body(response).await?;
+            *response = rebuilt_response;
             let response_body_path = save_body_to_file(&state.audit_config, &request_id, "response", &response_body)?;
             let audit_record = build_audit_record(...);
             let _ = state.audit_sender.send(AuditMessage::Record(audit_record)).await;
@@ -231,16 +235,35 @@ async fn audit_writer_loop(
     let mut interval = tokio::time::interval(Duration::from_secs(config.flush_interval_seconds));
 
     loop {
+        let mut should_flush = false;
+
         tokio::select! {
-            Some(msg) = receiver.recv() => {
-                if let AuditMessage::Record(record) = msg {
-                    buffer.push(record);
+            msg = receiver.recv() => {
+                match msg {
+                    Some(AuditMessage::Record(record)) => {
+                        buffer.push(record);
+                        if buffer.len() >= config.batch_size {
+                            should_flush = true;
+                        }
+                    }
+                    None => {
+                        // 通道关闭，退出前刷盘
+                        should_flush = true;
+                        if !buffer.is_empty() {
+                            let _ = insert_audit_logs(&db, &buffer).await;
+                            buffer.clear();
+                        }
+                        break;
+                    }
                 }
             }
-            _ = interval.tick() => {}
+            _ = interval.tick() => {
+                // 超时也触发 flush，保证低流量下日志可及时落库
+                should_flush = !buffer.is_empty();
+            }
         }
 
-        if !buffer.is_empty() && (buffer.len() >= config.batch_size) {
+        if should_flush && !buffer.is_empty() {
             if let Err(err) = insert_audit_logs(&db, &buffer).await {
                 log::error!("audit insert failed: {err}");
             }
@@ -277,7 +300,9 @@ pub fn insert_audit_log(conn: &Connection, record: &AuditRecord) -> rusqlite::Re
 ### 8.2 `query_audit_logs`
 
 - 支持分页参数：`limit`、`offset`
-- 支持过滤条件：`created_at`、`user_id`、`token_id`、`channel_id`、`model`、`status_code`
+- 支持过滤条件：`created_at`、`user_id`、`token_id`、`channel_id`、`model`、`status_code`、`keyword`
+- `keyword` 用于匹配 `request_id`、`error_message`、`model` 等字段（建议使用 SQLite FTS5 或 `LIKE` + 索引组合）
+- 单次查询最大 `limit=1000`，避免大范围全量扫描
 - 仅返回元数据（默认不包含 request/response 路径）
 
 ### 8.3 `get_audit_log_by_request_id`
@@ -297,7 +322,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         web::scope("/api/v1/logs")
             .route("/request", web::get().to(handlers::audit::list_audit_logs))
             .route("/request/{request_id}", web::get().to(handlers::audit::get_audit_log))
-            .route("/export", web::post().to(handlers::audit::export_audit_logs)),
+            .route("/export", web::post().to(handlers::audit::export_audit_logs))
+            .route("/export/{export_id}", web::get().to(handlers::audit::get_export_status))
+            .route("/export/{export_id}/download", web::get().to(handlers::audit::download_export_file)),
     );
 }
 ```
@@ -320,6 +347,11 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 - 支持 `format=json` 或 `format=csv`
 - 使用后台任务生成导出文件
 - 返回 `export_id` 和 `download_url`
+- 新增 `get_export_status`：查询导出任务状态（processing/success/failed）
+- 新增 `download_export_file`：导出完成后下载文件
+- 权限策略：
+  - 管理员可导出任意范围
+  - 普通用户可导出本人日志（可通过配置关闭）
 
 ---
 
@@ -335,14 +367,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 ### 10.2 清理策略
 
 - 定时任务扫描 `log_dir`
+- 对保留期内日志默认只读，禁止更新/删除
+- 保留期外按策略执行归档或删除（需符合合规策略）
 - 删除超过 `retention_days` 的日志文件和对应数据库记录
+- 建议增加文件 Hash 校验，支持篡改检测
 
 ---
 
 ## 11. 权限与安全
 
-- 仅管理员可访问导出接口
+- 管理员可查看/导出任意审计记录
 - 普通用户仅能查看自己的审计记录
+- 普通用户可导出自己的审计记录（可配置关闭）
 - 详情接口返回文件路径时应检查权限
 - 请求内容和响应内容应按规则脱敏
 

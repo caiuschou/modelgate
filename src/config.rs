@@ -5,6 +5,7 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub upstream: UpstreamConfig,
     pub sqlite: SqliteConfig,
+    pub audit: crate::audit::AuditConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,7 +34,12 @@ fn config_builder(
         .set_default("server.port", 8000)?
         .set_default("upstream.base_url", "https://api.openai.com/v1")?
         .set_default("upstream.api_key", "")?
-        .set_default("sqlite.path", "modelgate.db")
+        .set_default("sqlite.path", "modelgate.db")?
+        .set_default("audit.log_dir", "./audit_logs")?
+        .set_default("audit.retention_days", 90)?
+        .set_default("audit.batch_size", 50)?
+        .set_default("audit.flush_interval_seconds", 5)?
+        .set_default("audit.export_dir", "./exports")
 }
 
 pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config::ConfigError> {

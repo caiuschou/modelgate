@@ -1,11 +1,9 @@
 use actix_web::{web, HttpResponse};
 use rand::Rng;
-use rusqlite::ErrorCode;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::error;
 
-use crate::{db, errors::ApiError, AppState};
+use crate::{errors::ApiError, AppState};
 
 #[derive(Deserialize)]
 pub struct CreateUserRequest {
@@ -40,38 +38,9 @@ pub async fn create_user(
         .unwrap_or_default()
         .as_secs();
 
-    let mut conn = db::lock_db(&state.db);
-    let tx = conn.transaction().map_err(|err| {
-        error!(error = %err, "failed to begin transaction");
-        ApiError::InternalError("Failed to create user".into())
-    })?;
-
-    if let Err(err) = tx.execute(
-        "INSERT INTO users (username, created_at) VALUES (?1, ?2)",
-        rusqlite::params![username, created_at],
-    ) {
-        if let rusqlite::Error::SqliteFailure(err_code, _) = &err {
-            if err_code.code == ErrorCode::ConstraintViolation {
-                return Err(ApiError::Conflict("username already exists".into()));
-            }
-        }
-        error!(error = %err, "failed to create user");
-        return Err(ApiError::InternalError("Failed to create user".into()));
-    }
-
-    let user_id = tx.last_insert_rowid();
-    if let Err(err) = tx.execute(
-        "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
-        rusqlite::params![user_id, api_key, created_at],
-    ) {
-        error!(error = %err, "failed to create user api key");
-        return Err(ApiError::InternalError("Failed to create user".into()));
-    }
-
-    tx.commit().map_err(|err| {
-        error!(error = %err, "failed to commit transaction");
-        ApiError::InternalError("Failed to create user".into())
-    })?;
+    state
+        .user_service
+        .create_user_with_api_key(username, &api_key, created_at)?;
 
     Ok(HttpResponse::Created().json(CreateUserResponse {
         username: username.to_string(),
@@ -91,18 +60,9 @@ pub async fn create_user_api_key(
         .as_secs();
     let api_key = create_api_key();
 
-    let conn = db::lock_db(&state.db);
-    let user_id = db::find_user_id(&conn, &username)
-        .map_err(|_| ApiError::NotFound("user not found".into()))?;
-
-    conn.execute(
-        "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
-        rusqlite::params![user_id, api_key, created_at],
-    )
-    .map_err(|err| {
-        error!(error = %err, "failed to create api key for user");
-        ApiError::InternalError("Failed to create api key".into())
-    })?;
+    state
+        .user_service
+        .create_api_key_for_user(&username, &api_key, created_at)?;
 
     Ok(HttpResponse::Created().json(CreateUserResponse {
         username,

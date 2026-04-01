@@ -64,6 +64,18 @@ impl ResponseError for ApiError {
     }
 }
 
+impl From<crate::services::error::ServiceError> for ApiError {
+    fn from(value: crate::services::error::ServiceError) -> Self {
+        match value {
+            crate::services::error::ServiceError::BadRequest(msg) => ApiError::BadRequest(msg),
+            crate::services::error::ServiceError::Unauthorized(msg) => ApiError::Unauthorized(msg),
+            crate::services::error::ServiceError::NotFound(msg) => ApiError::NotFound(msg),
+            crate::services::error::ServiceError::Conflict(msg) => ApiError::Conflict(msg),
+            crate::services::error::ServiceError::Internal(msg) => ApiError::InternalError(msg),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

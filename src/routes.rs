@@ -1,6 +1,6 @@
 use actix_web::web;
 
-use crate::handlers::{self, proxy, user};
+use crate::handlers::{self, audit, proxy, user};
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(handlers::health))
@@ -12,6 +12,20 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route(
             "/v1/chat/completions",
             web::post().to(proxy::chat_completions),
+        )
+        .route("/api/v1/logs/request", web::get().to(audit::list_audit_logs))
+        .route(
+            "/api/v1/logs/request/{request_id}",
+            web::get().to(audit::get_audit_log),
+        )
+        .route("/api/v1/logs/export", web::post().to(audit::export_audit_logs))
+        .route(
+            "/api/v1/logs/export/{export_id}",
+            web::get().to(audit::get_export_status),
+        )
+        .route(
+            "/api/v1/logs/export/{export_id}/download",
+            web::get().to(audit::download_export_file),
         )
         .default_service(web::route().to(handlers::not_found));
 }

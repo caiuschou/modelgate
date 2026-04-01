@@ -1,9 +1,11 @@
+pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod db;
 pub mod errors;
 pub mod handlers;
 pub mod routes;
+pub mod services;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod upstream;
@@ -14,19 +16,24 @@ use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse},
     web, App, HttpServer,
 };
-use rusqlite::Connection;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::{error, info};
 
+use crate::audit::{audit_writer_loop, ensure_storage_dirs, AuditConfig, AuditMessage};
 use crate::config::AppConfig;
-use crate::db::{run_migrations, DbConn};
+use crate::db::{create_db_pool, run_migrations, DbConn};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     pub cfg: AppConfig,
     pub http: reqwest::Client,
     pub db: DbConn,
+    pub auth_service: Arc<dyn services::AuthService>,
+    pub audit_service: Arc<dyn services::AuditService>,
+    pub user_service: Arc<dyn services::UserService>,
+    pub audit_sender: tokio::sync::mpsc::Sender<AuditMessage>,
+    pub audit_config: AuditConfig,
 }
 
 pub fn build_state(cfg: AppConfig) -> AppState {
@@ -35,14 +42,27 @@ pub fn build_state(cfg: AppConfig) -> AppState {
         .build()
         .expect("failed to build http client");
 
-    let db = Connection::open(&cfg.sqlite.path)
-        .unwrap_or_else(|e| panic!("failed to open sqlite database: {e}"));
-    run_migrations(&db).expect("failed to run database migrations");
+    let db = create_db_pool(&cfg.sqlite.path)
+        .unwrap_or_else(|e| panic!("failed to create sqlite pool: {e}"));
+    {
+        let conn = db
+            .get()
+            .unwrap_or_else(|e| panic!("failed to get sqlite connection: {e}"));
+        run_migrations(&conn).expect("failed to run database migrations");
+    }
+    ensure_storage_dirs(&cfg.audit).expect("failed to prepare audit storage dirs");
+    let (audit_sender, _audit_receiver) = tokio::sync::mpsc::channel(1024);
+    let service_container = services::build_service_container(db.clone());
 
     AppState {
+        audit_config: cfg.audit.clone(),
         cfg,
         http,
-        db: Arc::new(Mutex::new(db)),
+        db,
+        auth_service: service_container.auth,
+        audit_service: service_container.audit,
+        user_service: service_container.user,
+        audit_sender,
     }
 }
 
@@ -50,7 +70,17 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
     let cfg = config::load_config_from_dir(dir).unwrap_or_else(|e| {
         panic!("Failed to load config (config.toml or env): {e}");
     });
-    let state = build_state(cfg);
+    let state = build_state(cfg.clone());
+    let (audit_sender, audit_receiver) = tokio::sync::mpsc::channel(4096);
+    let writer_state = state.db.clone();
+    let writer_cfg = cfg.audit.clone();
+    tokio::spawn(async move {
+        audit_writer_loop(audit_receiver, writer_state, writer_cfg).await;
+    });
+    let state = AppState {
+        audit_sender,
+        ..state
+    };
 
     if test_mode {
         let _ = App::new().configure(routes::configure_routes);
@@ -142,10 +172,11 @@ async fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::{AuditConfig, AuditMessage};
     use crate::config::{AppConfig, ServerConfig, SqliteConfig, UpstreamConfig};
     use crate::test_utils::with_env_lock_async;
     use actix_web::{http::StatusCode, test};
-    use rusqlite::Connection;
+    use r2d2_sqlite::SqliteConnectionManager;
     use std::env;
 
     #[actix_web::test]
@@ -170,17 +201,43 @@ mod tests {
             sqlite: SqliteConfig {
                 path: ":memory:".into(),
             },
+            audit: AuditConfig {
+                log_dir: "./audit_logs".into(),
+                retention_days: 90,
+                batch_size: 50,
+                flush_interval_seconds: 5,
+                export_dir: "./exports".into(),
+            },
         };
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .build()
             .expect("failed to build http client");
-        let conn = Connection::open_in_memory().expect("open in-memory sqlite");
-        crate::db::run_migrations(&conn).expect("run migrations");
+        let manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("build sqlite pool");
+        {
+            let conn = db_pool.get().expect("get sqlite conn");
+            crate::db::run_migrations(&conn).expect("run migrations");
+        }
+        let service_container = services::build_service_container(db_pool.clone());
         let state = AppState {
             cfg,
             http,
-            db: Arc::new(Mutex::new(conn)),
+            db: db_pool,
+            auth_service: service_container.auth,
+            audit_service: service_container.audit,
+            user_service: service_container.user,
+            audit_sender: tokio::sync::mpsc::channel::<AuditMessage>(16).0,
+            audit_config: AuditConfig {
+                log_dir: "./audit_logs".into(),
+                retention_days: 90,
+                batch_size: 50,
+                flush_interval_seconds: 5,
+                export_dir: "./exports".into(),
+            },
         };
 
         let app = test::init_service({

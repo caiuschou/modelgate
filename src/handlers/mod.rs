@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod proxy;
 pub mod user;
 
