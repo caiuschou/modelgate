@@ -39,10 +39,6 @@ export function LoginPage() {
     event.preventDefault()
     setFormError(null)
     const u = username.trim()
-    if (!u || !password) {
-      setFormError('请输入用户名和密码')
-      return
-    }
 
     setSubmitting(true)
     try {

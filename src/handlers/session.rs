@@ -64,29 +64,11 @@ fn validate_username(username: &str) -> Result<&str, ApiError> {
     Ok(u)
 }
 
-fn validate_password(password: &str) -> Result<(), ApiError> {
-    if password.len() < 8 {
-        return Err(ApiError::BadRequest(
-            "password must be at least 8 characters".into(),
-        ));
-    }
-    let has_upper = password.chars().any(|c| c.is_ascii_uppercase());
-    let has_lower = password.chars().any(|c| c.is_ascii_lowercase());
-    let has_digit = password.chars().any(|c| c.is_ascii_digit());
-    if !has_upper || !has_lower || !has_digit {
-        return Err(ApiError::BadRequest(
-            "password must include uppercase, lowercase, and a digit".into(),
-        ));
-    }
-    Ok(())
-}
-
 pub async fn register(
     state: web::Data<AppState>,
     req: web::Json<RegisterRequest>,
 ) -> Result<HttpResponse, ApiError> {
     let username = validate_username(&req.username)?;
-    validate_password(&req.password)?;
 
     let expected = state.cfg.auth.invite_code.trim();
     if expected.is_empty() {
@@ -119,9 +101,6 @@ pub async fn login(
     req: web::Json<LoginRequest>,
 ) -> Result<HttpResponse, ApiError> {
     let username = validate_username(&req.username)?;
-    if req.password.is_empty() {
-        return Err(ApiError::BadRequest("password is required".into()));
-    }
 
     let creds = state
         .user_service

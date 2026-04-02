@@ -8,29 +8,12 @@ import { Input } from '@/components/ui/input'
 import { apiPath, publicApi } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth-store'
 
-function validatePassword(password: string): string | null {
-  if (password.length < 8) {
-    return '密码至少 8 位'
-  }
-  if (!/[A-Z]/.test(password)) {
-    return '密码需包含大写字母'
-  }
-  if (!/[a-z]/.test(password)) {
-    return '密码需包含小写字母'
-  }
-  if (!/[0-9]/.test(password)) {
-    return '密码需包含数字'
-  }
-  return null
-}
-
 export function RegisterPage() {
   const token = useAuthStore((state) => state.token)
   const navigate = useNavigate()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [inviteCode, setInviteCode] = useState('')
-  const [fieldError, setFieldError] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -41,28 +24,8 @@ export function RegisterPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setFormError(null)
-    setFieldError(null)
 
     const u = username.trim()
-    if (!u) {
-      setFieldError('请输入用户名')
-      return
-    }
-    if (u.length > 64) {
-      setFieldError('用户名最长 64 个字符')
-      return
-    }
-
-    if (!inviteCode.trim()) {
-      setFieldError('请输入邀请码')
-      return
-    }
-
-    const pwErr = validatePassword(password)
-    if (pwErr) {
-      setFieldError(pwErr)
-      return
-    }
 
     setSubmitting(true)
     try {
@@ -70,7 +33,7 @@ export function RegisterPage() {
         json: {
           username: u,
           password,
-          invite_code: inviteCode,
+          invite_code: inviteCode.trim(),
         },
       })
       navigate(`/login?username=${encodeURIComponent(u)}`, { replace: true })
@@ -112,11 +75,6 @@ export function RegisterPage() {
                 {formError}
               </p>
             ) : null}
-            {fieldError ? (
-              <p className="text-sm text-destructive" role="alert">
-                {fieldError}
-              </p>
-            ) : null}
             <label className="block text-sm font-medium">
               用户名
               <Input
@@ -138,7 +96,7 @@ export function RegisterPage() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 className="mt-1"
-                placeholder="至少 8 位，含大小写与数字"
+                placeholder="请输入密码"
                 disabled={submitting}
               />
             </label>
