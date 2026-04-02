@@ -1,7 +1,7 @@
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::error;
@@ -146,7 +146,7 @@ pub fn ensure_storage_dirs(cfg: &AuditConfig) -> std::io::Result<()> {
     Ok(())
 }
 
-fn path_to_string(path: &PathBuf) -> String {
+fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
@@ -156,8 +156,9 @@ pub async fn audit_writer_loop(
     config: AuditConfig,
 ) {
     let mut buffer: Vec<AuditRecord> = Vec::new();
-    let mut interval =
-        tokio::time::interval(std::time::Duration::from_secs(config.flush_interval_seconds));
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+        config.flush_interval_seconds,
+    ));
 
     loop {
         let mut should_flush = false;
@@ -208,4 +209,3 @@ pub async fn audit_writer_loop(
         }
     }
 }
-

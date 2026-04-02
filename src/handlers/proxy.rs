@@ -9,8 +9,11 @@ use crate::{auth, errors::ApiError, upstream, AppState};
 
 static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(reqwest_header::CONTENT_TYPE, "application/json".parse().unwrap());
-    
+    headers.insert(
+        reqwest_header::CONTENT_TYPE,
+        "application/json".parse().unwrap(),
+    );
+
     if let Ok(org) = std::env::var("OPENAI_ORGANIZATION") {
         if let Ok(header) = org.parse() {
             headers.insert("openai-organization", header);
@@ -166,7 +169,12 @@ pub async fn chat_completions(
 fn parse_model_from_request(body: &[u8]) -> Option<String> {
     serde_json::from_slice::<Value>(body)
         .ok()
-        .and_then(|value| value.get("model").and_then(|v| v.as_str()).map(ToOwned::to_owned))
+        .and_then(|value| {
+            value
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        })
 }
 
 fn parse_usage_and_cost(body: &[u8]) -> (Option<i64>, Option<i64>, Option<i64>, Option<f64>) {

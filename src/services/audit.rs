@@ -344,7 +344,8 @@ mod tests {
             }],
         });
         let service = DefaultAuditService::new(repo);
-        let temp_dir = std::env::temp_dir().join(format!("modelgate_export_test_{}", now_unix_millis()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("modelgate_export_test_{}", now_unix_millis()));
         std::fs::create_dir_all(&temp_dir).expect("create temp export dir");
         let req = ExportRequest {
             start_time: None,
@@ -364,4 +365,3 @@ mod tests {
         assert!(file.is_some());
     }
 }
-

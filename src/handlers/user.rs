@@ -19,7 +19,9 @@ pub struct CreateUserResponse {
 
 fn create_api_key() -> String {
     let mut rng = rand::thread_rng();
-    let random_part: String = (0..32).map(|_| format!("{:x}", rng.gen::<u8>() % 16)).collect();
+    let random_part: String = (0..32)
+        .map(|_| format!("{:x}", rng.gen::<u8>() % 16))
+        .collect();
     format!("sk-or-v1-{}", random_part)
 }
 

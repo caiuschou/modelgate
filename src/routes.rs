@@ -4,10 +4,7 @@ use crate::handlers::{self, audit, proxy, session, user};
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(handlers::health))
-        .route(
-            "/api/v1/auth/register",
-            web::post().to(session::register),
-        )
+        .route("/api/v1/auth/register", web::post().to(session::register))
         .route("/api/v1/auth/login", web::post().to(session::login))
         .route("/users", web::post().to(user::create_user))
         .route(
@@ -18,12 +15,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             "/v1/chat/completions",
             web::post().to(proxy::chat_completions),
         )
-        .route("/api/v1/logs/request", web::get().to(audit::list_audit_logs))
+        .route(
+            "/api/v1/logs/request",
+            web::get().to(audit::list_audit_logs),
+        )
         .route(
             "/api/v1/logs/request/{request_id}",
             web::get().to(audit::get_audit_log),
         )
-        .route("/api/v1/logs/export", web::post().to(audit::export_audit_logs))
+        .route(
+            "/api/v1/logs/export",
+            web::post().to(audit::export_audit_logs),
+        )
         .route(
             "/api/v1/logs/export/{export_id}",
             web::get().to(audit::get_export_status),

@@ -276,9 +276,7 @@ mod tests {
         let repo = build_repo();
         repo.create_user_with_api_key("alice", "key-alice", 1)
             .expect("create user with api key");
-        let (token_id, user_id) = repo
-            .get_api_key_info("key-alice")
-            .expect("lookup key info");
+        let (token_id, user_id) = repo.get_api_key_info("key-alice").expect("lookup key info");
         assert!(token_id > 0);
         assert!(user_id > 0);
     }
@@ -306,10 +304,7 @@ mod tests {
             .expect("load creds");
         let (user_id, stored) = creds.expect("user exists");
         assert_eq!(stored.as_deref(), Some(hash.as_str()));
-        let key = repo
-            .get_first_api_key_for_user(user_id)
-            .expect("load key");
+        let key = repo.get_first_api_key_for_user(user_id).expect("load key");
         assert_eq!(key.as_deref(), Some("sk-reg-1"));
     }
 }
-

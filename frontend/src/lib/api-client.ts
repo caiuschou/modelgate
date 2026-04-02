@@ -4,8 +4,8 @@ import { useAuthStore } from '@/stores/auth-store'
 
 const retry = {
   limit: 1,
-  methods: ['get'] as const,
-  statusCodes: [408, 502, 503, 504] as const,
+  methods: ['get'],
+  statusCodes: [408, 502, 503, 504],
 }
 
 function kyPrefixUrl(): string | undefined {
@@ -65,10 +65,5 @@ export const apiClient = ky.create({
         window.location.href = `/login?redirect=${redirectTo}`
       },
     ],
-  },
-  retry: {
-    limit: 1,
-    methods: ['get'],
-    statusCodes: [408, 502, 503, 504],
   },
 })

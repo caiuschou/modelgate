@@ -26,4 +26,3 @@ pub fn build_service_container(db: crate::db::DbConn) -> ServiceContainer {
         user: Arc::new(DefaultUserService::new(repo)),
     }
 }
-

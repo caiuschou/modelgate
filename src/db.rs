@@ -1,6 +1,6 @@
-use rusqlite::{params, params_from_iter, types::Value, Connection};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{params, params_from_iter, types::Value, Connection};
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
@@ -243,7 +243,9 @@ pub fn query_audit_logs(
     }
 
     let count_sql = format!("SELECT COUNT(1) FROM audit_logs {where_sql}");
-    let total = conn.query_row(&count_sql, params_from_iter(where_args.iter()), |row| row.get(0))?;
+    let total = conn.query_row(&count_sql, params_from_iter(where_args.iter()), |row| {
+        row.get(0)
+    })?;
     Ok((records, total))
 }
 

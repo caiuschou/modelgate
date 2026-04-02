@@ -38,7 +38,9 @@ pub struct LoginUserDto {
 
 fn create_api_key() -> String {
     let mut rng = rand::thread_rng();
-    let random_part: String = (0..32).map(|_| format!("{:x}", rng.gen::<u8>() % 16)).collect();
+    let random_part: String = (0..32)
+        .map(|_| format!("{:x}", rng.gen::<u8>() % 16))
+        .collect();
     format!("sk-or-v1-{}", random_part)
 }
 
@@ -104,12 +106,7 @@ pub async fn register(
 
     state
         .user_service
-        .register_user_with_password_and_api_key(
-            username,
-            &password_hash,
-            &api_key,
-            created_at,
-        )
+        .register_user_with_password_and_api_key(username, &password_hash, &api_key, created_at)
         .map_err(ApiError::from)?;
 
     Ok(HttpResponse::Created().json(RegisterResponse {

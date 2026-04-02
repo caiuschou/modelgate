@@ -73,10 +73,9 @@ pub async fn download_export_file(
 ) -> Result<HttpResponse, ApiError> {
     let _ = auth_scope(&req, &state)?;
     let export_id = export_id.into_inner();
-    let file =
-        state
-            .audit_service
-            .download_export_file(&export_id, &state.audit_config.export_dir)?;
+    let file = state
+        .audit_service
+        .download_export_file(&export_id, &state.audit_config.export_dir)?;
 
     Ok(HttpResponse::Ok()
         .append_header((header::CONTENT_TYPE, file.content_type))
@@ -141,7 +140,11 @@ mod tests {
             ))
         }
 
-        fn get_audit_log(&self, request_id: &str, _user_id: i64) -> Result<AuditRecord, ServiceError> {
+        fn get_audit_log(
+            &self,
+            request_id: &str,
+            _user_id: i64,
+        ) -> Result<AuditRecord, ServiceError> {
             Ok(AuditRecord {
                 request_id: request_id.to_string(),
                 user_id: Some(100),
@@ -339,13 +342,11 @@ mod tests {
                 .unwrap_or(""),
             "text/csv; charset=utf-8"
         );
-        assert!(
-            headers
-                .get("content-disposition")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("")
-                .contains("exp_1.csv")
-        );
+        assert!(headers
+            .get("content-disposition")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .contains("exp_1.csv"));
         let bytes = to_bytes(resp.into_body()).await.expect("read body");
         assert_eq!(bytes.as_ref(), b"csv,data\n1,2\n");
     }
@@ -365,4 +366,3 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
-
