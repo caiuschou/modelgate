@@ -3,7 +3,8 @@ host = "0.0.0.0"
 port = 8000
 
 [auth]
-invite_code = "change-me"
+# Override at runtime: AUTH_INVITE_CODE
+invite_code = "ZW9Z"
 
 [upstream]
 base_url = "https://api.openai.com/v1"
