@@ -4,10 +4,14 @@ set -euo pipefail
 # Initialize frontend production environment on Ubuntu/Debian.
 # Rust API 使用独立子域，见 deploy/api/init-api-nginx.sh（api.modelgate.dev）。
 # Usage:
-#   sudo DOMAIN=modelgate.dev ./deploy/frontend/init-production.sh
+#   sudo DOMAIN=modelgate.dev DEPLOY_SSH_USER=deploy ./deploy/frontend/init-production.sh
+#
+# DEPLOY_SSH_USER must match GitHub Actions secret SSH_USER so the CD workflow can
+# write releases; www-data (Nginx) stays the group for static file reads.
 
 DOMAIN="${DOMAIN:-modelgate.dev}"
 DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/modelgate/frontend}"
+DEPLOY_SSH_USER="${DEPLOY_SSH_USER:-}"
 NGINX_SITE_PATH="${NGINX_SITE_PATH:-/etc/nginx/sites-available/modelgate-frontend.conf}"
 
 if [[ "${EUID}" -ne 0 ]]; then
@@ -21,7 +25,18 @@ if ! command -v nginx >/dev/null 2>&1; then
 fi
 
 mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared/logs"
-chown -R www-data:www-data "${DEPLOY_ROOT}"
+
+if [[ -n "${DEPLOY_SSH_USER}" ]]; then
+  chown -R "${DEPLOY_SSH_USER}:www-data" "${DEPLOY_ROOT}"
+  find "${DEPLOY_ROOT}" -type d -exec chmod 2775 {} \;
+  find "${DEPLOY_ROOT}" -type f -exec chmod 664 {} \; 2>/dev/null || true
+else
+  chown -R www-data:www-data "${DEPLOY_ROOT}"
+  find "${DEPLOY_ROOT}" -type d -exec chmod 755 {} \;
+  find "${DEPLOY_ROOT}" -type f -exec chmod 644 {} \; 2>/dev/null || true
+  echo "Warning: DEPLOY_SSH_USER is unset. GitHub CD cannot deploy unless SSH_USER is www-data." >&2
+  echo "  Re-run with: sudo DEPLOY_SSH_USER=<same as Actions SSH_USER> DOMAIN=${DOMAIN} $0" >&2
+fi
 
 # 仅域名访问控制台；按 IP 或未匹配 Host 走 default_server，显示 Nginx 默认页（/var/www/html）
 # 文件名用 000- 前缀，保证在 sites-enabled 中先于 modelgate-api / modelgate-frontend 加载，

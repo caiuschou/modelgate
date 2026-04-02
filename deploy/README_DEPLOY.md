@@ -8,8 +8,9 @@
 - `SSH_PORT`: SSH 端口（常见 `22`）
 - `SSH_USER`: SSH 用户名（建议非 root）
 - `SSH_PRIVATE_KEY`: 用于登录的私钥（OpenSSH 格式）
-- `DEPLOY_ROOT`: 部署根目录（例如 `/opt/modelgate`）
+- `DEPLOY_ROOT`: 后端部署根目录（例如 `/opt/modelgate`）
 - `SERVICE_NAME`: systemd 服务名（例如 `modelgate` 或 `modelgate.service`）
+- `DEPLOY_ROOT_FRONTEND`: 前端静态资源根目录，须与服务器一致（例如 `/opt/modelgate/frontend`）；详见 `deploy/frontend/README_FRONTEND_DEPLOY.md`
 
 ## 服务器准备（systemd）
 

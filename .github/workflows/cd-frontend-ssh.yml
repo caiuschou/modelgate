@@ -43,6 +43,24 @@ jobs:
           set -euo pipefail
           tar -C dist -czf "../frontend-${GITHUB_SHA}.tar.gz" .
 
+      - name: Check DEPLOY_ROOT_FRONTEND secret
+        shell: bash
+        env:
+          DEPLOY_ROOT_FRONTEND: ${{ secrets.DEPLOY_ROOT_FRONTEND }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DEPLOY_ROOT_FRONTEND}" ]]; then
+            echo "::error::DEPLOY_ROOT_FRONTEND is empty. Add it under Settings → Environments → production (e.g. /opt/modelgate/frontend)."
+            exit 1
+          fi
+          case "${DEPLOY_ROOT_FRONTEND}" in
+            /*) ;;
+            *)
+              echo "::error::DEPLOY_ROOT_FRONTEND must be an absolute path (got: ${DEPLOY_ROOT_FRONTEND})"
+              exit 1
+              ;;
+          esac
+
       - name: Upload package to server (SCP)
         uses: appleboy/scp-action@v0.1.7
         with:
