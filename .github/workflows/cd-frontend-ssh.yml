@@ -92,8 +92,5 @@ jobs:
 
             ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
 
-            nginx -t
-            systemctl reload nginx
-
             curl -fsS "http://127.0.0.1/" >/dev/null
 
