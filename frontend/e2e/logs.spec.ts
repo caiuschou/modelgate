@@ -48,10 +48,18 @@ test('list shows audit row after chat completion and opens detail', async ({
   await dataRow.getByRole('link', { name: '详情' }).click()
 
   await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
-  await expect(page.getByText(row!.request_id, { exact: false })).toBeVisible()
-  await expect(page.getByText(model, { exact: true })).toBeVisible()
-  await expect(page.getByText(appId, { exact: true })).toBeVisible()
-  await expect(page.getByText(/^stop$/)).toBeVisible()
+  await expect(
+    page.locator('dt', { hasText: 'request_id' }).locator('+ dd'),
+  ).toHaveText(row!.request_id)
+  await expect(
+    page.locator('dt', { hasText: '模型' }).locator('+ dd'),
+  ).toHaveText(model)
+  await expect(
+    page.locator('dt', { hasText: '应用 (app_id)' }).locator('+ dd'),
+  ).toHaveText(appId)
+  await expect(
+    page.locator('dt', { hasText: 'Finish 原因' }).locator('+ dd'),
+  ).toHaveText('stop')
 })
 
 test('keyword in URL shows matching audit row', async ({ page }) => {
@@ -83,7 +91,7 @@ test('model filter syncs to URL query when applying filters', async ({
 }) => {
   await page.goto('/logs')
   const model = `e2e_filter_${Date.now()}`
-  await page.getByPlaceholder('模型').fill(model)
+  await page.getByLabel('模型').fill(model)
   await page.getByRole('button', { name: '查询' }).click()
   await expect(page).toHaveURL(new RegExp(`[?&]model=${encodeURIComponent(model)}`))
 })

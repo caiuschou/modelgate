@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   createChatCompletion,
   createMyApiKey,
@@ -11,6 +11,11 @@ const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
 const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
 const e2eUser = process.env.E2E_USERNAME ?? 'e2e_user'
 const e2ePass = process.env.E2E_PASSWORD ?? 'E2e_local_pass_1'
+
+async function gotoApiKeys(page: Page) {
+  await page.goto('/')
+  await page.goto('/api-keys')
+}
 
 test.describe('API 密钥页（已登录）', () => {
   /** 共享 `e2e_user`，串行降低列表/吊销类用例互相干扰 */
@@ -28,7 +33,7 @@ test.describe('API 密钥页（已登录）', () => {
   })
 
   test('直接访问 /api-keys 可加载列表或空状态', async ({ page }) => {
-    await page.goto('/api-keys')
+    await gotoApiKeys(page)
     await expect(page.getByRole('heading', { name: 'API 密钥' })).toBeVisible()
     const hasTable = await page.locator('table').count()
     const empty = page.getByText('暂无密钥', { exact: false })
@@ -41,7 +46,7 @@ test.describe('API 密钥页（已登录）', () => {
     const token = await loginApiKey(consoleBase, e2eUser, e2ePass)
     const before = await listMyApiKeys(consoleBase, token)
 
-    await page.goto('/api-keys')
+    await gotoApiKeys(page)
     await page.getByRole('button', { name: '新建密钥' }).click()
     await expect(
       page.getByText('请立即保存 — 完整密钥仅显示这一次', { exact: false }),
@@ -75,7 +80,7 @@ test.describe('API 密钥页（已登录）', () => {
       origin: consoleBase,
     })
 
-    await page.goto('/api-keys')
+    await gotoApiKeys(page)
     await page.getByRole('button', { name: '新建密钥' }).click()
     await expect(page.locator('pre').filter({ hasText: /^sk-or-v1-/ })).toBeVisible({
       timeout: 15_000,
@@ -101,7 +106,7 @@ test.describe('API 密钥页（已登录）', () => {
     const { preview } = (await listMyApiKeys(consoleBase, token)).find((k) => k.id === id)!
     expect(preview).toBeTruthy()
 
-    await page.goto('/api-keys')
+    await gotoApiKeys(page)
     const row = page.getByRole('row').filter({ hasText: preview })
 
     page.once('dialog', (d) => {
@@ -124,7 +129,7 @@ test.describe('API 密钥页（已登录）', () => {
     const token = await loginApiKey(consoleBase, e2eUser, e2ePass)
     const keys = await listMyApiKeys(consoleBase, token)
 
-    await page.goto('/api-keys')
+    await gotoApiKeys(page)
     if (keys.length === 0) {
       await expect(page.getByText('暂无密钥', { exact: false })).toBeVisible()
     } else {
@@ -141,6 +146,7 @@ test.describe('API 密钥页（未登录）', () => {
   test('未登录访问 /api-keys 会跳到登录页', async ({ page }) => {
     await page.goto('/api-keys')
     await expect(page).toHaveURL(/\/login/)
-    await expect(page.getByRole('heading', { name: '登录 ModelGate' })).toBeVisible()
+    // CardTitle 为 div，无 heading 语义
+    await expect(page.getByText('登录 ModelGate')).toBeVisible()
   })
 })
