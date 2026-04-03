@@ -6,7 +6,7 @@ import { useUiStore } from '@/stores/ui-store'
 const menuItems = [
   { to: '/', label: '首页' },
   { to: '/channels', label: '渠道管理' },
-  { to: '/tokens', label: '令牌管理' },
+  { to: '/api-keys', label: 'API 密钥' },
   { to: '/users', label: '用户管理' },
   { to: '/logs', label: '日志中心' },
   { to: '/analytics', label: '统计分析' },
@@ -62,7 +62,11 @@ export function AppLayout() {
         >
           <nav className="space-y-1">
             {menuItems.map((item) => {
-              const isActive = location.pathname === item.to
+              const isActive =
+                item.to === '/'
+                  ? location.pathname === '/'
+                  : location.pathname === item.to ||
+                    location.pathname.startsWith(`${item.to}/`)
               return (
                 <Link
                   key={item.to}

@@ -1,8 +1,10 @@
 # 审计日志开发实现方案
 
-**版本:** 1.0
-**编写日期:** 2026年4月1日
+**版本:** 1.1
+**编写日期:** 2026年4月1日（修订：2026年4月2日，对齐 [日志中心 UI/交互规格](../design/interaction/log-center.md)）
 **适用范围:** ModelGate 审计日志功能的开发实现细节
+
+> **维护提示：** 本文撰写时与代码对齐；若接口或字段变更，请同步更新 [开发 API](api.md)、[产品审计日志](../product/audit-log.md) 与 [实现状态](../implementation-status.md)。
 
 ---
 
@@ -90,6 +92,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     total_tokens INTEGER,
     cost REAL,
     latency_ms INTEGER,
+    app_id TEXT,
+    finish_reason TEXT,
     metadata TEXT,
     created_at TEXT
 );
@@ -97,7 +101,11 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs (user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_token_id ON audit_logs (token_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_app_id ON audit_logs (app_id);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_finish_reason ON audit_logs (finish_reason);
 ```
+
+**迁移说明：** 已有库需 `ALTER TABLE` 增加 `app_id`、`finish_reason`（允许 `NULL`）；老数据无值时列表展示 `—`。
 
 ### 4.2 扩展字段说明
 
@@ -106,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_token_id ON audit_logs (token_id);
   - `completion_tokens_details`
   - `cost_details`
   - `is_byok`
+- **与日志中心 UI 对齐：** `app_id`、`finish_reason` 建议作为**表列**写入，便于列表筛选与索引；若过渡期仅存于 `metadata`，**列表/详情 API 仍应解析并返回扁平字段**（与前端表格、导出勾选一致）。
 
 ---
 
@@ -131,10 +140,15 @@ pub struct AuditRecord {
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
+    pub app_id: Option<String>,
+    pub finish_reason: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: String,
 }
 ```
+
+- `app_id`：调用方应用标识（来源：配置映射、请求头如 `X-App-Id`、或令牌绑定属性，**以产品约定为准**）。
+- `finish_reason`：从成功返回的 Chat/Completion 等 **JSON 响应体**解析（如 `choices[0].finish_reason`）；非此类请求、解析失败或错误响应则为 `None`。
 
 ### 5.2 `AuditMessage`
 
@@ -163,7 +177,7 @@ pub struct AppState {
 ### 6.1 中间件职责
 
 - 生成 `request_id`
-- 收集元信息：IP、User-Agent、请求路径、请求方法、请求体、用户身份、渠道、模型、类型
+- 收集元信息：IP、User-Agent、请求路径、请求方法、请求体、用户身份、渠道、模型、类型、**应用标识（`app_id`）**
 - 将请求体写入文件存储
 - 记录请求开始时间
 - 在请求完成后收集响应结果
@@ -300,7 +314,7 @@ pub fn insert_audit_log(conn: &Connection, record: &AuditRecord) -> rusqlite::Re
 ### 8.2 `query_audit_logs`
 
 - 支持分页参数：`limit`、`offset`
-- 支持过滤条件：`created_at`、`user_id`、`token_id`、`channel_id`、`model`、`status_code`、`keyword`
+- 支持过滤条件：`created_at`、`user_id`、`token_id`、`channel_id`、`model`、`status_code`、`keyword`、**`app_id`**、**`finish_reason`（可多值 OR）**、**prompt/completion token 区间**（字段名与比较符以后端 query 契约为准，与 [日志中心 UI/交互规格](../design/interaction/log-center.md) 一致）
 - `keyword` 用于匹配 `request_id`、`error_message`、`model` 等字段（建议使用 SQLite FTS5 或 `LIKE` + 索引组合）
 - 单次查询最大 `limit=1000`，避免大范围全量扫描
 - 仅返回元数据（默认不包含 request/response 路径）
@@ -331,10 +345,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
 
 ### 9.2 `list_audit_logs`
 
-- 解析查询参数
+- 解析查询参数（含时间范围、分页、排序及 **应用、`finish_reason`、token 区间** 等与 OpenAPI 一致的筛选项）
 - 校验权限
 - 调用 `query_audit_logs`
-- 返回分页结果
+- 返回分页结果；**列表 DTO** 含 `prompt_tokens`、`completion_tokens`、`total_tokens`、`app_id`、`finish_reason` 等元数据字段（路径类字段仍按原策略不返回或脱敏）
 
 ### 9.3 `get_audit_log`
 

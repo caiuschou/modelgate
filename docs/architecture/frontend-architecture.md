@@ -4,6 +4,8 @@
 **编写日期:** 2026年4月1日
 **技术栈:** React 19 + Vite 6 + shadcn/ui + TailwindCSS 4
 
+> **模块落地：** 各 Feature 是否已实现见 [实现状态](../implementation-status.md)；HTTP 约定见 [开发 API](../development/api.md)。
+
 ---
 
 ## 一、架构概述
@@ -453,6 +455,16 @@ interface LogFilters {
   model?: string;
   statusCode?: number;
   keyword?: string;
+  /** 应用标识，键名与后端 OpenAPI 一致（如 `app` / `app_id`） */
+  appId?: string;
+  /** 多选时可序列化为重复键或逗号分隔，以后端为准 */
+  finishReason?: string | string[];
+  minPromptTokens?: number;
+  maxPromptTokens?: number;
+  minCompletionTokens?: number;
+  maxCompletionTokens?: number;
+  sort?: string;
+  order?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }

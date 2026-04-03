@@ -134,6 +134,8 @@ mod tests {
                     total_tokens: Some(30),
                     cost: Some(0.01),
                     latency_ms: Some(100),
+                    app_id: Some("demo-app".into()),
+                    finish_reason: Some("stop".into()),
                     created_at: query.start_time.unwrap_or(1),
                 }],
                 1,
@@ -161,6 +163,8 @@ mod tests {
                 total_tokens: Some(30),
                 cost: Some(0.01),
                 latency_ms: Some(100),
+                app_id: Some("demo-app".into()),
+                finish_reason: Some("stop".into()),
                 metadata: None,
                 created_at: 1,
             })

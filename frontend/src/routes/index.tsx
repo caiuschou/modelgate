@@ -6,6 +6,8 @@ import { DashboardPage } from '@/features/dashboard/pages/dashboard-page'
 import { LoginPage } from '@/features/auth/pages/login-page'
 import { RegisterPage } from '@/features/auth/pages/register-page'
 import { NotFoundPage } from '@/features/common/pages/not-found-page'
+import { LogDetailPage } from '@/features/logs/pages/log-detail-page'
+import { LogListPage } from '@/features/logs/pages/log-list-page'
 import { useAuthStore } from '@/stores/auth-store'
 
 function AuthGuard({ children }: { children: ReactNode }) {
@@ -55,7 +57,7 @@ export const router = createBrowserRouter([
           </AdminGuard>
         ),
       },
-      { path: 'tokens', element: <PlaceholderPage title="令牌管理" /> },
+      { path: 'api-keys', element: <PlaceholderPage title="API 密钥" /> },
       {
         path: 'users',
         element: (
@@ -64,7 +66,8 @@ export const router = createBrowserRouter([
           </AdminGuard>
         ),
       },
-      { path: 'logs', element: <PlaceholderPage title="日志中心" /> },
+      { path: 'logs', element: <LogListPage /> },
+      { path: 'logs/:requestId', element: <LogDetailPage /> },
       { path: 'analytics', element: <PlaceholderPage title="统计分析" /> },
       {
         path: 'settings',

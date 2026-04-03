@@ -1,9 +1,12 @@
 # ModelGate API 架构设计方案
 
-**版本:** 1.0
-**编写日期:** 2026年3月30日
-**文档类型:** 技术架构设计
-**技术栈:** Rust + Tokio + SQLx
+**版本:** 1.1  
+**编写日期:** 2026年3月30日（修订：2026年4月）  
+**文档类型:** 技术架构设计（**目标 / 扩展方案**，非当前仓库逐行实现说明）
+
+> **阅读指引：** 当前代码库为 **Actix-web + rusqlite（SQLite）+ r2d2** 的演进原型，并未采用下文中的 SeaORM、SQLx、Kafka、Elasticsearch 等全量栈。请以 [Rust 代码架构](rust-code-architecture.md)、[开发 API](../development/api.md)、[实现状态](../implementation-status.md) 为**实现真相**；本文保留作中长期架构讨论与扩容参考。
+
+**技术栈（文档原述）:** Rust + Tokio + SQLx
 
 ---
 

@@ -1,7 +1,9 @@
 # ModelGate 请求审计日志
 
-**版本:** 1.0  
-**更新日期:** 2026年3月
+**版本:** 1.2  
+**更新日期:** 2026年4月
+
+> **实现说明：** 列表/详情/导出等 API 已在服务端提供；字段与查询参数与本文基本一致。HTTP 路径与认证细节以 [开发 API](../development/api.md) 为准。存储路径、保留策略等运维项见 [部署文档](../development/deployment.md)。
 
 ---
 
@@ -28,6 +30,7 @@
 | channel_id | int | 渠道ID |
 | model | string | 模型名称 |
 | request_type | string | 请求类型：`chat`、`completion`、`embedding` 等 |
+| app_id | string | 调用方应用标识（可选；可由请求头 `X-App-Id` 传入） |
 | request_body | json | 请求体内容 |
 | created_at | timestamp | 请求时间 |
 
@@ -38,6 +41,7 @@
 | response_body | json | 响应体内容 |
 | status_code | int | HTTP 状态码 |
 | error_message | string | 错误信息（如有） |
+| finish_reason | string | 模型完成原因（可选；如 Chat Completions 的 `choices[0].finish_reason`：`stop`、`length`、`content_filter`、`tool_calls` 等） |
 
 ### 2.3 用量与成本
 
@@ -97,9 +101,10 @@
 ### 3.2 日志查询
 
 **支持维度：**
-- 按时间范围筛选
+- 按时间范围筛选（Unix 时间戳，秒）
 - 按用户/令牌/渠道筛选
-- 按模型筛选
+- 按模型、`app_id`、**`finish_reason`**（逗号分隔多值，语义为 OR）筛选
+- 按 **prompt / completion token 数量区间**筛选（`min_prompt_tokens`、`max_prompt_tokens` 等）
 - 按状态码筛选（成功/错误）
 - 关键词搜索
 
@@ -118,9 +123,9 @@
 - API 接口触发导出
 
 **导出字段（可配置）：**
-- 基础信息：request_id、时间、用户、令牌
-- 请求/响应：model、request_body、response_body
-- 用量：tokens、cost、latency
+- 基础信息：request_id、时间、用户、令牌、`app_id`、`finish_reason`
+- 请求/响应：model、request_body、response_body（路径或正文依实现）
+- 用量：prompt_tokens、completion_tokens、total_tokens、cost、latency
 
 ### 3.4 日志审计
 
@@ -156,9 +161,25 @@
 
 ### 5.1 查询请求日志
 
-**请求：**
+**认证：** `Authorization: Bearer <API Key>`（控制台登录态与网关使用同一令牌时即为该 Key）
+
+**常用 Query 参数：**
+
+| 参数 | 说明 |
+|------|------|
+| `start_time` / `end_time` | Unix 时间戳（**秒**），按 `created_at` 过滤 |
+| `limit` / `offset` | 分页；`limit` 默认 100，最大 1000 |
+| `keyword` | 匹配 `request_id` / `error_message` / `model`（LIKE） |
+| `model` | 精确匹配模型名 |
+| `status_code` | 精确匹配 HTTP 状态码 |
+| `user_id` / `token_id` / `channel_id` | 精确匹配（普通用户通常由服务端限定为本人） |
+| `app_id` | 精确匹配应用标识 |
+| `finish_reason` | 多个值用英文逗号分隔，语义为 **IN（OR）** |
+| `min_prompt_tokens` / `max_prompt_tokens` 等 | Token 区间过滤 |
+
+**请求示例：**
 ```
-GET /api/v1/logs/request?start_time=2026-01-01&end_time=2026-03-31
+GET /api/v1/logs/request?start_time=1711843200&end_time=1711929600&limit=20&offset=0&app_id=my-app&finish_reason=stop,length
 ```
 
 **响应：**
@@ -169,19 +190,24 @@ GET /api/v1/logs/request?start_time=2026-01-01&end_time=2026-03-31
       "request_id": "1234567890_abc",
       "user_id": 1,
       "token_id": 10,
+      "channel_id": null,
       "model": "gpt-4",
+      "request_type": "chat",
       "status_code": 200,
+      "error_message": null,
       "prompt_tokens": 100,
       "completion_tokens": 200,
       "total_tokens": 300,
       "cost": 0.015,
       "latency_ms": 1500,
-      "created_at": "2026-03-31T10:00:00Z"
+      "app_id": "my-app",
+      "finish_reason": "stop",
+      "created_at": 1711920000
     }
   ],
   "total": 1000,
-  "page": 1,
-  "page_size": 100
+  "limit": 20,
+  "offset": 0
 }
 ```
 
@@ -191,20 +217,22 @@ GET /api/v1/logs/request?start_time=2026-01-01&end_time=2026-03-31
 ```
 POST /api/v1/logs/export
 Content-Type: application/json
+Authorization: Bearer <API Key>
 
 {
-  "start_time": "2026-01-01",
-  "end_time": "2026-03-31",
-  "format": "csv",
-  "fields": ["request_id", "user_id", "model", "cost"]
+  "start_time": 1711843200,
+  "end_time": 1711929600,
+  "format": "csv"
 }
 ```
+
+> 当前实现为同步生成文件并返回 `success`；`fields` 自定义列为后续扩展。
 
 **响应：**
 ```json
 {
   "export_id": "exp_1234567890",
-  "status": "processing",
+  "status": "success",
   "download_url": "/api/v1/logs/export/exp_1234567890/download"
 }
 ```
@@ -268,6 +296,10 @@ Content-Type: application/json
 技术方案已独立整理为开发技术文档，详见：
 
 - [审计日志技术方案](../architecture/audit-log-technical-solution.md)
+
+控制台「日志中心」界面与交互规格见：
+
+- [日志中心 UI/交互规格](../design/interaction/log-center.md)
 
 ---
 

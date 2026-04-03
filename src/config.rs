@@ -66,6 +66,13 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
         config = builder.build()?;
     }
 
+    if let Ok(base_url) = std::env::var("UPSTREAM_BASE_URL") {
+        let mut builder = config::Config::builder();
+        builder = builder.add_source(config);
+        builder = builder.set_override("upstream.base_url", base_url)?;
+        config = builder.build()?;
+    }
+
     if let Ok(code) = std::env::var("AUTH_INVITE_CODE") {
         let mut builder = config::Config::builder();
         builder = builder.add_source(config);
@@ -97,6 +104,8 @@ mod tests {
     fn clear_env_vars() {
         env::remove_var("UPSTREAM_API_KEY");
         env::remove_var("UPSTREAM__API_KEY");
+        env::remove_var("UPSTREAM_BASE_URL");
+        env::remove_var("UPSTREAM__BASE_URL");
     }
 
     fn store_env_var(key: &str, value: Option<String>) {
@@ -124,6 +133,29 @@ mod tests {
             assert_eq!(cfg.server.port, 8000);
 
             store_env_var("UPSTREAM_API_KEY", original_value);
+        });
+    }
+
+    #[test]
+    fn upstream_base_url_env_override() {
+        with_env_lock(|| {
+            let original_key = env::var("UPSTREAM_API_KEY").ok();
+            let original_base = env::var("UPSTREAM_BASE_URL").ok();
+            clear_env_vars();
+
+            let dir = env::temp_dir().join("modelgate_config_base_url_test");
+            let _ = std::fs::remove_dir_all(&dir);
+            create_dir_all(&dir).expect("create config dir");
+
+            env::set_var("UPSTREAM_API_KEY", "env-key");
+            env::set_var("UPSTREAM_BASE_URL", "http://127.0.0.1:18080/v1");
+
+            let cfg = load_config_from_dir(&dir).expect("load config");
+            assert_eq!(cfg.upstream.api_key, "env-key");
+            assert_eq!(cfg.upstream.base_url, "http://127.0.0.1:18080/v1");
+
+            store_env_var("UPSTREAM_API_KEY", original_key);
+            store_env_var("UPSTREAM_BASE_URL", original_base);
         });
     }
 

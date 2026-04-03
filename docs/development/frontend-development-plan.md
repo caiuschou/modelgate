@@ -6,6 +6,8 @@
 **项目周期:** 8周  
 **适用范围:** ModelGate 管理控制台（React + Vite + shadcn/ui + TailwindCSS）
 
+> **进度对照：** 页面级落地情况见 [实现状态](../implementation-status.md) 与 [导航设计（当前实现）](../design/interaction/navigation.md)。
+
 ---
 
 ## 一、计划概述
@@ -107,15 +109,21 @@
 
 ### 3.4 Feature：日志中心（Log Center）
 
+**交互规格：** [日志中心 UI/交互规格](../design/interaction/log-center.md)（列表含 **应用（App）**、**输入/输出 Tokens 分列**、**Finish 原因**、高级筛选与窄屏合并规则；详情摘要与导出字段与规格一致。）
+
+**实现进展（2026-04）：** 后端已迁移 `app_id`、`finish_reason` 列及列表筛选 query；代理在非流式 Chat 完成时解析 `finish_reason`，并读取 `X-App-Id`；前端已提供 `/logs` 列表、详情与 CSV 导出（Unix 秒时间范围 + URL Query）；高级 token 区间筛选可在列表页补表单项对接。
+
 | 任务 | 计划周期 | 状态 |
 |------|----------|------|
-| 完成日志列表页（筛选、分页、排序） | Week 3 | 未开始 |
-| 完成日志详情页（请求/响应、耗时、状态） | Week 3 | 未开始 |
-| 建立日志相关 Query Hooks | Week 3 | 未开始 |
-| 实现日志导出弹窗与导出状态轮询 | Week 4 | 未开始 |
+| 完成日志列表页（筛选、分页、排序、**URL Query 同步**） | Week 3 | 未开始 |
+| 列表表格：**应用**、**prompt / completion**（及可选 **合计**）、**`finish_reason`** 等列与列设置（P1） | Week 3 | 未开始 |
+| **高级筛选**（含 `finish_reason`、token 区间等，以后端 query 为准） | Week 3–4 | 未开始 |
+| 完成日志详情页（请求/响应 Tab、摘要区字段与规格对齐） | Week 3 | 未开始 |
+| 建立日志相关 Query Hooks（筛选类型与 OpenAPI 一致） | Week 3 | 未开始 |
+| 实现日志导出弹窗（**含 `prompt_tokens` / `completion_tokens` / `finish_reason` 等可选列**）与导出状态轮询 | Week 4 | 未开始 |
 | 实现导出文件下载流程 | Week 4 | 未开始 |
 
-**验收标准：** 可通过 API 展示日志列表与详情；筛选条件支持 URL 同步（可分享链接）；日志导出完整可用（创建 → 轮询 → 下载）。
+**验收标准：** 可通过 API 展示日志列表与详情；筛选条件支持 URL 同步（可分享链接）；日志导出完整可用（创建 → 轮询 → 下载）；**与交互规格第十一节验收要点一致**（含：无后端字段时对应列/筛选项隐藏；Finish 原因以文本为主）。
 
 ### 3.5 Feature：令牌管理（Token Management）
 
@@ -172,7 +180,7 @@
 |------|----------|------|
 | 补齐核心 hooks/store 单元测试 | Week 7 | 未开始 |
 | 补齐关键组件交互测试 | Week 7 | 未开始 |
-| 编写 E2E（注册、登录、日志查询、令牌创建） | Week 7 | 未开始 |
+| 编写 E2E（注册、登录、日志查询、令牌创建），方案见 [e2e-testing-plan.md](e2e-testing-plan.md)；Playwright + 上游 Mock + CI 已落地，令牌用例待页面就绪 | Week 7 | 进行中 |
 | 性能优化（路由懒加载、表格虚拟滚动） | Week 7 | 未开始 |
 | 可访问性检查（键盘导航、aria、对比度） | Week 7 | 未开始 |
 
@@ -237,6 +245,7 @@
 
 ### 5.2 待后端补齐 API（前端关键阻塞）
 
+- **日志列表/详情/导出（与 UI 规格对齐）：** 列表与详情响应需包含 **`app_id`（或产品约定的应用标识字段）**、**`finish_reason`**（由网关从 Chat/Completion 等 JSON 响应解析，不适用则为空）；`GET /api/v1/logs/request` 的 query 需支持对应筛选（如应用、`finish_reason` 多选、prompt/completion token 区间等，**以 OpenAPI 为准**）。若短期仅落 `metadata`，列表接口仍需返回扁平字段供表格直显。详见 [审计日志开发实现](audit-log-implementation.md)（数据模型、查询与 Handler）与 [日志中心 UI/交互规格](../design/interaction/log-center.md)。
 - 认证：`/api/v1/auth/register`（body：`username`、`password`、`invite_code`；`invite_code` 须与配置 `auth.invite_code` 或环境变量 `AUTH_INVITE_CODE` 一致）、`/api/v1/auth/login`、`/api/v1/auth/me`、`/api/v1/auth/logout`
 - 用户列表/更新/删除
 - 令牌列表/更新/删除

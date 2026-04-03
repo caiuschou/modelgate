@@ -26,9 +26,10 @@ modelgate/
 │   │       ├── navigation.md          # 导航设计
 │   │       ├── design-tokens.md       # 设计令牌
 │   │       └── mobile.md              # 移动端设计
-│   ├── development/                   # 开发文档（待完善）
-│   │   ├── api.md                     # API 文档
-│   │   ├── deployment.md              # 部署文档
+│   ├── implementation-status.md      # 文档与代码对照（推荐）
+│   ├── development/                   # 开发文档
+│   │   ├── api.md                     # 服务端 API（当前实现）
+│   │   ├── deployment.md              # 部署与运行
 │   │   └── changelog.md               # 更新日志
 │   └── assets/                        # 资源文件
 │       ├── images/                    # 图片资源
@@ -110,9 +111,8 @@ modelgate/
 3. ✅ 参考 [设计令牌](docs/design/interaction/design-tokens.md) 进行UI开发
 
 ### 短期完善
-1. 补充 API 文档（`docs/development/api.md`）
-2. 补充部署文档（`docs/development/deployment.md`）
-3. 添加架构图到 `docs/assets/diagrams/`
+1. ✅ 已补充 [开发 API](development/api.md)、[部署](development/deployment.md)、[实现状态](implementation-status.md)
+2. 添加架构图到 `docs/assets/diagrams/`（可选）
 
 ### 长期维护
 1. 定期更新产品路线图
@@ -133,4 +133,4 @@ modelgate/
 
 ---
 
-**整理完成时间:** 2026年3月30日
+**整理完成时间:** 2026年3月30日（修订：2026年4月3日 — 开发文档与实现对照已补齐）

@@ -4,7 +4,7 @@ use rusqlite::{params, params_from_iter, types::Value, Connection};
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 3] = [
+const MIGRATIONS: [(&str, &str); 4] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -16,6 +16,10 @@ const MIGRATIONS: [(&str, &str); 3] = [
     (
         "0003_users_password_hash.sql",
         include_str!("../migrations/0003_users_password_hash.sql"),
+    ),
+    (
+        "0004_audit_app_finish_reason.sql",
+        include_str!("../migrations/0004_audit_app_finish_reason.sql"),
     ),
 ];
 
@@ -162,9 +166,9 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 request_id, user_id, token_id, channel_id, model, request_type,
                 request_body_path, response_body_path, status_code, error_message,
                 prompt_tokens, completion_tokens, total_tokens, cost, latency_ms,
-                metadata, created_at
+                app_id, finish_reason, metadata, created_at
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
             )",
         )?;
 
@@ -186,6 +190,8 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 record.total_tokens,
                 record.cost,
                 record.latency_ms,
+                record.app_id,
+                record.finish_reason,
                 metadata,
                 record.created_at
             ])?;
@@ -207,7 +213,7 @@ pub fn query_audit_logs(
         "SELECT
             request_id, user_id, token_id, channel_id, model, request_type,
             status_code, error_message, prompt_tokens, completion_tokens,
-            total_tokens, cost, latency_ms, created_at
+            total_tokens, cost, latency_ms, app_id, finish_reason, created_at
          FROM audit_logs
          {where_sql}
          ORDER BY created_at DESC
@@ -233,7 +239,9 @@ pub fn query_audit_logs(
             total_tokens: row.get(10)?,
             cost: row.get(11)?,
             latency_ms: row.get(12)?,
-            created_at: row.get(13)?,
+            app_id: row.get(13)?,
+            finish_reason: row.get(14)?,
+            created_at: row.get(15)?,
         })
     })?;
 
@@ -258,7 +266,7 @@ pub fn get_audit_log_by_request_id(
             request_id, user_id, token_id, channel_id, model, request_type,
             request_body_path, response_body_path, status_code, error_message,
             prompt_tokens, completion_tokens, total_tokens, cost, latency_ms,
-            metadata, created_at
+            app_id, finish_reason, metadata, created_at
          FROM audit_logs
          WHERE request_id = ?"
         .to_string();
@@ -269,7 +277,7 @@ pub fn get_audit_log_by_request_id(
     }
 
     conn.query_row(&sql, params_from_iter(args.iter()), |row| {
-        let metadata_str: Option<String> = row.get(15)?;
+        let metadata_str: Option<String> = row.get(17)?;
         let metadata = metadata_str.and_then(|raw| serde_json::from_str(&raw).ok());
         Ok(AuditRecord {
             request_id: row.get(0)?,
@@ -287,8 +295,10 @@ pub fn get_audit_log_by_request_id(
             total_tokens: row.get(12)?,
             cost: row.get(13)?,
             latency_ms: row.get(14)?,
+            app_id: row.get(15)?,
+            finish_reason: row.get(16)?,
             metadata,
-            created_at: row.get(16)?,
+            created_at: row.get(18)?,
         })
     })
 }
@@ -297,43 +307,82 @@ fn build_audit_where_clause(
     query: &AuditListQuery,
     scoped_user_id: Option<i64>,
 ) -> (String, Vec<Value>) {
-    let mut where_clauses: Vec<&str> = Vec::new();
+    let mut where_clauses: Vec<String> = Vec::new();
     let mut args: Vec<Value> = Vec::new();
 
     if let Some(user_id) = scoped_user_id.or(query.user_id) {
-        where_clauses.push("user_id = ?");
+        where_clauses.push("user_id = ?".to_string());
         args.push(Value::Integer(user_id));
     }
     if let Some(token_id) = query.token_id {
-        where_clauses.push("token_id = ?");
+        where_clauses.push("token_id = ?".to_string());
         args.push(Value::Integer(token_id));
     }
     if let Some(start_time) = query.start_time {
-        where_clauses.push("created_at >= ?");
+        where_clauses.push("created_at >= ?".to_string());
         args.push(Value::Integer(start_time));
     }
     if let Some(end_time) = query.end_time {
-        where_clauses.push("created_at <= ?");
+        where_clauses.push("created_at <= ?".to_string());
         args.push(Value::Integer(end_time));
     }
     if let Some(status_code) = query.status_code {
-        where_clauses.push("status_code = ?");
+        where_clauses.push("status_code = ?".to_string());
         args.push(Value::Integer(status_code));
     }
     if let Some(channel_id) = &query.channel_id {
-        where_clauses.push("channel_id = ?");
+        where_clauses.push("channel_id = ?".to_string());
         args.push(Value::Text(channel_id.clone()));
     }
     if let Some(model) = &query.model {
-        where_clauses.push("model = ?");
+        where_clauses.push("model = ?".to_string());
         args.push(Value::Text(model.clone()));
     }
     if let Some(keyword) = &query.keyword {
         let like_kw = format!("%{keyword}%");
-        where_clauses.push("(request_id LIKE ? OR error_message LIKE ? OR model LIKE ?)");
+        where_clauses.push("(request_id LIKE ? OR error_message LIKE ? OR model LIKE ?)".to_string());
         args.push(Value::Text(like_kw.clone()));
         args.push(Value::Text(like_kw.clone()));
         args.push(Value::Text(like_kw));
+    }
+    if let Some(app_id) = &query.app_id {
+        if !app_id.is_empty() {
+            where_clauses.push("app_id = ?".to_string());
+            args.push(Value::Text(app_id.clone()));
+        }
+    }
+    if let Some(fr) = &query.finish_reason {
+        let parts: Vec<String> = fr
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !parts.is_empty() {
+            let placeholders: Vec<&str> = parts.iter().map(|_| "?").collect();
+            where_clauses.push(format!(
+                "finish_reason IN ({})",
+                placeholders.join(", ")
+            ));
+            for p in parts {
+                args.push(Value::Text(p));
+            }
+        }
+    }
+    if let Some(v) = query.min_prompt_tokens {
+        where_clauses.push("prompt_tokens >= ?".to_string());
+        args.push(Value::Integer(v));
+    }
+    if let Some(v) = query.max_prompt_tokens {
+        where_clauses.push("prompt_tokens <= ?".to_string());
+        args.push(Value::Integer(v));
+    }
+    if let Some(v) = query.min_completion_tokens {
+        where_clauses.push("completion_tokens >= ?".to_string());
+        args.push(Value::Integer(v));
+    }
+    if let Some(v) = query.max_completion_tokens {
+        where_clauses.push("completion_tokens <= ?".to_string());
+        args.push(Value::Integer(v));
     }
 
     let where_sql = if where_clauses.is_empty() {

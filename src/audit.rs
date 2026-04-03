@@ -32,6 +32,8 @@ pub struct AuditRecord {
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
+    pub app_id: Option<String>,
+    pub finish_reason: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: i64,
 }
@@ -51,6 +53,14 @@ pub struct AuditListQuery {
     pub model: Option<String>,
     pub status_code: Option<i64>,
     pub keyword: Option<String>,
+    /// 调用方应用标识（精确匹配）
+    pub app_id: Option<String>,
+    /// 多个值用英文逗号分隔，语义为 OR（如 `stop,length`）
+    pub finish_reason: Option<String>,
+    pub min_prompt_tokens: Option<i64>,
+    pub max_prompt_tokens: Option<i64>,
+    pub min_completion_tokens: Option<i64>,
+    pub max_completion_tokens: Option<i64>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -70,6 +80,8 @@ pub struct AuditListItem {
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
+    pub app_id: Option<String>,
+    pub finish_reason: Option<String>,
     pub created_at: i64,
 }
 

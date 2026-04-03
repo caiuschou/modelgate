@@ -33,6 +33,7 @@ pub async fn chat_completions(
     body: web::Bytes,
 ) -> Result<HttpResponse, ApiError> {
     let request_id = crate::audit::generate_request_id();
+    let app_id = extract_app_id(&req);
     let start = std::time::Instant::now();
     let api_key = auth::extract_bearer_token(&req)
         .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
@@ -76,6 +77,8 @@ pub async fn chat_completions(
                     total_tokens: None,
                     cost: None,
                     latency_ms: Some(start.elapsed().as_millis() as i64),
+                    app_id: app_id.clone(),
+                    finish_reason: None,
                     metadata: None,
                     created_at: crate::audit::now_unix_secs(),
                 },
@@ -108,6 +111,8 @@ pub async fn chat_completions(
                 total_tokens: None,
                 cost: None,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
+                app_id: app_id.clone(),
+                finish_reason: None,
                 metadata: Some(serde_json::json!({ "stream": true })),
                 created_at: crate::audit::now_unix_secs(),
             },
@@ -131,7 +136,7 @@ pub async fn chat_completions(
         let response_body_path =
             crate::audit::save_body_to_file(&state.audit_config, &request_id, "response", &bytes)
                 .ok();
-        let usage = parse_usage_and_cost(&bytes);
+        let usage = parse_usage_cost_and_finish(&bytes);
         send_audit_record(
             &state,
             crate::audit::AuditRecord {
@@ -154,6 +159,8 @@ pub async fn chat_completions(
                 total_tokens: usage.2,
                 cost: usage.3,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
+                app_id: app_id.clone(),
+                finish_reason: usage.4,
                 metadata: Some(serde_json::json!({ "stream": false })),
                 created_at: crate::audit::now_unix_secs(),
             },
@@ -177,10 +184,22 @@ fn parse_model_from_request(body: &[u8]) -> Option<String> {
         })
 }
 
-fn parse_usage_and_cost(body: &[u8]) -> (Option<i64>, Option<i64>, Option<i64>, Option<f64>) {
+fn extract_app_id(req: &HttpRequest) -> Option<String> {
+    req.headers()
+        .get("x-app-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(std::string::ToString::to_string)
+}
+
+/// OpenAI-style chat completion JSON: `usage` + `choices[0].finish_reason`.
+fn parse_usage_cost_and_finish(
+    body: &[u8],
+) -> (Option<i64>, Option<i64>, Option<i64>, Option<f64>, Option<String>) {
     let value = match serde_json::from_slice::<Value>(body) {
         Ok(v) => v,
-        Err(_) => return (None, None, None, None),
+        Err(_) => return (None, None, None, None, None),
     };
 
     let usage = value.get("usage");
@@ -194,8 +213,21 @@ fn parse_usage_and_cost(body: &[u8]) -> (Option<i64>, Option<i64>, Option<i64>, 
         .and_then(|u| u.get("total_tokens"))
         .and_then(|v| v.as_i64());
     let cost = value.get("cost").and_then(|v| v.as_f64());
+    let finish_reason = value
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|ch| ch.get("finish_reason"))
+        .and_then(|v| v.as_str())
+        .map(std::string::ToString::to_string);
 
-    (prompt_tokens, completion_tokens, total_tokens, cost)
+    (
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        cost,
+        finish_reason,
+    )
 }
 
 async fn send_audit_record(state: &web::Data<AppState>, record: crate::audit::AuditRecord) {

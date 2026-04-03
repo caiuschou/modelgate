@@ -4,6 +4,8 @@
 **制定日期:** 2026年4月1日  
 **适用范围:** ModelGate 管理控制台（React + Vite）部署到 staging/prod
 
+> **本地联调：** 开发代理见 `frontend/vite.config.ts`；网关进程见 [部署与运行](deployment.md)。
+
 ---
 
 ## 一、目标与原则
