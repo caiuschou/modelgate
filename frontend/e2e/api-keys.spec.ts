@@ -12,9 +12,11 @@ const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
 const e2eUser = process.env.E2E_USERNAME ?? 'e2e_user'
 const e2ePass = process.env.E2E_PASSWORD ?? 'E2e_local_pass_1'
 
+/** 与侧栏用例一致：先加载 `/` 再客户端跳转，避免直链 `/api-keys` 时 persist 未恢复 */
 async function gotoApiKeys(page: Page) {
   await page.goto('/')
-  await page.goto('/api-keys')
+  await page.locator('aside a[href="/api-keys"]').click()
+  await expect(page).toHaveURL(/\/api-keys$/)
 }
 
 test.describe('API 密钥页（已登录）', () => {
@@ -141,12 +143,18 @@ test.describe('API 密钥页（已登录）', () => {
 })
 
 test.describe('API 密钥页（未登录）', () => {
-  test.use({ storageState: { cookies: [], origins: [] } })
-
-  test('未登录访问 /api-keys 会跳到登录页', async ({ page }) => {
-    await page.goto('/api-keys')
-    await expect(page).toHaveURL(/\/login/)
-    // CardTitle 为 div，无 heading 语义
-    await expect(page.getByText('登录 ModelGate')).toBeVisible()
+  test('未登录访问 /api-keys 会跳到登录页', async ({ browser }) => {
+    const context = await browser.newContext({
+      baseURL: consoleBase,
+      storageState: { cookies: [], origins: [] },
+    })
+    const page = await context.newPage()
+    try {
+      await page.goto('/api-keys')
+      await expect(page).toHaveURL(/\/login/)
+      await expect(page.getByText('登录 ModelGate')).toBeVisible()
+    } finally {
+      await context.close()
+    }
   })
 })
