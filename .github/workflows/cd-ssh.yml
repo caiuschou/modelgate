@@ -28,7 +28,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp "target/release/modelgate" "dist/modelgate"
-          cp "config.example.toml" "dist/config.toml"
+          cp "config.example.toml" "dist/config.example.toml"
           tar -C dist -czf "modelgate-${GITHUB_SHA}.tar.gz" .
 
       - name: Upload package to server (SCP)
@@ -64,13 +64,14 @@ jobs:
             # Ensure executable bit
             chmod +x "${RELEASE_DIR}/modelgate"
 
+            # Initialize shared config once; keep it across releases
+            if [ ! -f "${DEPLOY_ROOT}/shared/config.toml" ]; then
+              cp "${RELEASE_DIR}/config.example.toml" "${DEPLOY_ROOT}/shared/config.toml"
+            fi
+            ln -sfn "${DEPLOY_ROOT}/shared/config.toml" "${RELEASE_DIR}/config.toml"
+
             # Point "current" to this release
             ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
-
-            # Keep existing config if present, otherwise use the example
-            if [ ! -f "${DEPLOY_ROOT}/shared/config.toml" ]; then
-                ln -sfn "${DEPLOY_ROOT}/current/config.toml" "${DEPLOY_ROOT}/shared/config.toml"
-            fi
 
             # Restart service
             systemctl daemon-reload || true
