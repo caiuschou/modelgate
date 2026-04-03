@@ -1,3 +1,4 @@
+pub mod api_keys;
 pub mod audit;
 pub mod proxy;
 pub mod session;

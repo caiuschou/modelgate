@@ -97,6 +97,27 @@ mod tests {
         ) -> Result<(), RepositoryError> {
             Ok(())
         }
+        fn list_api_keys_for_user(
+            &self,
+            _user_id: i64,
+        ) -> Result<Vec<crate::services::repository::ApiKeySummary>, RepositoryError> {
+            Ok(Vec::new())
+        }
+        fn insert_api_key_for_user_returning_id(
+            &self,
+            _user_id: i64,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<i64, RepositoryError> {
+            Ok(1)
+        }
+        fn revoke_api_key_for_user(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
     }
 
     #[test]

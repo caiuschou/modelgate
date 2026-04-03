@@ -260,6 +260,25 @@ mod tests {
         ) -> Result<(), ServiceError> {
             Ok(())
         }
+
+        fn list_my_api_keys(
+            &self,
+            _user_id: i64,
+        ) -> Result<Vec<crate::services::repository::ApiKeySummary>, ServiceError> {
+            Ok(Vec::new())
+        }
+
+        fn create_my_api_key(
+            &self,
+            _user_id: i64,
+            _created_at: u64,
+        ) -> Result<(i64, String, u64), ServiceError> {
+            Ok((1, "sk-test".into(), _created_at))
+        }
+
+        fn revoke_my_api_key(&self, _user_id: i64, _key_id: i64) -> Result<(), ServiceError> {
+            Ok(())
+        }
     }
 
     fn build_test_state() -> AppState {

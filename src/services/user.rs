@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::error::ServiceError;
-use super::repository::Repository;
+use super::repository::{ApiKeySummary, Repository};
 
 pub trait UserService: Send + Sync {
     fn create_user_with_api_key(
@@ -34,6 +34,13 @@ pub trait UserService: Send + Sync {
         api_key: &str,
         created_at: u64,
     ) -> Result<(), ServiceError>;
+
+    fn list_my_api_keys(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, ServiceError>;
+
+    /// Returns `(id, full_api_key, created_at)` — full key only at creation time.
+    fn create_my_api_key(&self, user_id: i64, created_at: u64) -> Result<(i64, String, u64), ServiceError>;
+
+    fn revoke_my_api_key(&self, user_id: i64, key_id: i64) -> Result<(), ServiceError>;
 }
 
 pub struct DefaultUserService {
@@ -106,6 +113,36 @@ impl UserService for DefaultUserService {
             .create_api_key_for_user_id(user_id, api_key, created_at)
             .map_err(ServiceError::from)
     }
+
+    fn list_my_api_keys(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, ServiceError> {
+        self.repo
+            .list_api_keys_for_user(user_id)
+            .map_err(ServiceError::from)
+    }
+
+    fn create_my_api_key(&self, user_id: i64, created_at: u64) -> Result<(i64, String, u64), ServiceError> {
+        let api_key = generate_api_key_string();
+        let id = self
+            .repo
+            .insert_api_key_for_user_returning_id(user_id, &api_key, created_at)
+            .map_err(ServiceError::from)?;
+        Ok((id, api_key, created_at))
+    }
+
+    fn revoke_my_api_key(&self, user_id: i64, key_id: i64) -> Result<(), ServiceError> {
+        self.repo
+            .revoke_api_key_for_user(user_id, key_id)
+            .map_err(ServiceError::from)
+    }
+}
+
+fn generate_api_key_string() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let random_part: String = (0..32)
+        .map(|_| format!("{:x}", rng.gen::<u8>() % 16))
+        .collect();
+    format!("sk-or-v1-{}", random_part)
 }
 
 #[cfg(test)]
@@ -113,6 +150,7 @@ mod tests {
     use super::*;
     use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
     use crate::services::error::RepositoryError;
+    use crate::services::repository::ApiKeySummary as RepoApiKeySummary;
 
     struct ConflictRepo;
 
@@ -176,6 +214,27 @@ mod tests {
             _user_id: i64,
             _api_key: &str,
             _created_at: u64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn list_api_keys_for_user(
+            &self,
+            _user_id: i64,
+        ) -> Result<Vec<RepoApiKeySummary>, RepositoryError> {
+            Ok(Vec::new())
+        }
+        fn insert_api_key_for_user_returning_id(
+            &self,
+            _user_id: i64,
+            _api_key: &str,
+            _created_at: u64,
+        ) -> Result<i64, RepositoryError> {
+            Ok(1)
+        }
+        fn revoke_api_key_for_user(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
         ) -> Result<(), RepositoryError> {
             Ok(())
         }

@@ -1,8 +1,8 @@
 # ModelGate 前端 E2E 测试方案
 
-**版本:** 1.2  
+**版本:** 1.3  
 **制定日期:** 2026年4月3日  
-**更新说明:** 补充 `UPSTREAM_BASE_URL` 与仓库内 Playwright + 上游 Mock 落地说明  
+**更新说明:** 补充 API 密钥 E2E（`api-keys.spec.ts`）与 helpers  
 **适用范围:** `frontend/` 管理控制台（React + Vite）+ 真实 `modelgate` 后端  
 **关联:** [前端开发计划](frontend-development-plan.md) 3.10；[前端架构](../architecture/frontend-architecture.md) 测试章节；CI 工作流 [`.github/workflows/ci-e2e.yml`](../../.github/workflows/ci-e2e.yml)
 
@@ -166,9 +166,11 @@ npm scripts（落地时增加）：
 - 登录态下打开 `/logs`。
 - 断言：表格或空状态出现；若有筛选 UI，覆盖「改条件 → URL query 同步」（与 [日志中心规格](../design/interaction/log-center.md) 一致时可加强）。
 
-### 6.4 API 密钥（建议 `frontend/e2e/api-keys.spec.ts`）
+### 6.4 API 密钥（`frontend/e2e/api-keys.spec.ts`）
 
-- 待 `/api-keys` 非占位、接口联调完成后：创建 → 列表中出现 → 吊销确认流。
+- **已登录（`describe` 内 `serial`）**：侧栏进入 `/api-keys`、直开路由、新建密钥（一次性明文 + `我已保存`）、列表掩码与行状态、剪贴板复制、`confirm` 吊销后 UI 与 **401 调用 chat**、与 `GET /api/v1/me/api-keys` 行数对齐。
+- **未登录**：清空 `storageState` 访问 `/api-keys` → 跳转登录页。
+- **辅助**：`e2e/helpers/api.ts` 增加 `listMyApiKeys` / `createMyApiKey` / `revokeMyApiKey`（经 Vite 代理打真实 Rust）。
 
 ### 6.5 Admin 用例（后续）
 
@@ -238,6 +240,6 @@ npm scripts（落地时增加）：
 | OpenAI 兼容上游 Mock（非流式 + 简易 SSE） | `e2e/mock-openai-upstream.mjs` |
 | Mock + `cargo run`（cwd=`e2e/`，读 `e2e/config.toml`） | `e2e/run-modelgate-stack.mjs` |
 | E2E 后端配置（邀请码、Mock 基址、独立 sqlite） | `e2e/config.toml` |
-| Playwright 与用例 | `frontend/playwright.config.ts`、`frontend/e2e/*.ts`（审计日志：`e2e/logs.spec.ts` + `e2e/helpers/api.ts`，经真实代理写 Mock 上游后验列表/详情/筛选 URL/关键词/导出） |
+| Playwright 与用例 | `frontend/playwright.config.ts`、`frontend/e2e/*.ts`（日志：`logs.spec.ts`；API 密钥：`api-keys.spec.ts`；辅助：`e2e/helpers/api.ts`） |
 | 脚本 | `frontend`：`npm run test:e2e` / `test:e2e:ui` |
 | CI | `.github/workflows/ci-e2e.yml` |

@@ -1,5 +1,6 @@
 target/
 config.toml
+audit_logs/
 .DS_Store
 modelgate.db
 e2e/modelgate-e2e.db

@@ -1,10 +1,29 @@
 use rusqlite::ErrorCode;
+use serde::Serialize;
 use tracing::error;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 use crate::db;
 
 use super::error::RepositoryError;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKeySummary {
+    pub id: i64,
+    pub preview: String,
+    pub created_at: i64,
+    pub revoked: bool,
+}
+
+fn mask_api_key_preview(full: &str) -> String {
+    let b = full.as_bytes();
+    if b.len() <= 14 {
+        return "••••".to_string();
+    }
+    let start = std::str::from_utf8(&b[..12]).unwrap_or("••••");
+    let end = std::str::from_utf8(&b[b.len() - 4..]).unwrap_or("");
+    format!("{start}…{end}")
+}
 
 pub trait Repository: Send + Sync {
     fn get_api_key_info(&self, api_key: &str) -> Result<(i64, i64), RepositoryError>;
@@ -52,6 +71,17 @@ pub trait Repository: Send + Sync {
         api_key: &str,
         created_at: u64,
     ) -> Result<(), RepositoryError>;
+
+    fn list_api_keys_for_user(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError>;
+
+    fn insert_api_key_for_user_returning_id(
+        &self,
+        user_id: i64,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<i64, RepositoryError>;
+
+    fn revoke_api_key_for_user(&self, user_id: i64, key_id: i64) -> Result<(), RepositoryError>;
 }
 
 #[derive(Clone)]
@@ -249,6 +279,57 @@ impl Repository for SqliteRepository {
             error!(error = %err, "failed to create api key for user id");
             RepositoryError::Internal("Failed to create api key".into())
         })?;
+        Ok(())
+    }
+
+    fn list_api_keys_for_user(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let rows = db::list_api_keys_for_user(&conn, user_id).map_err(|err| {
+            error!(error = %err, "failed to list api keys");
+            RepositoryError::Internal("Failed to list api keys".into())
+        })?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ApiKeySummary {
+                id: r.id,
+                preview: mask_api_key_preview(&r.api_key),
+                created_at: r.created_at,
+                revoked: r.revoked != 0,
+            })
+            .collect())
+    }
+
+    fn insert_api_key_for_user_returning_id(
+        &self,
+        user_id: i64,
+        api_key: &str,
+        created_at: u64,
+    ) -> Result<i64, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::insert_api_key_for_user(&conn, user_id, api_key, created_at as i64).map_err(|err| {
+            error!(error = %err, "failed to insert api key");
+            RepositoryError::Internal("Failed to create api key".into())
+        })
+    }
+
+    fn revoke_api_key_for_user(&self, user_id: i64, key_id: i64) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let n = db::revoke_api_key_for_user(&conn, user_id, key_id).map_err(|err| {
+            error!(error = %err, "failed to revoke api key");
+            RepositoryError::Internal("Failed to revoke api key".into())
+        })?;
+        if n == 0 {
+            return Err(RepositoryError::NotFound("api key not found".into()));
+        }
         Ok(())
     }
 }

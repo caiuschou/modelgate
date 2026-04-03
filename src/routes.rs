@@ -35,6 +35,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             "/api/v1/logs/export/{export_id}/download",
             web::get().to(audit::download_export_file),
         )
+        .route(
+            "/api/v1/me/api-keys",
+            web::get().to(handlers::api_keys::list_my_api_keys),
+        )
+        .route(
+            "/api/v1/me/api-keys",
+            web::post().to(handlers::api_keys::create_my_api_key),
+        )
+        .route(
+            "/api/v1/me/api-keys/{key_id}/revoke",
+            web::post().to(handlers::api_keys::revoke_my_api_key),
+        )
         .default_service(web::route().to(handlers::not_found));
 }
 

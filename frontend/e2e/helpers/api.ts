@@ -41,6 +41,58 @@ export async function createChatCompletion(
   })
 }
 
+export type ApiKeySummary = {
+  id: number
+  preview: string
+  created_at: number
+  revoked: boolean
+}
+
+export async function listMyApiKeys(
+  consoleBaseUrl: string,
+  token: string,
+): Promise<ApiKeySummary[]> {
+  const r = await fetch(`${consoleBaseUrl}/api/v1/me/api-keys`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!r.ok) {
+    throw new Error(`list me/api-keys failed: ${r.status} ${await r.text()}`)
+  }
+  const body = (await r.json()) as { data: ApiKeySummary[] }
+  return body.data ?? []
+}
+
+export async function createMyApiKey(
+  consoleBaseUrl: string,
+  token: string,
+): Promise<{ id: number; api_key: string; created_at: number }> {
+  const r = await fetch(`${consoleBaseUrl}/api/v1/me/api-keys`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!r.ok) {
+    throw new Error(`create me/api-keys failed: ${r.status} ${await r.text()}`)
+  }
+  return r.json() as Promise<{ id: number; api_key: string; created_at: number }>
+}
+
+export async function revokeMyApiKey(
+  consoleBaseUrl: string,
+  token: string,
+  keyId: number,
+): Promise<void> {
+  const r = await fetch(
+    `${consoleBaseUrl}/api/v1/me/api-keys/${keyId}/revoke`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  )
+  if (!r.ok) {
+    throw new Error(`revoke me/api-keys failed: ${r.status} ${await r.text()}`)
+  }
+}
+
 export async function waitForAuditListRow(
   backendBaseUrl: string,
   apiKey: string,

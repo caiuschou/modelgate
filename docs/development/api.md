@@ -1,6 +1,6 @@
 # ModelGate 服务端 API（当前实现）
 
-**版本:** 1.0  
+**版本:** 1.1  
 **更新日期:** 2026年4月3日  
 **适用范围:** 本仓库 Rust 服务（`cargo run`）
 
@@ -76,6 +76,44 @@
 - **成功：** `200`，`{ "token": "<api_key>", "user": { "username", "role" } }`  
   - `token` 为数据库中的 API Key（形如 `sk-or-v1-...`），用于后续 `Authorization: Bearer`。  
   - `role`：用户名为 `admin`（不区分大小写）时为 `admin`，否则为 `user`。
+
+### 3.3 当前用户的 API 密钥（控制台）
+
+均需 **`Authorization: Bearer <api_key>`**，且仅能操作**当前密钥所属用户**名下的记录。
+
+#### 列出密钥（掩码预览）
+
+**`GET /api/v1/me/api-keys`**
+
+**响应示例：**
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "preview": "sk-or-v1-12…a3f2",
+      "created_at": 1711920000,
+      "revoked": false
+    }
+  ]
+}
+```
+
+#### 新建密钥
+
+**`POST /api/v1/me/api-keys`**
+
+- **Body：** 无  
+- **成功：** `201`，`{ "id", "api_key": "<完整密钥>", "created_at" }` — **完整 `api_key` 仅此次响应返回**。
+
+#### 吊销密钥
+
+**`POST /api/v1/me/api-keys/{key_id}/revoke`**
+
+- **成功：** `200`，无 JSON 体  
+- **失败：** `404`（非本人或不存在或已吊销）  
+- 若吊销的是当前用于 `Authorization` 的密钥，后续请求将 `401`。
 
 ---
 
@@ -179,6 +217,7 @@
 | 用户与 Key | `src/handlers/user.rs` |
 | 代理 | `src/handlers/proxy.rs` |
 | 审计 HTTP | `src/handlers/audit.rs` |
+| 我的 API 密钥 | `src/handlers/api_keys.rs` |
 | 审计模型与查询参数 | `src/audit.rs` |
 
 ---

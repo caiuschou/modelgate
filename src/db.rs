@@ -80,11 +80,62 @@ pub fn create_api_key_for_user(
     api_key: &str,
     created_at: i64,
 ) -> rusqlite::Result<()> {
+    insert_api_key_for_user(conn, user_id, api_key, created_at)?;
+    Ok(())
+}
+
+/// Inserts a row into `api_keys` and returns the new row id.
+pub fn insert_api_key_for_user(
+    conn: &Connection,
+    user_id: i64,
+    api_key: &str,
+    created_at: i64,
+) -> rusqlite::Result<i64> {
     conn.execute(
         "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
         params![user_id, api_key, created_at],
     )?;
-    Ok(())
+    Ok(conn.last_insert_rowid())
+}
+
+#[derive(Debug, Clone)]
+pub struct ApiKeyRow {
+    pub id: i64,
+    pub api_key: String,
+    pub created_at: i64,
+    pub revoked: i32,
+}
+
+pub fn list_api_keys_for_user(
+    conn: &Connection,
+    user_id: i64,
+) -> rusqlite::Result<Vec<ApiKeyRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, api_key, created_at, revoked FROM api_keys WHERE user_id = ?1 ORDER BY id DESC",
+    )?;
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok(ApiKeyRow {
+            id: row.get(0)?,
+            api_key: row.get(1)?,
+            created_at: row.get(2)?,
+            revoked: row.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Sets `revoked = 1` for the key if it belongs to `user_id` and is not already revoked.
+/// Returns number of rows updated (0 or 1).
+pub fn revoke_api_key_for_user(
+    conn: &Connection,
+    user_id: i64,
+    key_id: i64,
+) -> rusqlite::Result<usize> {
+    let n = conn.execute(
+        "UPDATE api_keys SET revoked = 1 WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+        params![key_id, user_id],
+    )?;
+    Ok(n)
 }
 
 pub fn find_user_id(conn: &Connection, username: &str) -> rusqlite::Result<i64> {

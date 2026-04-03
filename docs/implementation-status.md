@@ -18,6 +18,7 @@
 | 为用户新增 Key `POST /users/{username}/keys` | ✅ | 无鉴权（管理/内测用途） |
 | Chat Completions `POST /v1/chat/completions` | ✅ | Bearer 用户 Key；转发至配置的单一上游 `upstream.base_url`；支持流式 |
 | 请求审计日志查询/详情/导出 | ✅ | 见 [开发 API 文档](development/api.md)、[审计日志产品说明](product/audit-log.md) |
+| 当前用户 API 密钥 `GET/POST /api/v1/me/api-keys`、`POST .../revoke` | ✅ | 需 Bearer；列表仅掩码预览，创建时返回完整密钥一次 |
 | 多渠道配置与路由 | ❌ | 上游为 **一个** `base_url` + `api_key`（环境变量 `UPSTREAM_*`） |
 | `/v1/completions`、`/v1/embeddings`、Images、Audio | ❌ | 未注册路由 |
 | 用量 API `GET /v1/usage` 等 | ❌ | |
@@ -36,7 +37,8 @@
 | `/login`、`/register` | ✅ | |
 | `/` 首页（仪表盘） | ✅ | 以现有页面为准 |
 | `/logs`、`/logs/:requestId` | ✅ | 日志中心 |
-| `/channels`、`/api-keys`、`/users`、`/analytics`、`/settings` | ⏳ | **占位页**（「页面建设中」）；侧栏文案为 **API 密钥**；管理员菜单项部分受 `AdminGuard` 限制 |
+| `/api-keys` | ✅ | **API 密钥**列表、新建（完整密钥仅展示一次）、吊销 |
+| `/channels`、`/users`、`/analytics`、`/settings` | ⏳ | **占位页**（「页面建设中」）；管理员菜单项部分受 `AdminGuard` 限制 |
 
 **开发代理：** `frontend/vite.config.ts` 将 `/api`、`/healthz`、`/users` 代理到 `http://127.0.0.1:8000`。  
 **注意：** `POST /v1/chat/completions` 不在 Vite 代理中，客户端应用需直接请求网关地址（或自行配置反向代理）。
