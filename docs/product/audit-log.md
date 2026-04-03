@@ -26,7 +26,7 @@
 |------|------|------|
 | request_id | string | 唯一请求ID，格式：`{timestamp}_{random}` |
 | user_id | int | 用户ID |
-| token_id | int | 令牌ID |
+| token_id | int | API 密钥 ID（表 `api_keys`，勿与用量 Token 混淆） |
 | channel_id | int | 渠道ID |
 | model | string | 模型名称 |
 | request_type | string | 请求类型：`chat`、`completion`、`embedding` 等 |
@@ -102,7 +102,7 @@
 
 **支持维度：**
 - 按时间范围筛选（Unix 时间戳，秒）
-- 按用户/令牌/渠道筛选
+- 按用户 / API 密钥（`token_id`）/ 渠道筛选
 - 按模型、`app_id`、**`finish_reason`**（逗号分隔多值，语义为 OR）筛选
 - 按 **prompt / completion token 数量区间**筛选（`min_prompt_tokens`、`max_prompt_tokens` 等）
 - 按状态码筛选（成功/错误）
@@ -123,7 +123,7 @@
 - API 接口触发导出
 
 **导出字段（可配置）：**
-- 基础信息：request_id、时间、用户、令牌、`app_id`、`finish_reason`
+- 基础信息：request_id、时间、用户、API 密钥（`token_id`）、`app_id`、`finish_reason`
 - 请求/响应：model、request_body、response_body（路径或正文依实现）
 - 用量：prompt_tokens、completion_tokens、total_tokens、cost、latency
 
@@ -161,7 +161,7 @@
 
 ### 5.1 查询请求日志
 
-**认证：** `Authorization: Bearer <API Key>`（控制台登录态与网关使用同一令牌时即为该 Key）
+**认证：** `Authorization: Bearer <API Key>`（控制台登录态与网关使用同一 **API 密钥** 字符串时即为该 Key）
 
 **常用 Query 参数：**
 
@@ -267,7 +267,7 @@ Authorization: Bearer <API Key>
 
 **排查步骤：**
 1. 根据用户反馈的时间范围查询日志
-2. 按用户ID/令牌ID筛选
+2. 按用户 ID / `token_id`（API 密钥）筛选
 3. 查看错误信息和响应内容
 4. 定位问题原因
 

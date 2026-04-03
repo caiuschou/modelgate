@@ -21,7 +21,7 @@
 | 多渠道配置与路由 | ❌ | 上游为 **一个** `base_url` + `api_key`（环境变量 `UPSTREAM_*`） |
 | `/v1/completions`、`/v1/embeddings`、Images、Audio | ❌ | 未注册路由 |
 | 用量 API `GET /v1/usage` 等 | ❌ | |
-| 令牌吊销、IP 白名单、配额扣减 | ❌ | DB 有 `revoked` 等字段的部分能力未暴露为完整产品流程 |
+| API 密钥吊销、IP 白名单、配额扣减 | ❌ | DB 有 `revoked` 等字段的部分能力未暴露为完整产品流程 |
 | 限流响应头 `X-RateLimit-*` | ❌ | |
 
 **权威路由列表：** `src/routes.rs`。  
@@ -36,7 +36,7 @@
 | `/login`、`/register` | ✅ | |
 | `/` 首页（仪表盘） | ✅ | 以现有页面为准 |
 | `/logs`、`/logs/:requestId` | ✅ | 日志中心 |
-| `/channels`、`/tokens`、`/users`、`/analytics`、`/settings` | ⏳ | **占位页**（「页面建设中」）；管理员菜单项部分受 `AdminGuard` 限制 |
+| `/channels`、`/api-keys`、`/users`、`/analytics`、`/settings` | ⏳ | **占位页**（「页面建设中」）；侧栏文案为 **API 密钥**；管理员菜单项部分受 `AdminGuard` 限制 |
 
 **开发代理：** `frontend/vite.config.ts` 将 `/api`、`/healthz`、`/users` 代理到 `http://127.0.0.1:8000`。  
 **注意：** `POST /v1/chat/completions` 不在 Vite 代理中，客户端应用需直接请求网关地址（或自行配置反向代理）。

@@ -37,7 +37,7 @@
 - 请求体和响应体数据不直接存储在审计主表中，而是写入文件或对象存储，审计记录仅保存文件引用。
 - 采集执行指标：`prompt_tokens`、`completion_tokens`、`total_tokens`、`cost`、`latency_ms`。
 - 采集 **`finish_reason`**：对 JSON 类成功响应解析主 choice 的 `finish_reason`（与 OpenAI Chat Completions 语义对齐）；无法解析时留空。
-- 采集 **`app_id`（应用标识）**：来自请求头、令牌元数据或路由配置（以产品约定为准）。
+- 采集 **`app_id`（应用标识）**：来自请求头、**API 密钥** 元数据或路由配置（以产品约定为准）。
 - 支持扩展字段：`prompt_tokens_details`、`completion_tokens_details`、`cost_details`、`is_byok`。
 
 ### 2.3 异步写入与性能保障
@@ -54,7 +54,7 @@
 
 - `request_id`：唯一请求 ID，格式建议 `{timestamp}_{random}`。
 - `user_id`：用户 ID。
-- `token_id`：API 令牌 ID。
+- `token_id`：API 密钥 ID（表 `api_keys`）。
 - `channel_id`：渠道 ID。
 - `model`：模型名称。
 - `request_type`：请求类型，如 `chat`、`completion`、`embedding`。
@@ -104,7 +104,7 @@
 
 - 提供 `GET /api/v1/logs/request` 列表接口，用于获取审计记录元数据。
 - 列表接口返回基础字段，不包含 `request_body_path` 和 `response_body_path`，以减少数据量并保护敏感内容。
-- 支持按时间范围、用户、令牌、渠道、模型、状态码、关键词、**应用（`app_id`）**、**`finish_reason`**、**prompt/completion token 区间**筛选（具体 query 参数与 [日志中心 UI/交互规格](../design/interaction/log-center.md)、[审计日志开发实现](../development/audit-log-implementation.md) 保持一致）。
+- 支持按时间范围、用户、**API 密钥**（`token_id`）、渠道、模型、状态码、关键词、**应用（`app_id`）**、**`finish_reason`**、**prompt/completion token 区间**筛选（具体 query 参数与 [日志中心 UI/交互规格](../design/interaction/log-center.md)、[审计日志开发实现](../development/audit-log-implementation.md) 保持一致）。
 - 返回分页结果，单次最大返回条数限制。
 
 ### 5.2 详情接口

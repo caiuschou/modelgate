@@ -16,7 +16,7 @@
 ### 产品文档
 
 - **[产品概述](product/overview.md)** — 产品定位、核心功能、产品优势
-- **[功能详解](product/features.md)** - 渠道管理、令牌管理、用户管理等详细功能说明
+- **[功能详解](product/features.md)** - 渠道管理、API 密钥管理、用户管理等详细功能说明
 - **[应用场景](product/scenarios.md)** - 企业内部网关、API 分发、成本控制等典型场景
 - **[API 文档（产品规格）](product/api.md)** - 目标态 API、认证、错误处理、SDK 示例（部分尚未在服务端实现）
 - **[用户控制台（产品）](product/user-console.md)** - 管理门户能力规格

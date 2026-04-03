@@ -147,7 +147,7 @@ pub struct AuditRecord {
 }
 ```
 
-- `app_id`：调用方应用标识（来源：配置映射、请求头如 `X-App-Id`、或令牌绑定属性，**以产品约定为准**）。
+- `app_id`：调用方应用标识（来源：配置映射、请求头如 `X-App-Id`、或 **API 密钥** 绑定属性，**以产品约定为准**）。
 - `finish_reason`：从成功返回的 Chat/Completion 等 **JSON 响应体**解析（如 `choices[0].finish_reason`）；非此类请求、解析失败或错误响应则为 `None`。
 
 ### 5.2 `AuditMessage`

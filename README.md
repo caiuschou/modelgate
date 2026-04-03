@@ -12,7 +12,7 @@
 
 ModelGate 在本仓库中的形态是 **Rust（Actix-web）网关原型**：将客户端请求代理到**配置的单一上游** OpenAI 兼容服务，使用 SQLite 存储用户与 API Key，并记录可查询的**请求审计日志**。配套 **React + Vite** 管理控制台（登录/注册、日志中心等）。
 
-**产品愿景与完整规格**（多渠道、负载均衡、计费、完整令牌 UI 等）见 [文档中心](docs/index.md)；**当前已实现能力**见 [实现状态](docs/implementation-status.md)。
+**产品愿景与完整规格**（多渠道、负载均衡、计费、完整 **API 密钥** 管理 UI 等）见 [文档中心](docs/index.md)；**当前已实现能力**见 [实现状态](docs/implementation-status.md)。
 
 ---
 

@@ -50,7 +50,7 @@ modelgate/
 
 **拆分为：**
 - `docs/product/overview.md` - 产品概述、定位、核心功能
-- `docs/product/features.md` - 功能详解（渠道、令牌、用户、统计等）
+- `docs/product/features.md` - 功能详解（渠道、API 密钥、用户、统计等）
 - `docs/product/scenarios.md` - 应用场景（企业网关、API分发、成本控制等）
 - `docs/product/roadmap.md` - 产品路线图、MVP、迭代计划
 

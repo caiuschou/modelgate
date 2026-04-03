@@ -6,6 +6,8 @@
 
 > **重要：** 本文档描述 **OpenAI 兼容网关的目标产品规格**（多接口、用量 API、官方 SDK 示例等）。**本仓库当前已实现**的 HTTP 路由与认证行为以 [开发 API（当前实现）](../development/api.md) 与 `src/routes.rs` 为准。
 
+> **用语：** 文中的 **API 密钥** / **密钥** 指访问网关的凭证；**Token** 多指模型用量单位或与 OpenAI 字段名一致，请勿与前者混淆。
+
 ---
 
 ## 一、API 概述
@@ -34,11 +36,11 @@ ModelGate API 提供统一的 OpenAI 兼容接口，让您能够通过一套 API
 
 ## 二、快速开始
 
-### 2.1 获取令牌
+### 2.1 获取 API 密钥
 
 1. 注册 ModelGate 账号
-2. 创建令牌（Token）
-3. 复制令牌密钥（`sk-xxxxx...`）
+2. 在控制台创建 **API 密钥**（产品形态可能显示为 Key / Secret）
+3. 复制完整密钥字符串（如 `sk-xxxxx...`），**仅展示一次**时需妥善保存
 
 ### 2.2 发起第一个请求
 
@@ -102,7 +104,7 @@ curl https://api.modelgate.com/v1/chat/completions \
 
 ### 3.1 Bearer Token 认证
 
-所有 API 请求都需要在 HTTP Header 中包含令牌：
+所有 API 请求都需要在 HTTP Header 中包含 **API 密钥**：
 
 ```http
 Authorization: Bearer YOUR_TOKEN
@@ -117,22 +119,22 @@ curl https://api.modelgate.com/v1/models \
 
 ### 3.2 API Key 认证（备选）
 
-也可以通过 Query Parameter 传递令牌：
+也可以通过 Query Parameter 传递 **API 密钥**：
 
 ```bash
 curl https://api.modelgate.com/v1/models?api_key=sk-xxxxx
 ```
 
-> ⚠️ **注意：** 不推荐在生产环境使用 Query Parameter，因为令牌可能会被日志记录。
+> ⚠️ **注意：** 不推荐在生产环境使用 Query Parameter，因为密钥可能会被日志记录。
 
-### 3.3 令牌权限
+### 3.3 API 密钥权限
 
-| 权限类型 | 普通令牌 | 管理员令牌 |
+| 权限类型 | 普通 API 密钥 | 管理员 API 密钥 |
 |---------|---------|-----------|
 | 调用模型 API | ✅ | ✅ |
 | 查看自己的用量 | ✅ | ✅ |
 | 管理渠道 | ❌ | ✅ |
-| 管理令牌 | ❌ | ✅ |
+| 管理 API 密钥 | ❌ | ✅ |
 | 管理用户 | ❌ | ✅ |
 
 ---
@@ -447,7 +449,7 @@ curl https://api.modelgate.com/v1/audio/transcriptions \
 |--------|------|
 | 200 | 成功 |
 | 400 | 请求参数错误 |
-| 401 | 未授权（令牌无效或过期）|
+| 401 | 未授权（API 密钥无效或过期）|
 | 402 | 配额不足 |
 | 403 | 权限不足 |
 | 404 | 资源不存在 |
@@ -463,9 +465,9 @@ curl https://api.modelgate.com/v1/audio/transcriptions \
 
 | 错误码 | 说明 | 解决方案 |
 |--------|------|---------|
-| invalid_api_key | API Key 无效 | 检查令牌是否正确 |
-| token_expired | 令牌已过期 | 联系管理员续期 |
-| token_revoked | 令牌已吊销 | 创建新令牌 |
+| invalid_api_key | API Key 无效 | 检查 API 密钥是否正确 |
+| token_expired | API 密钥已过期 | 联系管理员续期 |
+| token_revoked | API 密钥已吊销 | 创建新 API 密钥 |
 | ip_not_allowed | IP 不在白名单 | 联系管理员添加 IP |
 
 **配额错误：**
@@ -507,7 +509,7 @@ def chat_completion(messages):
 
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 401:
-            print("认证失败，请检查令牌")
+            print("认证失败，请检查 API 密钥")
         elif e.response.status_code == 402:
             print("配额不足，请充值")
         elif e.response.status_code == 429:
@@ -535,7 +537,7 @@ def chat_completion(messages):
 |------|---------|------|
 | 系统级 | 1000 QPS | 整体请求上限 |
 | 用户级 | 100 QPS | 单用户请求上限 |
-| 令牌级 | 可配置 | 单令牌请求上限 |
+| 单 API 密钥 | 可配置 | 每个 API 密钥的请求上限 |
 | 渠道级 | 可配置 | 单渠道请求上限 |
 
 ### 6.2 速率限制响应头
@@ -807,13 +809,13 @@ def stream_completion(messages):
 
 ### 9.4 安全建议
 
-1. **保护令牌**
-   - 不要在客户端代码中硬编码令牌
+1. **保护 API 密钥**
+   - 不要在客户端代码中硬编码密钥
    - 使用环境变量或密钥管理服务
-   - 定期轮换令牌
+   - 定期轮换密钥
 
 2. **使用 IP 白名单**
-   - 限制令牌只能从特定 IP 访问
+   - 限制 API 密钥只能从特定 IP 访问
    - 提高安全性
 
 3. **设置配额限制**
@@ -821,7 +823,7 @@ def stream_completion(messages):
    - 控制使用量
 
 4. **日志脱敏**
-   - 不要在日志中记录完整令牌
+   - 不要在日志中记录完整 API 密钥
    - 不要记录敏感数据
 
 ---
