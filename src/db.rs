@@ -106,10 +106,7 @@ pub struct ApiKeyRow {
     pub revoked: i32,
 }
 
-pub fn list_api_keys_for_user(
-    conn: &Connection,
-    user_id: i64,
-) -> rusqlite::Result<Vec<ApiKeyRow>> {
+pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, api_key, created_at, revoked FROM api_keys WHERE user_id = ?1 ORDER BY id DESC",
     )?;
@@ -391,7 +388,8 @@ fn build_audit_where_clause(
     }
     if let Some(keyword) = &query.keyword {
         let like_kw = format!("%{keyword}%");
-        where_clauses.push("(request_id LIKE ? OR error_message LIKE ? OR model LIKE ?)".to_string());
+        where_clauses
+            .push("(request_id LIKE ? OR error_message LIKE ? OR model LIKE ?)".to_string());
         args.push(Value::Text(like_kw.clone()));
         args.push(Value::Text(like_kw.clone()));
         args.push(Value::Text(like_kw));
@@ -410,10 +408,7 @@ fn build_audit_where_clause(
             .collect();
         if !parts.is_empty() {
             let placeholders: Vec<&str> = parts.iter().map(|_| "?").collect();
-            where_clauses.push(format!(
-                "finish_reason IN ({})",
-                placeholders.join(", ")
-            ));
+            where_clauses.push(format!("finish_reason IN ({})", placeholders.join(", ")));
             for p in parts {
                 args.push(Value::Text(p));
             }

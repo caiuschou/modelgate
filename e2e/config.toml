@@ -1,0 +1,23 @@
+# E2E: run `modelgate` with cwd = this directory (`e2e/`) so sqlite and audit paths stay isolated.
+# Upstream points at the local OpenAI-compatible mock (see `mock-openai-upstream.mjs`).
+
+[server]
+host = "127.0.0.1"
+port = 8000
+
+[upstream]
+base_url = "http://127.0.0.1:18080/v1"
+api_key = "e2e-upstream-mock-key"
+
+[sqlite]
+path = "modelgate-e2e.db"
+
+[audit]
+log_dir = "./audit_logs"
+retention_days = 90
+batch_size = 50
+flush_interval_seconds = 5
+export_dir = "./exports"
+
+[auth]
+invite_code = "e2e-invite-code"

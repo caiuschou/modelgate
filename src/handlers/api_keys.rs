@@ -41,9 +41,7 @@ pub async fn create_my_api_key(
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let (id, api_key, created_at) = state
-        .user_service
-        .create_my_api_key(user_id, created_at)?;
+    let (id, api_key, created_at) = state.user_service.create_my_api_key(user_id, created_at)?;
     Ok(HttpResponse::Created().json(CreateMyApiKeyResponse {
         id,
         api_key,

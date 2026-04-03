@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use reqwest::header as reqwest_header;
 use serde_json::Value;
-use tracing::error;
+use tracing::{debug, error, info, warn};
 
 use crate::{auth, errors::ApiError, upstream, AppState};
 
@@ -41,6 +41,16 @@ pub async fn chat_completions(
     let (token_id, user_id) = state.auth_service.get_api_key_scope(api_key)?;
 
     let is_stream = upstream::is_stream_request(&body);
+    let model = parse_model_from_request(&body);
+    debug!(
+        %request_id,
+        user_id,
+        token_id,
+        model = model.as_deref(),
+        stream = is_stream,
+        ?app_id,
+        "chat completions proxy request accepted"
+    );
     let upstream_url = upstream::build_chat_completions_url(&state.cfg.upstream.base_url);
     let request_body_path =
         crate::audit::save_body_to_file(&state.audit_config, &request_id, "request", &body).ok();
@@ -58,7 +68,16 @@ pub async fn chat_completions(
     let upstream_resp = match req_builder.send().await {
         Ok(resp) => resp,
         Err(e) => {
-            error!(error = %e, "upstream request failed");
+            error!(
+                %request_id,
+                user_id,
+                token_id,
+                model = model.as_deref(),
+                stream = is_stream,
+                ?app_id,
+                error = %e,
+                "upstream request failed"
+            );
             send_audit_record(
                 &state,
                 crate::audit::AuditRecord {
@@ -66,7 +85,7 @@ pub async fn chat_completions(
                     user_id: Some(user_id),
                     token_id: Some(token_id),
                     channel_id: None,
-                    model: parse_model_from_request(&body),
+                    model: model.clone(),
                     request_type: Some("chat".to_string()),
                     request_body_path,
                     response_body_path: None,
@@ -92,7 +111,22 @@ pub async fn chat_completions(
         .unwrap_or(ActixStatusCode::BAD_GATEWAY);
     let status_i64 = i64::from(status.as_u16());
 
+    if (400..500).contains(&status_i64) {
+        warn!(
+            %request_id,
+            user_id,
+            token_id,
+            model = model.as_deref(),
+            stream = is_stream,
+            upstream_status = status_i64,
+            latency_ms = start.elapsed().as_millis() as i64,
+            ?app_id,
+            "upstream returned client error status"
+        );
+    }
+
     if is_stream {
+        let stream_request_id = request_id.clone();
         send_audit_record(
             &state,
             crate::audit::AuditRecord {
@@ -100,7 +134,7 @@ pub async fn chat_completions(
                 user_id: Some(user_id),
                 token_id: Some(token_id),
                 channel_id: None,
-                model: parse_model_from_request(&body),
+                model: model.clone(),
                 request_type: Some("chat".to_string()),
                 request_body_path,
                 response_body_path: None,
@@ -118,9 +152,24 @@ pub async fn chat_completions(
             },
         )
         .await;
-        let stream = upstream_resp.bytes_stream().map(|chunk| {
+        info!(
+            %stream_request_id,
+            user_id,
+            token_id,
+            model = model.as_deref(),
+            stream = true,
+            upstream_status = status_i64,
+            latency_ms = start.elapsed().as_millis() as i64,
+            ?app_id,
+            "chat completion proxied"
+        );
+        let stream = upstream_resp.bytes_stream().map(move |chunk| {
             chunk.map_err(|e| {
-                error!(error = %e, "upstream stream read failed");
+                error!(
+                    %stream_request_id,
+                    error = %e,
+                    "upstream stream read failed"
+                );
                 actix_web::error::ErrorBadGateway("upstream stream read failed")
             })
         });
@@ -130,13 +179,23 @@ pub async fn chat_completions(
             .streaming(stream))
     } else {
         let bytes = upstream_resp.bytes().await.map_err(|e| {
-            error!(error = %e, "upstream response read failed");
+            error!(
+                %request_id,
+                user_id,
+                token_id,
+                model = model.as_deref(),
+                upstream_status = status_i64,
+                ?app_id,
+                error = %e,
+                "upstream response read failed"
+            );
             ApiError::InternalError("Failed to read upstream response".into())
         })?;
         let response_body_path =
             crate::audit::save_body_to_file(&state.audit_config, &request_id, "response", &bytes)
                 .ok();
         let usage = parse_usage_cost_and_finish(&bytes);
+        let log_request_id = request_id.clone();
         send_audit_record(
             &state,
             crate::audit::AuditRecord {
@@ -144,7 +203,7 @@ pub async fn chat_completions(
                 user_id: Some(user_id),
                 token_id: Some(token_id),
                 channel_id: None,
-                model: parse_model_from_request(&body),
+                model: model.clone(),
                 request_type: Some("chat".to_string()),
                 request_body_path,
                 response_body_path,
@@ -166,6 +225,20 @@ pub async fn chat_completions(
             },
         )
         .await;
+        info!(
+            %log_request_id,
+            user_id,
+            token_id,
+            model = model.as_deref(),
+            stream = false,
+            upstream_status = status_i64,
+            latency_ms = start.elapsed().as_millis() as i64,
+            ?app_id,
+            prompt_tokens = usage.0,
+            completion_tokens = usage.1,
+            total_tokens = usage.2,
+            "chat completion proxied"
+        );
 
         Ok(HttpResponse::build(status)
             .content_type("application/json")
@@ -193,10 +266,16 @@ fn extract_app_id(req: &HttpRequest) -> Option<String> {
         .map(std::string::ToString::to_string)
 }
 
+type UsageTokensCostFinish = (
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+    Option<f64>,
+    Option<String>,
+);
+
 /// OpenAI-style chat completion JSON: `usage` + `choices[0].finish_reason`.
-fn parse_usage_cost_and_finish(
-    body: &[u8],
-) -> (Option<i64>, Option<i64>, Option<i64>, Option<f64>, Option<String>) {
+fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
     let value = match serde_json::from_slice::<Value>(body) {
         Ok(v) => v,
         Err(_) => return (None, None, None, None, None),

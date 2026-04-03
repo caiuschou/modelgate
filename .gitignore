@@ -1,5 +1,5 @@
 target/
-config.toml
+/config.toml
 audit_logs/
 .DS_Store
 modelgate.db

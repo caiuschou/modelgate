@@ -38,7 +38,11 @@ pub trait UserService: Send + Sync {
     fn list_my_api_keys(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, ServiceError>;
 
     /// Returns `(id, full_api_key, created_at)` — full key only at creation time.
-    fn create_my_api_key(&self, user_id: i64, created_at: u64) -> Result<(i64, String, u64), ServiceError>;
+    fn create_my_api_key(
+        &self,
+        user_id: i64,
+        created_at: u64,
+    ) -> Result<(i64, String, u64), ServiceError>;
 
     fn revoke_my_api_key(&self, user_id: i64, key_id: i64) -> Result<(), ServiceError>;
 }
@@ -120,7 +124,11 @@ impl UserService for DefaultUserService {
             .map_err(ServiceError::from)
     }
 
-    fn create_my_api_key(&self, user_id: i64, created_at: u64) -> Result<(i64, String, u64), ServiceError> {
+    fn create_my_api_key(
+        &self,
+        user_id: i64,
+        created_at: u64,
+    ) -> Result<(i64, String, u64), ServiceError> {
         let api_key = generate_api_key_string();
         let id = self
             .repo
