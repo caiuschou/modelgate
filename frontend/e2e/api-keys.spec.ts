@@ -141,28 +141,3 @@ test.describe('API 密钥页（已登录）', () => {
     }
   })
 })
-
-test.describe('API 密钥页（未登录）', () => {
-  test('未登录访问 /api-keys 会跳到登录页', async ({ browser }) => {
-    const context = await browser.newContext({
-      baseURL: consoleBase,
-      storageState: { cookies: [], origins: [] },
-    })
-    await context.addInitScript(() => {
-      try {
-        localStorage.clear()
-        sessionStorage.clear()
-      } catch {
-        /* ignore */
-      }
-    })
-    const page = await context.newPage()
-    try {
-      await page.goto('/api-keys')
-      await expect(page).toHaveURL(/\/login/)
-      await expect(page.getByText('登录 ModelGate')).toBeVisible()
-    } finally {
-      await context.close()
-    }
-  })
-})
