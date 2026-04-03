@@ -148,6 +148,14 @@ test.describe('API 密钥页（未登录）', () => {
       baseURL: consoleBase,
       storageState: { cookies: [], origins: [] },
     })
+    await context.addInitScript(() => {
+      try {
+        localStorage.clear()
+        sessionStorage.clear()
+      } catch {
+        /* ignore */
+      }
+    })
     const page = await context.newPage()
     try {
       await page.goto('/api-keys')
