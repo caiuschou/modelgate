@@ -9,9 +9,9 @@ invite_code = "ZW9Z"
 
 [upstream]
 # OpenAI: https://api.openai.com/v1  |  OpenRouter: https://openrouter.ai/api/v1
-# Override with env UPSTREAM_BASE_URL on the server.
+# Override base_url with env UPSTREAM_BASE_URL on the server if needed.
 base_url = "https://api.openai.com/v1"
-# Prefer UPSTREAM_API_KEY in production (OpenAI key or OpenRouter key, matching base_url).
+# Upstream API key is read only from this file (not UPSTREAM_API_KEY env).
 api_key = "sk-your-openai-key-here"
 
 # Optional: rolling tracing logs (`modelgate.log.YYYY-MM-DD`). Empty = stderr only (e.g. systemd journal).

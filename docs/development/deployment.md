@@ -27,7 +27,7 @@
 
    - **`[upstream]`**  
      - `base_url`：上游 OpenAI 兼容 API 根路径（默认 `https://api.openai.com/v1`）。  
-     - `api_key`：可留占位，**生产推荐用环境变量** `UPSTREAM_API_KEY` 注入真实密钥。  
+     - `api_key`：上游真实密钥（**仅从此处读取**，不使用 `UPSTREAM_API_KEY` 环境变量）。  
    - **`[auth].invite_code`**：自助注册邀请码；设为 `""` 关闭注册。可用环境变量 `AUTH_INVITE_CODE` 覆盖。  
    - **`[server]`**：监听地址与端口（默认 `0.0.0.0:8000`）。
 
@@ -35,8 +35,7 @@
 
    | 变量 | 作用 |
    |------|------|
-   | `UPSTREAM_API_KEY` | 覆盖上游 API Key（优先于配置文件） |
-   | `UPSTREAM_BASE_URL` | 覆盖上游 Base URL |
+   | `UPSTREAM_BASE_URL` | 覆盖上游 Base URL（`api_key` 仍来自 `config.toml`） |
    | `AUTH_INVITE_CODE` | 覆盖邀请码 |
    | `OPENAI_ORGANIZATION` | 可选，转发给上游 |
    | `OPENAI_PROJECT` | 可选，转发给上游 |
@@ -111,7 +110,7 @@ npm run preview
 
 1. **管理接口：** `POST /users`、`POST /users/{username}/keys` 当前无应用层管理员鉴权，勿对公网暴露。  
 2. **HTTPS：** 在反向代理终止 TLS，后端可仅监听内网。  
-3. **密钥：** 勿将真实 `UPSTREAM_API_KEY` 提交到仓库；使用环境变量或密钥管理。  
+3. **密钥：** 勿将真实 `[upstream].api_key` 提交到仓库；生产放在服务器 `config.toml` 或受控密钥注入。  
 4. **SQLite 路径：** 将 `sqlite.path` 指向持久卷，并做好备份。  
 5. **CORS：** 按需改为白名单域名，而非 permissive。
 

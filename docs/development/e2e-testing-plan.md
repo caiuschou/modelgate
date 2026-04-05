@@ -71,7 +71,7 @@
 
 **配置方式（与当前代码一致）**
 
-- [`src/config.rs`](../../src/config.rs) 中：环境变量可覆盖 **`UPSTREAM_API_KEY`**、**`UPSTREAM_BASE_URL`**（指向 Mock 基址，如 `http://127.0.0.1:18080/v1`）、**`AUTH_INVITE_CODE`**；未设置时 `base_url` 来自 `config.toml` 或默认值。
+- [`src/config.rs`](../../src/config.rs) 中：环境变量可覆盖 **`UPSTREAM_BASE_URL`**（指向 Mock 基址，如 `http://127.0.0.1:18080/v1`）、**`AUTH_INVITE_CODE`**；上游 **`api_key`** 仅来自 `config.toml`。未设置时 `base_url` 来自 `config.toml` 或默认值。
 - **推荐**：为 E2E 准备专用 `config.toml`（或独立工作目录下的配置文件），例如将：
 
   ```toml

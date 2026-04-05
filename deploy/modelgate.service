@@ -10,7 +10,7 @@ User=modelgate
 Group=modelgate
 WorkingDirectory=/opt/modelgate/current
 
-# Prefer env file for secrets like UPSTREAM_API_KEY
+# Optional env overrides (e.g. UPSTREAM_BASE_URL); upstream API key lives in shared/config.toml
 EnvironmentFile=-/etc/modelgate/modelgate.env
 
 # Optional: override tracing log dir (same as config [logging].tracing_log_dir)

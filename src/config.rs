@@ -70,13 +70,6 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
         .add_source(config::File::from(config_path).required(false))
         .build()?;
 
-    if let Ok(key) = std::env::var("UPSTREAM_API_KEY") {
-        let mut builder = config::Config::builder();
-        builder = builder.add_source(config);
-        builder = builder.set_override("upstream.api_key", key)?;
-        config = builder.build()?;
-    }
-
     if let Ok(base_url) = std::env::var("UPSTREAM_BASE_URL") {
         let mut builder = config::Config::builder();
         builder = builder.add_source(config);
@@ -103,7 +96,7 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
     let cfg: AppConfig = config.try_deserialize()?;
     if cfg.upstream.api_key.trim().is_empty() {
         return Err(config::ConfigError::Message(
-            "Missing upstream.api_key (set UPSTREAM_API_KEY or config.toml)".to_string(),
+            "Missing upstream.api_key in config.toml".to_string(),
         ));
     }
     Ok(cfg)
@@ -122,7 +115,6 @@ mod tests {
     use std::io::Write;
 
     fn clear_env_vars() {
-        env::remove_var("UPSTREAM_API_KEY");
         env::remove_var("UPSTREAM__API_KEY");
         env::remove_var("UPSTREAM_BASE_URL");
         env::remove_var("UPSTREAM__BASE_URL");
@@ -137,30 +129,32 @@ mod tests {
     }
 
     #[test]
-    fn load_config_from_env() {
+    fn upstream_api_key_comes_from_file_not_env() {
         with_env_lock(|| {
-            let original_value = env::var("UPSTREAM_API_KEY").ok();
             clear_env_vars();
+            env::set_var("UPSTREAM_API_KEY", "env-key-should-be-ignored");
 
-            let dir = env::temp_dir().join("modelgate_config_env_test");
+            let dir = env::temp_dir().join("modelgate_config_key_file_test");
             let _ = std::fs::remove_dir_all(&dir);
             create_dir_all(&dir).expect("create config dir");
 
-            env::set_var("UPSTREAM_API_KEY", "env-key");
+            let mut file = File::create(dir.join("config.toml")).expect("create config file");
+            writeln!(
+                file,
+                "[upstream]\napi_key = \"file-key\"\n[server]\nhost = \"127.0.0.1\"\nport = 9000\n"
+            )
+            .expect("write config file");
 
-            let cfg = load_config_from_dir(&dir).expect("load config from env");
-            assert_eq!(cfg.upstream.api_key, "env-key");
-            assert_eq!(cfg.server.host, "0.0.0.0");
-            assert_eq!(cfg.server.port, 8000);
+            let cfg = load_config_from_dir(&dir).expect("load config");
+            assert_eq!(cfg.upstream.api_key, "file-key");
 
-            store_env_var("UPSTREAM_API_KEY", original_value);
+            env::remove_var("UPSTREAM_API_KEY");
         });
     }
 
     #[test]
     fn tracing_log_dir_env_override() {
         with_env_lock(|| {
-            let original_key = env::var("UPSTREAM_API_KEY").ok();
             let original_tracing = env::var("TRACING_LOG_DIR").ok();
             clear_env_vars();
 
@@ -168,13 +162,18 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             create_dir_all(&dir).expect("create config dir");
 
-            env::set_var("UPSTREAM_API_KEY", "env-key");
+            let mut file = File::create(dir.join("config.toml")).expect("create config file");
+            writeln!(
+                file,
+                "[upstream]\napi_key = \"test-key-for-tracing-test\"\n"
+            )
+            .expect("write config file");
+
             env::set_var("TRACING_LOG_DIR", "/tmp/modelgate-tracing");
 
             let cfg = load_config_from_dir(&dir).expect("load config");
             assert_eq!(cfg.logging.tracing_log_dir, "/tmp/modelgate-tracing");
 
-            store_env_var("UPSTREAM_API_KEY", original_key);
             store_env_var("TRACING_LOG_DIR", original_tracing);
         });
     }
@@ -182,7 +181,6 @@ mod tests {
     #[test]
     fn upstream_base_url_env_override() {
         with_env_lock(|| {
-            let original_key = env::var("UPSTREAM_API_KEY").ok();
             let original_base = env::var("UPSTREAM_BASE_URL").ok();
             clear_env_vars();
 
@@ -190,14 +188,19 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             create_dir_all(&dir).expect("create config dir");
 
-            env::set_var("UPSTREAM_API_KEY", "env-key");
+            let mut file = File::create(dir.join("config.toml")).expect("create config file");
+            writeln!(
+                file,
+                "[upstream]\napi_key = \"file-key\"\nbase_url = \"https://api.openai.com/v1\"\n"
+            )
+            .expect("write config file");
+
             env::set_var("UPSTREAM_BASE_URL", "http://127.0.0.1:18080/v1");
 
             let cfg = load_config_from_dir(&dir).expect("load config");
-            assert_eq!(cfg.upstream.api_key, "env-key");
+            assert_eq!(cfg.upstream.api_key, "file-key");
             assert_eq!(cfg.upstream.base_url, "http://127.0.0.1:18080/v1");
 
-            store_env_var("UPSTREAM_API_KEY", original_key);
             store_env_var("UPSTREAM_BASE_URL", original_base);
         });
     }
@@ -205,7 +208,6 @@ mod tests {
     #[test]
     fn load_config_from_file() {
         with_env_lock(|| {
-            let original_value = env::var("UPSTREAM_API_KEY").ok();
             clear_env_vars();
 
             let dir = env::temp_dir().join("modelgate_config_file_test");
@@ -223,15 +225,12 @@ mod tests {
             assert_eq!(cfg.upstream.api_key, "file-key");
             assert_eq!(cfg.server.host, "127.0.0.1");
             assert_eq!(cfg.server.port, 9000);
-
-            store_env_var("UPSTREAM_API_KEY", original_value);
         });
     }
 
     #[test]
     fn missing_upstream_api_key_returns_error() {
         with_env_lock(|| {
-            let original_value = env::var("UPSTREAM_API_KEY").ok();
             clear_env_vars();
 
             let dir = env::temp_dir().join("modelgate_config_missing_test");
@@ -241,8 +240,6 @@ mod tests {
             let err = load_config_from_dir(&dir).unwrap_err();
             let msg = format!("{err}");
             assert!(msg.contains("Missing upstream.api_key"));
-
-            store_env_var("UPSTREAM_API_KEY", original_value);
         });
     }
 }

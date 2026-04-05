@@ -320,15 +320,27 @@ mod tests {
 
     #[actix_web::test]
     async fn app_main_test_mode_creates_app() {
+        use std::fs;
+
         with_env_lock_async(|| async {
-            let original_value = env::var("UPSTREAM_API_KEY").ok();
-            env::set_var("UPSTREAM_API_KEY", "test");
-            let result = app_main(true).await;
+            env::remove_var("UPSTREAM_API_KEY");
+            let dir = std::env::temp_dir().join("modelgate_app_main_test_mode");
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).expect("create temp config dir");
+            let db_path = dir.join("test.db");
+            let db_str = db_path.display().to_string().replace('\\', "/");
+            let config_body = format!(
+                r#"[upstream]
+api_key = "test"
+[sqlite]
+path = "{db_str}"
+"#
+            );
+            fs::write(dir.join("config.toml"), config_body).expect("write config");
+
+            let result = app_main_with_dir(&dir, true).await;
             assert!(result.is_ok());
-            match original_value {
-                Some(value) => env::set_var("UPSTREAM_API_KEY", value),
-                None => env::remove_var("UPSTREAM_API_KEY"),
-            }
+            let _ = fs::remove_dir_all(&dir);
         })
         .await;
     }
