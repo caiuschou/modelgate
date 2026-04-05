@@ -42,10 +42,16 @@ sudo systemctl enable --now modelgate
 ```bash
 sudo mkdir -p /etc/modelgate
 sudo tee /etc/modelgate/modelgate.env >/dev/null <<'EOF'
+# 上游 LLM：OpenAI 或任意 OpenAI 兼容网关（见 config [upstream].base_url）
 UPSTREAM_API_KEY=xxxxx
+# 覆盖 shared/config.toml 里的 base_url（与 UPSTREAM_API_KEY 一起生效）
+# OpenRouter（OpenAI 兼容）：密钥在 https://openrouter.ai/keys
+# UPSTREAM_BASE_URL=https://openrouter.ai/api/v1
+# UPSTREAM_API_KEY=sk-or-v1-...your-openrouter-key...
+# 调用时在请求体里使用 OpenRouter 模型名，例如 openai/gpt-4o-mini、anthropic/claude-3.5-sonnet
 # 可选：覆盖 config 里的 tracing 日志目录（与 [logging].tracing_log_dir 二选一）
 # TRACING_LOG_DIR=/opt/modelgate/shared/logs
-# 可选：
+# 仅直连 OpenAI 时可选：
 # OPENAI_ORGANIZATION=...
 # OPENAI_PROJECT=...
 # RUST_LOG=info
