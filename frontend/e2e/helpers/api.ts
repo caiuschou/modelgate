@@ -1,5 +1,6 @@
 /** E2E helpers hitting the real Rust API (see `e2e/run-modelgate-stack.mjs`). */
 
+/** Returns a console session JWT (Bearer for `/api/v1/*`). */
 export async function loginApiKey(
   consoleBaseUrl: string,
   username: string,
@@ -15,6 +16,17 @@ export async function loginApiKey(
   }
   const body = (await r.json()) as { token: string }
   return body.token
+}
+
+/** Chat completions require `sk-or-v1-*`; create a disposable gateway key using a session JWT. */
+export async function getGatewayApiKeyForSession(
+  consoleBaseUrl: string,
+  sessionToken: string,
+): Promise<string> {
+  const { api_key } = await createMyApiKey(consoleBaseUrl, sessionToken, {
+    name: `e2e-gw-${Date.now()}`,
+  })
+  return api_key
 }
 
 export async function createChatCompletion(

@@ -44,6 +44,7 @@ test.describe('API 密钥页（已登录）', () => {
   test('新建密钥：表单填写名称后生成，仅一次展示完整 sk-or-v1-', async ({
     page,
   }) => {
+    const keyName = `e2e-playwright-${Date.now()}`
     const token = await loginApiKey(consoleBase, e2eUser, e2ePass)
     const before = await listMyApiKeys(consoleBase, token)
 
@@ -52,7 +53,7 @@ test.describe('API 密钥页（已登录）', () => {
     await expect(page.getByPlaceholder('例如：生产-支付助手')).toBeVisible({
       timeout: 10_000,
     })
-    await page.getByPlaceholder('例如：生产-支付助手').fill('e2e-playwright-key')
+    await page.getByPlaceholder('例如：生产-支付助手').fill(keyName)
     await page.getByRole('button', { name: '生成密钥' }).click()
     await expect(
       page.getByText('请立即保存 — 完整密钥仅显示这一次', { exact: false }),
@@ -76,7 +77,7 @@ test.describe('API 密钥页（已登录）', () => {
     expect(created!.revoked).toBe(false)
     expect(created!.name).toContain('e2e-playwright')
 
-    const row = page.getByRole('row').filter({ hasText: 'e2e-playwright' })
+    const row = page.getByRole('row').filter({ hasText: keyName })
     await expect(row).toBeVisible()
     await expect(row.getByText('有效', { exact: true })).toBeVisible()
     await expect(row).not.toContainText(fullKey)

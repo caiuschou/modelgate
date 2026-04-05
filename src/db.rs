@@ -4,7 +4,7 @@ use rusqlite::{params, params_from_iter, types::Value, Connection};
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 5] = [
+const MIGRATIONS: [(&str, &str); 6] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -24,6 +24,10 @@ const MIGRATIONS: [(&str, &str); 5] = [
     (
         "0005_api_keys_enhance.sql",
         include_str!("../migrations/0005_api_keys_enhance.sql"),
+    ),
+    (
+        "0006_api_keys_hash.sql",
+        include_str!("../migrations/0006_api_keys_hash.sql"),
     ),
 ];
 
@@ -67,6 +71,37 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         )?;
     }
 
+    migrate_0006_api_key_hashes_if_needed(conn)?;
+    Ok(())
+}
+
+fn migrate_0006_api_key_hashes_if_needed(conn: &Connection) -> rusqlite::Result<()> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM api_keys WHERE api_key IS NOT NULL AND LENGTH(TRIM(api_key)) > 0",
+        [],
+        |row| row.get(0),
+    )?;
+    if n == 0 {
+        return Ok(());
+    }
+    migrate_0006_api_key_hashes(conn)
+}
+
+fn migrate_0006_api_key_hashes(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare(
+        "SELECT id, api_key FROM api_keys WHERE api_key IS NOT NULL AND LENGTH(TRIM(api_key)) > 0",
+    )?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?;
+    for (id, key) in rows {
+        let hash = crate::secrets::api_key_sha256_hex(&key);
+        let preview = crate::secrets::api_key_preview_short(&key);
+        conn.execute(
+            "UPDATE api_keys SET api_key_hash = ?1, key_preview = ?2, api_key = NULL WHERE id = ?3",
+            params![hash, preview, id],
+        )?;
+    }
     Ok(())
 }
 
@@ -95,9 +130,11 @@ pub fn insert_api_key_for_user(
     api_key: &str,
     created_at: i64,
 ) -> rusqlite::Result<i64> {
+    let hash = crate::secrets::api_key_sha256_hex(api_key);
+    let preview = crate::secrets::api_key_preview_short(api_key);
     conn.execute(
-        "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
-        params![user_id, api_key, created_at],
+        "INSERT INTO api_keys (user_id, api_key, api_key_hash, key_preview, created_at) VALUES (?1, NULL, ?2, ?3, ?4)",
+        params![user_id, hash, preview, created_at],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -105,7 +142,9 @@ pub fn insert_api_key_for_user(
 #[derive(Debug, Clone)]
 pub struct ApiKeyRow {
     pub id: i64,
-    pub api_key: String,
+    /// Legacy plaintext; always `None` after migration 0006 backfill.
+    pub api_key_plain: Option<String>,
+    pub key_preview: String,
     pub created_at: i64,
     pub revoked: i32,
     pub name: String,
@@ -121,25 +160,26 @@ pub struct ApiKeyRow {
 
 pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, api_key, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+        "SELECT id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
                 quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist
          FROM api_keys WHERE user_id = ?1 ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![user_id], |row| {
         Ok(ApiKeyRow {
             id: row.get(0)?,
-            api_key: row.get(1)?,
-            created_at: row.get(2)?,
-            revoked: row.get(3)?,
-            name: row.get(4)?,
-            description: row.get(5)?,
-            disabled: row.get(6)?,
-            last_used_at: row.get(7)?,
-            expires_at: row.get(8)?,
-            quota_monthly_tokens: row.get(9)?,
-            quota_used_tokens: row.get(10)?,
-            model_allowlist: row.get(11)?,
-            ip_allowlist: row.get(12)?,
+            api_key_plain: row.get(1)?,
+            key_preview: row.get(2)?,
+            created_at: row.get(3)?,
+            revoked: row.get(4)?,
+            name: row.get(5)?,
+            description: row.get(6)?,
+            disabled: row.get(7)?,
+            last_used_at: row.get(8)?,
+            expires_at: row.get(9)?,
+            quota_monthly_tokens: row.get(10)?,
+            quota_used_tokens: row.get(11)?,
+            model_allowlist: row.get(12)?,
+            ip_allowlist: row.get(13)?,
         })
     })?;
     rows.collect()
@@ -151,25 +191,26 @@ pub fn get_api_key_row_for_user(
     key_id: i64,
 ) -> rusqlite::Result<ApiKeyRow> {
     conn.query_row(
-        "SELECT id, api_key, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+        "SELECT id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
                 quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist
          FROM api_keys WHERE id = ?1 AND user_id = ?2",
         params![key_id, user_id],
         |row| {
             Ok(ApiKeyRow {
                 id: row.get(0)?,
-                api_key: row.get(1)?,
-                created_at: row.get(2)?,
-                revoked: row.get(3)?,
-                name: row.get(4)?,
-                description: row.get(5)?,
-                disabled: row.get(6)?,
-                last_used_at: row.get(7)?,
-                expires_at: row.get(8)?,
-                quota_monthly_tokens: row.get(9)?,
-                quota_used_tokens: row.get(10)?,
-                model_allowlist: row.get(11)?,
-                ip_allowlist: row.get(12)?,
+                api_key_plain: row.get(1)?,
+                key_preview: row.get(2)?,
+                created_at: row.get(3)?,
+                revoked: row.get(4)?,
+                name: row.get(5)?,
+                description: row.get(6)?,
+                disabled: row.get(7)?,
+                last_used_at: row.get(8)?,
+                expires_at: row.get(9)?,
+                quota_monthly_tokens: row.get(10)?,
+                quota_used_tokens: row.get(11)?,
+                model_allowlist: row.get(12)?,
+                ip_allowlist: row.get(13)?,
             })
         },
     )
@@ -190,13 +231,16 @@ pub fn insert_api_key_with_meta(
     let period = quota_monthly_tokens
         .filter(|&q| q > 0)
         .map(|_| crate::api_key_policy::unix_month_start(created_at));
+    let hash = crate::secrets::api_key_sha256_hex(api_key);
+    let preview = crate::secrets::api_key_preview_short(api_key);
     conn.execute(
-        "INSERT INTO api_keys (user_id, api_key, created_at, name, description, expires_at,
+        "INSERT INTO api_keys (user_id, api_key, api_key_hash, key_preview, created_at, name, description, expires_at,
             quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             user_id,
-            api_key,
+            hash,
+            preview,
             created_at,
             name,
             description,
@@ -352,7 +396,7 @@ pub fn get_first_api_key_for_user(
     user_id: i64,
 ) -> rusqlite::Result<Option<String>> {
     let mut stmt = conn.prepare(
-        "SELECT api_key FROM api_keys WHERE user_id = ?1 AND revoked = 0 ORDER BY id DESC LIMIT 1",
+        "SELECT api_key FROM api_keys WHERE user_id = ?1 AND revoked = 0 AND api_key IS NOT NULL AND LENGTH(TRIM(api_key)) > 0 ORDER BY id DESC LIMIT 1",
     )?;
     let mut rows = stmt.query_map(params![user_id], |row| row.get(0))?;
     match rows.next() {
@@ -366,10 +410,11 @@ pub fn validate_api_key(conn: &Connection, api_key: &str) -> bool {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
+    let hash = crate::secrets::api_key_sha256_hex(api_key);
     conn.query_row(
-        "SELECT 1 FROM api_keys WHERE api_key = ?1 AND revoked = 0 AND disabled = 0
-         AND (expires_at IS NULL OR expires_at > ?2)",
-        params![api_key, now],
+        "SELECT 1 FROM api_keys WHERE (api_key_hash = ?1 OR api_key = ?2) AND revoked = 0 AND disabled = 0
+         AND (expires_at IS NULL OR expires_at > ?3)",
+        params![hash, api_key, now],
         |_| Ok(()),
     )
     .is_ok()
@@ -381,10 +426,11 @@ pub fn get_api_key_info(conn: &Connection, api_key: &str) -> rusqlite::Result<(i
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
+    let hash = crate::secrets::api_key_sha256_hex(api_key);
     conn.query_row(
-        "SELECT id, user_id FROM api_keys WHERE api_key = ?1 AND revoked = 0 AND disabled = 0
-         AND (expires_at IS NULL OR expires_at > ?2)",
-        params![api_key, now],
+        "SELECT id, user_id FROM api_keys WHERE (api_key_hash = ?1 OR api_key = ?2) AND revoked = 0 AND disabled = 0
+         AND (expires_at IS NULL OR expires_at > ?3)",
+        params![hash, api_key, now],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
 }
@@ -405,12 +451,13 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
+    let hash = crate::secrets::api_key_sha256_hex(api_key);
     conn.query_row(
         "SELECT id, user_id, model_allowlist, ip_allowlist, quota_monthly_tokens,
                 quota_used_tokens, quota_period_start
-         FROM api_keys WHERE api_key = ?1 AND revoked = 0 AND disabled = 0
-         AND (expires_at IS NULL OR expires_at > ?2)",
-        params![api_key, now],
+         FROM api_keys WHERE (api_key_hash = ?1 OR api_key = ?2) AND revoked = 0 AND disabled = 0
+         AND (expires_at IS NULL OR expires_at > ?3)",
+        params![hash, api_key, now],
         |row| {
             Ok(ApiKeyAuthRow {
                 id: row.get(0)?,

@@ -25,6 +25,22 @@ pub fn secret_sha256_hex(s: &str) -> String {
     hex::encode(h.finalize())
 }
 
+/// SHA-256 hex of the full API key string (for lookup; never log the raw key).
+pub fn api_key_sha256_hex(full_key: &str) -> String {
+    secret_sha256_hex(full_key)
+}
+
+/// Short preview for UI (first 12 + ellipsis + last 4).
+pub fn api_key_preview_short(full: &str) -> String {
+    let b = full.as_bytes();
+    if b.len() <= 14 {
+        return "••••".to_string();
+    }
+    let start = std::str::from_utf8(&b[..12]).unwrap_or("••••");
+    let end = std::str::from_utf8(&b[b.len() - 4..]).unwrap_or("");
+    format!("{start}…{end}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

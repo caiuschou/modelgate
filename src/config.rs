@@ -24,6 +24,9 @@ pub struct LoggingConfig {
 pub struct AuthConfig {
     /// Required for `POST /api/v1/auth/register`. Empty string disables self-service registration.
     pub invite_code: String,
+    /// HS256 secret for console session JWTs. Empty = derive from upstream key at load time, or `JWT_SECRET`.
+    #[serde(default)]
+    pub jwt_secret: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -93,7 +96,13 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
         }
     }
 
-    let cfg: AppConfig = config.try_deserialize()?;
+    let mut cfg: AppConfig = config.try_deserialize()?;
+    if cfg.auth.jwt_secret.trim().is_empty() {
+        cfg.auth.jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
+            let h = crate::secrets::secret_sha256_hex(&cfg.upstream.api_key);
+            format!("mg-jwt-{}", &h[..32])
+        });
+    }
     if cfg.upstream.api_key.trim().is_empty() {
         return Err(config::ConfigError::Message(
             "Missing upstream.api_key in config.toml".to_string(),

@@ -4,7 +4,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::{errors::ApiError, AppState};
+use crate::{errors::ApiError, jwt_session, AppState};
 
 #[derive(Deserialize)]
 pub struct RegisterRequest {
@@ -123,28 +123,19 @@ pub async fn login(
         ));
     }
 
-    let created_at = now_secs();
-    let token = match state
-        .user_service
-        .get_first_api_key_for_user(user_id)
-        .map_err(ApiError::from)?
-    {
-        Some(key) => key,
-        None => {
-            let key = create_api_key();
-            state
-                .user_service
-                .create_api_key_for_user_id(user_id, &key, created_at)
-                .map_err(ApiError::from)?;
-            key
-        }
-    };
-
     let role = if username.eq_ignore_ascii_case("admin") {
         "admin"
     } else {
         "user"
     };
+
+    let token = jwt_session::encode_session_jwt(
+        &state.cfg.auth.jwt_secret,
+        user_id,
+        username,
+        role,
+    )
+    .map_err(|_| ApiError::InternalError("session token failed".into()))?;
 
     Ok(HttpResponse::Ok().json(LoginResponse {
         token,

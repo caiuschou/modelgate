@@ -3,12 +3,14 @@ use actix_web::{http::header, web, HttpRequest, HttpResponse};
 use crate::audit::{
     AuditListQuery, AuditListResponse, ExportRequest, ExportResponse, ExportStatusResponse,
 };
-use crate::{auth, errors::ApiError, AppState};
+use crate::{errors::ApiError, session_auth, AppState};
 
-fn auth_scope(req: &HttpRequest, state: &web::Data<AppState>) -> Result<(i64, i64), ApiError> {
-    let api_key = auth::extract_bearer_token(req)
-        .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
-    Ok(state.auth_service.get_api_key_scope(api_key)?)
+fn auth_scope(
+    req: &HttpRequest,
+    state: &web::Data<AppState>,
+) -> Result<(Option<i64>, i64), ApiError> {
+    let s = session_auth::resolve_console_session(req, state)?;
+    Ok((s.api_key_id, s.user_id))
 }
 
 pub async fn list_audit_logs(
@@ -16,7 +18,7 @@ pub async fn list_audit_logs(
     state: web::Data<AppState>,
     query: web::Query<AuditListQuery>,
 ) -> Result<HttpResponse, ApiError> {
-    let (_token_id, user_id) = auth_scope(&req, &state)?;
+    let (_, user_id) = auth_scope(&req, &state)?;
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let offset = query.offset.unwrap_or(0);
 
@@ -35,7 +37,7 @@ pub async fn get_audit_log(
     state: web::Data<AppState>,
     request_id: web::Path<String>,
 ) -> Result<HttpResponse, ApiError> {
-    let (_token_id, user_id) = auth_scope(&req, &state)?;
+    let (_, user_id) = auth_scope(&req, &state)?;
     let record = state.audit_service.get_audit_log(&request_id, user_id)?;
     Ok(HttpResponse::Ok().json(record))
 }
@@ -45,7 +47,7 @@ pub async fn export_audit_logs(
     state: web::Data<AppState>,
     payload: web::Json<ExportRequest>,
 ) -> Result<HttpResponse, ApiError> {
-    let (_token_id, user_id) = auth_scope(&req, &state)?;
+    let (_, user_id) = auth_scope(&req, &state)?;
     let resp: ExportResponse =
         state
             .audit_service
@@ -101,7 +103,7 @@ mod tests {
 
     impl AuthService for MockAuthService {
         fn get_api_key_scope(&self, api_key: &str) -> Result<(i64, i64), ServiceError> {
-            if api_key == "ok-token" {
+            if api_key == "sk-or-v1-testok" {
                 Ok((1, 100))
             } else {
                 Err(ServiceError::Unauthorized(
@@ -355,6 +357,7 @@ mod tests {
             logging: crate::config::LoggingConfig::default(),
             auth: crate::config::AuthConfig {
                 invite_code: "ZW9Z".into(),
+                jwt_secret: "audit-test-jwt-secret-min-32-chars!!".into(),
             },
         };
         let db_pool = db::create_db_pool(":memory:").expect("create db pool");
@@ -384,7 +387,7 @@ mod tests {
         .await;
         let req = test::TestRequest::get()
             .uri("/api/v1/logs/request?limit=10")
-            .insert_header(("Authorization", "Bearer ok-token"))
+            .insert_header(("Authorization", "Bearer sk-or-v1-testok"))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -405,7 +408,7 @@ mod tests {
 
         let req = test::TestRequest::get()
             .uri("/api/v1/logs/export/exp_1/download")
-            .insert_header(("Authorization", "Bearer ok-token"))
+            .insert_header(("Authorization", "Bearer sk-or-v1-testok"))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);

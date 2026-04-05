@@ -4,13 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::ApiKeyPatchDb;
 use crate::services::user::CreateMyApiKeyInput;
-use crate::{auth, errors::ApiError, AppState};
+use crate::{errors::ApiError, session_auth, AppState};
 
 fn auth_user_id(req: &HttpRequest, state: &web::Data<AppState>) -> Result<i64, ApiError> {
-    let api_key = auth::extract_bearer_token(req)
-        .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
-    let (_token_id, user_id) = state.auth_service.get_api_key_scope(api_key)?;
-    Ok(user_id)
+    Ok(session_auth::resolve_console_session(req, state)?.user_id)
 }
 
 fn now_secs() -> u64 {

@@ -6,6 +6,8 @@ port = 8000
 # Required for POST /api/v1/auth/register. Set to "" to disable self-service registration.
 # Override at runtime: AUTH_INVITE_CODE
 invite_code = "ZW9Z"
+# Console session JWT (POST /api/v1/auth/login). Empty = derive from upstream key at startup, or set JWT_SECRET.
+# jwt_secret = "your-random-secret-at-least-32-chars"
 
 [upstream]
 # OpenAI: https://api.openai.com/v1  |  OpenRouter: https://openrouter.ai/api/v1

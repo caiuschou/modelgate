@@ -59,6 +59,14 @@ fn key_status(now: i64, r: &db::ApiKeyRow) -> String {
 
 fn row_to_summary(now: i64, r: db::ApiKeyRow) -> ApiKeySummary {
     let status = key_status(now, &r);
+    let preview = if !r.key_preview.is_empty() {
+        r.key_preview.clone()
+    } else {
+        r.api_key_plain
+            .as_deref()
+            .map(mask_api_key_preview)
+            .unwrap_or_else(|| "••••".to_string())
+    };
     ApiKeySummary {
         id: r.id,
         name: if r.name.trim().is_empty() {
@@ -67,7 +75,7 @@ fn row_to_summary(now: i64, r: db::ApiKeyRow) -> ApiKeySummary {
             r.name.clone()
         },
         description: r.description,
-        preview: mask_api_key_preview(&r.api_key),
+        preview,
         created_at: r.created_at,
         last_used_at: r.last_used_at,
         revoked: r.revoked != 0,
@@ -289,10 +297,7 @@ impl Repository for SqliteRepository {
         }
 
         let user_id = tx.last_insert_rowid();
-        if let Err(err) = tx.execute(
-            "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![user_id, api_key, created_at as i64],
-        ) {
+        if let Err(err) = db::insert_api_key_for_user(&tx, user_id, api_key, created_at as i64) {
             error!(error = %err, "failed to create user api key");
             return Err(RepositoryError::Internal("Failed to create user".into()));
         }
@@ -317,11 +322,7 @@ impl Repository for SqliteRepository {
         let user_id = db::find_user_id(&conn, username)
             .map_err(|_| RepositoryError::NotFound("user not found".into()))?;
 
-        conn.execute(
-            "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![user_id, api_key, created_at as i64],
-        )
-        .map_err(|err| {
+        db::insert_api_key_for_user(&conn, user_id, api_key, created_at as i64).map_err(|err| {
             error!(error = %err, "failed to create api key for user");
             RepositoryError::Internal("Failed to create api key".into())
         })?;
@@ -358,10 +359,7 @@ impl Repository for SqliteRepository {
         }
 
         let user_id = tx.last_insert_rowid();
-        if let Err(err) = tx.execute(
-            "INSERT INTO api_keys (user_id, api_key, created_at) VALUES (?1, ?2, ?3)",
-            rusqlite::params![user_id, api_key, created_at as i64],
-        ) {
+        if let Err(err) = db::insert_api_key_for_user(&tx, user_id, api_key, created_at as i64) {
             error!(error = %err, "failed to create user api key");
             return Err(RepositoryError::Internal("Failed to create user".into()));
         }
@@ -591,7 +589,9 @@ mod tests {
             .expect("load creds");
         let (user_id, stored) = creds.expect("user exists");
         assert_eq!(stored.as_deref(), Some(hash.as_str()));
-        let key = repo.get_first_api_key_for_user(user_id).expect("load key");
-        assert_eq!(key.as_deref(), Some("sk-reg-1"));
+        assert!(repo.get_first_api_key_for_user(user_id).expect("load key").is_none());
+        let (tid, uid) = repo.get_api_key_info("sk-reg-1").expect("lookup by full key");
+        assert_eq!(uid, user_id);
+        assert!(tid > 0);
     }
 }

@@ -3,6 +3,8 @@ pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod jwt_session;
+pub mod session_auth;
 pub mod errors;
 pub mod handlers;
 pub mod logging;
@@ -223,6 +225,7 @@ mod tests {
             logging: crate::config::LoggingConfig::default(),
             auth: crate::config::AuthConfig {
                 invite_code: "ZW9Z".into(),
+                jwt_secret: "main-test-jwt-secret-min-32-chars!!!".into(),
             },
         };
         let http = reqwest::Client::builder()

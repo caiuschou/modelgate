@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import {
   useMyApiKey,
   usePatchMyApiKey,
@@ -10,6 +11,17 @@ import {
 
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
+}
+
+function toDatetimeLocal(ts: number): string {
+  const d = new Date(ts * 1000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function fromDatetimeLocal(s: string): number | null {
+  const t = Date.parse(s)
+  return Number.isFinite(t) ? Math.floor(t / 1000) : null
 }
 
 export function ApiKeyDetailPage() {
@@ -21,6 +33,20 @@ export function ApiKeyDetailPage() {
   const patchMutation = usePatchMyApiKey()
   const revokeMutation = useRevokeMyApiKey()
   const [rotateOpen, setRotateOpen] = useState(false)
+  const [expiresInput, setExpiresInput] = useState('')
+  const [quotaInput, setQuotaInput] = useState('')
+  const [modelsText, setModelsText] = useState('')
+  const [ipsText, setIpsText] = useState('')
+
+  useEffect(() => {
+    if (!data) return
+    setExpiresInput(data.expires_at ? toDatetimeLocal(data.expires_at) : '')
+    setQuotaInput(
+      data.quota_monthly_tokens != null ? String(data.quota_monthly_tokens) : '',
+    )
+    setModelsText(data.model_allowlist?.join(', ') ?? '')
+    setIpsText(data.ip_allowlist?.join(', ') ?? '')
+  }, [data])
 
   if (!Number.isFinite(keyId) || keyId <= 0) {
     return (
@@ -62,6 +88,47 @@ export function ApiKeyDetailPage() {
     try {
       await revokeMutation.mutateAsync(data.id)
       window.location.href = '/api-keys'
+    } catch {
+      /* */
+    }
+  }
+
+  const handleSavePolicies = async () => {
+    const models = modelsText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const ips = ipsText
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    const quotaParsed =
+      quotaInput.trim() === '' ? null : Number.parseInt(quotaInput, 10)
+    if (quotaInput.trim() !== '' && Number.isNaN(quotaParsed as number)) {
+      window.alert('月度配额必须是数字')
+      return
+    }
+    let expiresAt: number | null | undefined
+    if (expiresInput.trim() === '') {
+      expiresAt = null
+    } else {
+      const ts = fromDatetimeLocal(expiresInput)
+      if (ts == null) {
+        window.alert('过期时间格式无效')
+        return
+      }
+      expiresAt = ts
+    }
+    try {
+      await patchMutation.mutateAsync({
+        id: data.id,
+        body: {
+          expires_at: expiresAt,
+          quota_monthly_tokens: quotaParsed,
+          model_allowlist: models.length > 0 ? models : null,
+          ip_allowlist: ips.length > 0 ? ips : null,
+        },
+      })
     } catch {
       /* */
     }
@@ -141,21 +208,67 @@ export function ApiKeyDetailPage() {
         </dl>
       </Card>
 
-      {(data.model_allowlist?.length || data.ip_allowlist?.length) ? (
-        <Card className="space-y-2 p-4">
-          <h2 className="text-sm font-medium">策略</h2>
-          {data.model_allowlist?.length ? (
-            <p className="text-sm">
-              <span className="text-muted-foreground">模型白名单：</span>
-              {data.model_allowlist.join(', ')}
-            </p>
-          ) : null}
-          {data.ip_allowlist?.length ? (
-            <p className="text-sm">
-              <span className="text-muted-foreground">IP 白名单：</span>
-              {data.ip_allowlist.join(', ')}
-            </p>
-          ) : null}
+      {!data.revoked && data.status !== 'expired' ? (
+        <Card className="space-y-4 p-4">
+          <h2 className="text-sm font-medium">编辑策略</h2>
+          <p className="text-xs text-muted-foreground">
+            保存后将更新过期时间、月度配额与模型 / IP 白名单（留空表示清除限制）。
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5 sm:col-span-2">
+              <label htmlFor="expires" className="text-sm font-medium">
+                过期时间（本地）
+              </label>
+              <Input
+                id="expires"
+                type="datetime-local"
+                value={expiresInput}
+                onChange={(e) => setExpiresInput(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="quota" className="text-sm font-medium">
+                月度 Token 配额
+              </label>
+              <Input
+                id="quota"
+                type="number"
+                min={0}
+                placeholder="不限制请留空"
+                value={quotaInput}
+                onChange={(e) => setQuotaInput(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="models" className="text-sm font-medium">
+                模型白名单
+              </label>
+              <Input
+                id="models"
+                placeholder="逗号分隔，如 gpt-4, gpt-3.5-turbo"
+                value={modelsText}
+                onChange={(e) => setModelsText(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <label htmlFor="ips" className="text-sm font-medium">
+                IP 白名单（CIDR 或单 IP）
+              </label>
+              <Input
+                id="ips"
+                placeholder="逗号分隔"
+                value={ipsText}
+                onChange={(e) => setIpsText(e.target.value)}
+              />
+            </div>
+          </div>
+          <Button
+            size="sm"
+            disabled={patchMutation.isPending}
+            onClick={() => void handleSavePolicies()}
+          >
+            保存策略
+          </Button>
         </Card>
       ) : null}
 

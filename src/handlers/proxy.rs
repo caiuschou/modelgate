@@ -1,4 +1,6 @@
 use actix_web::{http::StatusCode as ActixStatusCode, web, HttpRequest, HttpResponse};
+use async_stream::stream;
+use bytes::Bytes;
 use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use reqwest::header as reqwest_header;
@@ -39,6 +41,11 @@ pub async fn chat_completions(
     let start = std::time::Instant::now();
     let api_key = auth::extract_bearer_token(&req)
         .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
+    if !api_key.starts_with("sk-or-v1-") {
+        return Err(ApiError::Unauthorized(
+            "Chat completions requires an sk-or-v1-* gateway API key".into(),
+        ));
+    }
 
     let is_stream = upstream::is_stream_request(&body);
     let model = parse_model_from_request(&body);
@@ -202,16 +209,38 @@ pub async fn chat_completions(
             ?app_id,
             "chat completion proxied"
         );
-        let stream = upstream_resp.bytes_stream().map(move |chunk| {
-            chunk.map_err(|e| {
-                error!(
-                    %stream_request_id,
-                    error = %e,
-                    "upstream stream read failed"
-                );
-                actix_web::error::ErrorBadGateway("upstream stream read failed")
-            })
-        });
+        let st = state.clone();
+        let status_ok = (200..300).contains(&status_i64);
+        let stream = stream! {
+            let mut upstream_stream = upstream_resp.bytes_stream();
+            let mut buf: Vec<u8> = Vec::new();
+            let mut last_usage: Option<i64> = None;
+            while let Some(item) = upstream_stream.next().await {
+                match item {
+                    Ok(chunk) => {
+                        feed_sse_usage_lines(&mut buf, chunk.as_ref(), &mut last_usage);
+                        yield Ok::<Bytes, actix_web::Error>(chunk);
+                    }
+                    Err(e) => {
+                        error!(
+                            %stream_request_id,
+                            error = %e,
+                            "upstream stream read failed"
+                        );
+                        yield Err(actix_web::error::ErrorBadGateway(
+                            "upstream stream read failed",
+                        ));
+                        return;
+                    }
+                }
+            }
+            flush_sse_usage_tail(&mut buf, &mut last_usage);
+            if status_ok {
+                if let Some(total) = last_usage {
+                    let _ = st.user_service.increment_quota_tokens(token_id, total);
+                }
+            }
+        };
 
         Ok(HttpResponse::build(status)
             .content_type("text/event-stream")
@@ -288,6 +317,44 @@ pub async fn chat_completions(
         Ok(HttpResponse::build(status)
             .content_type("application/json")
             .body(bytes))
+    }
+}
+
+fn feed_sse_usage_lines(buf: &mut Vec<u8>, chunk: &[u8], last_usage: &mut Option<i64>) {
+    buf.extend_from_slice(chunk);
+    while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+        let line: Vec<u8> = buf.drain(..=pos).collect();
+        parse_sse_data_line_for_usage(&line, last_usage);
+    }
+}
+
+fn flush_sse_usage_tail(buf: &mut Vec<u8>, last_usage: &mut Option<i64>) {
+    if buf.is_empty() {
+        return;
+    }
+    let line = std::mem::take(buf);
+    parse_sse_data_line_for_usage(&line, last_usage);
+}
+
+fn parse_sse_data_line_for_usage(line: &[u8], last_usage: &mut Option<i64>) {
+    let s = String::from_utf8_lossy(line);
+    let t = s.trim_end();
+    let Some(rest) = t.strip_prefix("data: ") else {
+        return;
+    };
+    let rest = rest.trim();
+    if rest == "[DONE]" {
+        return;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(rest) else {
+        return;
+    };
+    if let Some(u) = v
+        .get("usage")
+        .and_then(|u| u.get("total_tokens"))
+        .and_then(|x| x.as_i64())
+    {
+        *last_usage = Some(u);
     }
 }
 

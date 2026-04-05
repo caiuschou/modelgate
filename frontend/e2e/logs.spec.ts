@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import {
   createChatCompletion,
+  getGatewayApiKeyForSession,
   loginApiKey,
   waitForAuditListRow,
 } from './helpers/api'
@@ -24,14 +25,15 @@ test('list shows audit row after chat completion and opens detail', async ({
 }) => {
   const model = `e2e_audit_${Date.now()}`
   const appId = `e2e_app_${Date.now()}`
-  const apiKey = await loginApiKey(consoleBase, e2eUser, e2ePass)
-  const chat = await createChatCompletion(backendBase, apiKey, model, {
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model, {
     appId,
   })
   expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
 
   const end = unixNow() + 3600
-  const row = await waitForAuditListRow(backendBase, apiKey, {
+  const row = await waitForAuditListRow(backendBase, session, {
     start_time: '0',
     end_time: String(end),
     limit: '20',
@@ -64,12 +66,13 @@ test('list shows audit row after chat completion and opens detail', async ({
 
 test('keyword in URL shows matching audit row', async ({ page }) => {
   const model = `e2e_kw_${Date.now()}`
-  const apiKey = await loginApiKey(consoleBase, e2eUser, e2ePass)
-  const chat = await createChatCompletion(backendBase, apiKey, model)
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model)
   expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
 
   const end = unixNow() + 3600
-  const row = await waitForAuditListRow(backendBase, apiKey, {
+  const row = await waitForAuditListRow(backendBase, session, {
     start_time: '0',
     end_time: String(end),
     limit: '20',
@@ -98,12 +101,13 @@ test('model filter syncs to URL query when applying filters', async ({
 
 test('export CSV downloads a file', async ({ page }) => {
   const model = `e2e_export_${Date.now()}`
-  const apiKey = await loginApiKey(consoleBase, e2eUser, e2ePass)
-  const chat = await createChatCompletion(backendBase, apiKey, model)
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model)
   expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
 
   const end = unixNow() + 3600
-  const row = await waitForAuditListRow(backendBase, apiKey, {
+  const row = await waitForAuditListRow(backendBase, session, {
     start_time: '0',
     end_time: String(end),
     limit: '20',
