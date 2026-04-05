@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod auth;
 pub mod config;
+pub mod logging;
 pub mod db;
 pub mod errors;
 pub mod handlers;
@@ -70,6 +71,9 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
     let cfg = config::load_config_from_dir(dir).unwrap_or_else(|e| {
         panic!("Failed to load config (config.toml or env): {e}");
     });
+    if !test_mode {
+        logging::init_tracing(&cfg.logging);
+    }
     let state = build_state(cfg.clone());
     let (audit_sender, audit_receiver) = tokio::sync::mpsc::channel(4096);
     let writer_state = state.db.clone();
@@ -208,6 +212,7 @@ mod tests {
                 flush_interval_seconds: 5,
                 export_dir: "./exports".into(),
             },
+            logging: crate::config::LoggingConfig::default(),
             auth: crate::config::AuthConfig {
                 invite_code: "ZW9Z".into(),
             },

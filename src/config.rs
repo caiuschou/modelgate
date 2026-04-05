@@ -6,8 +6,26 @@ pub struct AppConfig {
     pub upstream: UpstreamConfig,
     pub sqlite: SqliteConfig,
     pub audit: crate::audit::AuditConfig,
+    /// Where to write rolling `tracing` logs (empty = stderr only).
+    #[serde(default)]
+    pub logging: LoggingConfig,
     /// Console registration: invite code must match exactly (see `auth.invite_code`).
     pub auth: AuthConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoggingConfig {
+    /// Directory for daily rolling files `modelgate.log.YYYY-MM-DD`. Empty = no log files.
+    #[serde(default)]
+    pub tracing_log_dir: String,
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            tracing_log_dir: String::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -48,6 +66,7 @@ fn config_builder(
         .set_default("audit.batch_size", 50)?
         .set_default("audit.flush_interval_seconds", 5)?
         .set_default("audit.export_dir", "./exports")?
+        .set_default("logging.tracing_log_dir", "")?
         .set_default("auth.invite_code", "ZW9Z")
 }
 
@@ -80,6 +99,15 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
         config = builder.build()?;
     }
 
+    if let Ok(dir) = std::env::var("TRACING_LOG_DIR") {
+        if !dir.trim().is_empty() {
+            let mut builder = config::Config::builder();
+            builder = builder.add_source(config);
+            builder = builder.set_override("logging.tracing_log_dir", dir)?;
+            config = builder.build()?;
+        }
+    }
+
     let cfg: AppConfig = config.try_deserialize()?;
     if cfg.upstream.api_key.trim().is_empty() {
         return Err(config::ConfigError::Message(
@@ -106,6 +134,7 @@ mod tests {
         env::remove_var("UPSTREAM__API_KEY");
         env::remove_var("UPSTREAM_BASE_URL");
         env::remove_var("UPSTREAM__BASE_URL");
+        env::remove_var("TRACING_LOG_DIR");
     }
 
     fn store_env_var(key: &str, value: Option<String>) {
@@ -133,6 +162,28 @@ mod tests {
             assert_eq!(cfg.server.port, 8000);
 
             store_env_var("UPSTREAM_API_KEY", original_value);
+        });
+    }
+
+    #[test]
+    fn tracing_log_dir_env_override() {
+        with_env_lock(|| {
+            let original_key = env::var("UPSTREAM_API_KEY").ok();
+            let original_tracing = env::var("TRACING_LOG_DIR").ok();
+            clear_env_vars();
+
+            let dir = env::temp_dir().join("modelgate_config_tracing_test");
+            let _ = std::fs::remove_dir_all(&dir);
+            create_dir_all(&dir).expect("create config dir");
+
+            env::set_var("UPSTREAM_API_KEY", "env-key");
+            env::set_var("TRACING_LOG_DIR", "/tmp/modelgate-tracing");
+
+            let cfg = load_config_from_dir(&dir).expect("load config");
+            assert_eq!(cfg.logging.tracing_log_dir, "/tmp/modelgate-tracing");
+
+            store_env_var("UPSTREAM_API_KEY", original_key);
+            store_env_var("TRACING_LOG_DIR", original_tracing);
         });
     }
 

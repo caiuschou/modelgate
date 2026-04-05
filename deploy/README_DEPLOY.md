@@ -43,12 +43,17 @@ sudo systemctl enable --now modelgate
 sudo mkdir -p /etc/modelgate
 sudo tee /etc/modelgate/modelgate.env >/dev/null <<'EOF'
 UPSTREAM_API_KEY=xxxxx
+# 可选：覆盖 config 里的 tracing 日志目录（与 [logging].tracing_log_dir 二选一）
+# TRACING_LOG_DIR=/opt/modelgate/shared/logs
 # 可选：
 # OPENAI_ORGANIZATION=...
 # OPENAI_PROJECT=...
+# RUST_LOG=info
 EOF
 sudo chmod 600 /etc/modelgate/modelgate.env
 ```
+
+部署后确保 **`${DEPLOY_ROOT}/shared/logs`** 存在且 **`modelgate`** 用户可写（CD 工作流会 `mkdir` 并 `chown`）。tracing 日志文件名为 `modelgate.log.YYYY-MM-DD`。
 
 ## GitHub Actions 工作流
 

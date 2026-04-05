@@ -13,6 +13,11 @@ WorkingDirectory=/opt/modelgate/current
 # Prefer env file for secrets like UPSTREAM_API_KEY
 EnvironmentFile=-/etc/modelgate/modelgate.env
 
+# Optional: override tracing log dir (same as config [logging].tracing_log_dir)
+# Environment=TRACING_LOG_DIR=/opt/modelgate/shared/logs
+# Optional: tracing level (default info if unset in code)
+# Environment=RUST_LOG=info
+
 ExecStart=/opt/modelgate/current/modelgate
 Restart=always
 RestartSec=2

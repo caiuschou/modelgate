@@ -301,6 +301,7 @@ mod tests {
                 flush_interval_seconds: 5,
                 export_dir: "./exports".into(),
             },
+            logging: crate::config::LoggingConfig::default(),
             auth: crate::config::AuthConfig {
                 invite_code: "ZW9Z".into(),
             },

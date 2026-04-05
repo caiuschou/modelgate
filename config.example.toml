@@ -12,3 +12,9 @@ base_url = "https://api.openai.com/v1"
 # Prefer environment variable UPSTREAM_API_KEY in real usage.
 api_key = "sk-your-openai-key-here"
 
+# Optional: rolling tracing logs (`modelgate.log.YYYY-MM-DD`). Empty = stderr only (e.g. systemd journal).
+# On SSH deploy, CD sets `../shared/logs` (relative to release = persistent logs under shared/).
+# Override with env TRACING_LOG_DIR if needed.
+[logging]
+tracing_log_dir = ""
+

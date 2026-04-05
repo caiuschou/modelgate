@@ -58,6 +58,7 @@ jobs:
             RELEASE_DIR="${DEPLOY_ROOT}/releases/${SHA}"
 
             mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared"
+            mkdir -p "${DEPLOY_ROOT}/shared/logs"
             mkdir -p "${RELEASE_DIR}"
             tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
 
@@ -68,6 +69,17 @@ jobs:
             if [ ! -f "${DEPLOY_ROOT}/shared/config.toml" ]; then
               cp "${RELEASE_DIR}/config.example.toml" "${DEPLOY_ROOT}/shared/config.toml"
             fi
+            # Rolling tracing logs (WorkingDirectory is release dir → ../shared/logs resolves under DEPLOY_ROOT)
+            CONFIG="${DEPLOY_ROOT}/shared/config.toml"
+            if [ -f "${CONFIG}" ]; then
+              if ! grep -q '^\[logging\]' "${CONFIG}"; then
+                printf '\n[logging]\ntracing_log_dir = "../shared/logs"\n' >> "${CONFIG}"
+              elif grep -q 'tracing_log_dir = ""' "${CONFIG}"; then
+                sed -i 's|tracing_log_dir = ""|tracing_log_dir = "../shared/logs"|' "${CONFIG}"
+              fi
+            fi
+            chown -R modelgate:modelgate "${DEPLOY_ROOT}/shared/logs" 2>/dev/null || true
+
             ln -sfn "${DEPLOY_ROOT}/shared/config.toml" "${RELEASE_DIR}/config.toml"
 
             # Point "current" to this release
