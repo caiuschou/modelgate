@@ -10,9 +10,19 @@ use super::error::RepositoryError;
 #[derive(Debug, Clone, Serialize)]
 pub struct ApiKeySummary {
     pub id: i64,
+    pub name: String,
+    pub description: String,
     pub preview: String,
     pub created_at: i64,
+    pub last_used_at: Option<i64>,
     pub revoked: bool,
+    pub disabled: bool,
+    pub expires_at: Option<i64>,
+    pub quota_monthly_tokens: Option<i64>,
+    pub quota_used_tokens: i64,
+    pub model_allowlist: Option<Vec<String>>,
+    pub ip_allowlist: Option<Vec<String>>,
+    pub status: String,
 }
 
 fn mask_api_key_preview(full: &str) -> String {
@@ -25,8 +35,59 @@ fn mask_api_key_preview(full: &str) -> String {
     format!("{start}…{end}")
 }
 
+fn parse_json_string_list(raw: Option<String>) -> Option<Vec<String>> {
+    raw.and_then(|s| {
+        if s.trim().is_empty() {
+            None
+        } else {
+            serde_json::from_str(&s).ok()
+        }
+    })
+}
+
+fn key_status(now: i64, r: &db::ApiKeyRow) -> String {
+    if r.revoked != 0 {
+        "revoked".to_string()
+    } else if r.expires_at.map(|e| e <= now).unwrap_or(false) {
+        "expired".to_string()
+    } else if r.disabled != 0 {
+        "disabled".to_string()
+    } else {
+        "active".to_string()
+    }
+}
+
+fn row_to_summary(now: i64, r: db::ApiKeyRow) -> ApiKeySummary {
+    let status = key_status(now, &r);
+    ApiKeySummary {
+        id: r.id,
+        name: if r.name.trim().is_empty() {
+            format!("未命名密钥 #{}", r.id)
+        } else {
+            r.name.clone()
+        },
+        description: r.description,
+        preview: mask_api_key_preview(&r.api_key),
+        created_at: r.created_at,
+        last_used_at: r.last_used_at,
+        revoked: r.revoked != 0,
+        disabled: r.disabled != 0,
+        expires_at: r.expires_at,
+        quota_monthly_tokens: r.quota_monthly_tokens,
+        quota_used_tokens: r.quota_used_tokens,
+        model_allowlist: parse_json_string_list(r.model_allowlist.clone()),
+        ip_allowlist: parse_json_string_list(r.ip_allowlist.clone()),
+        status,
+    }
+}
+
 pub trait Repository: Send + Sync {
     fn get_api_key_info(&self, api_key: &str) -> Result<(i64, i64), RepositoryError>;
+    fn get_api_key_auth(&self, api_key: &str) -> Result<db::ApiKeyAuthRow, RepositoryError>;
+    fn touch_api_key_last_used(&self, key_id: i64, now: i64) -> Result<(), RepositoryError>;
+    fn ensure_monthly_quota(&self, key_id: i64, now: i64) -> Result<(), RepositoryError>;
+    fn increment_quota_tokens(&self, key_id: i64, delta: i64) -> Result<(), RepositoryError>;
+
     fn query_audit_logs(
         &self,
         query: &AuditListQuery,
@@ -73,13 +134,36 @@ pub trait Repository: Send + Sync {
     ) -> Result<(), RepositoryError>;
 
     fn list_api_keys_for_user(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError>;
+    fn get_api_key_for_user(&self, user_id: i64, key_id: i64) -> Result<ApiKeySummary, RepositoryError>;
 
-    fn insert_api_key_for_user_returning_id(
+    fn insert_api_key_with_meta(
         &self,
         user_id: i64,
         api_key: &str,
         created_at: u64,
+        name: &str,
+        description: &str,
+        expires_at: Option<i64>,
+        quota_monthly_tokens: Option<i64>,
+        model_allowlist: Option<&str>,
+        ip_allowlist: Option<&str>,
     ) -> Result<i64, RepositoryError>;
+
+    fn update_api_key_for_user(
+        &self,
+        user_id: i64,
+        key_id: i64,
+        patch: &db::ApiKeyPatchDb,
+    ) -> Result<(), RepositoryError>;
+
+    fn insert_api_key_audit(
+        &self,
+        user_id: i64,
+        key_id: i64,
+        action: &str,
+        created_at: i64,
+        detail: Option<&str>,
+    ) -> Result<(), RepositoryError>;
 
     fn revoke_api_key_for_user(&self, user_id: i64, key_id: i64) -> Result<(), RepositoryError>;
 }
@@ -103,6 +187,51 @@ impl Repository for SqliteRepository {
             .map_err(|_| RepositoryError::PoolUnavailable)?;
         db::get_api_key_info(&conn, api_key)
             .map_err(|_| RepositoryError::NotFound("api key not found".into()))
+    }
+
+    fn get_api_key_auth(&self, api_key: &str) -> Result<db::ApiKeyAuthRow, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::get_api_key_auth_row(&conn, api_key)
+            .map_err(|_| RepositoryError::NotFound("api key not found".into()))
+    }
+
+    fn touch_api_key_last_used(&self, key_id: i64, now: i64) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::touch_api_key_last_used(&conn, key_id, now, 60).map_err(|e| {
+            error!(error = %e, "touch last_used");
+            RepositoryError::Internal("failed to update key".into())
+        })
+    }
+
+    fn ensure_monthly_quota(&self, key_id: i64, now: i64) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::ensure_monthly_quota(&conn, key_id, now).map_err(|msg| {
+            if msg == "monthly token quota exceeded" {
+                RepositoryError::Forbidden(msg.into())
+            } else {
+                RepositoryError::Internal(msg.into())
+            }
+        })
+    }
+
+    fn increment_quota_tokens(&self, key_id: i64, delta: i64) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::increment_quota_tokens(&conn, key_id, delta).map_err(|e| {
+            error!(error = %e, "increment quota");
+            RepositoryError::Internal("failed to update quota".into())
+        })
     }
 
     fn query_audit_logs(
@@ -291,30 +420,97 @@ impl Repository for SqliteRepository {
             error!(error = %err, "failed to list api keys");
             RepositoryError::Internal("Failed to list api keys".into())
         })?;
-        Ok(rows
-            .into_iter()
-            .map(|r| ApiKeySummary {
-                id: r.id,
-                preview: mask_api_key_preview(&r.api_key),
-                created_at: r.created_at,
-                revoked: r.revoked != 0,
-            })
-            .collect())
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        Ok(rows.into_iter().map(|r| row_to_summary(now, r)).collect())
     }
 
-    fn insert_api_key_for_user_returning_id(
+    fn get_api_key_for_user(&self, user_id: i64, key_id: i64) -> Result<ApiKeySummary, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let row = db::get_api_key_row_for_user(&conn, user_id, key_id).map_err(|_| {
+            RepositoryError::NotFound("api key not found".into())
+        })?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        Ok(row_to_summary(now, row))
+    }
+
+    fn insert_api_key_with_meta(
         &self,
         user_id: i64,
         api_key: &str,
         created_at: u64,
+        name: &str,
+        description: &str,
+        expires_at: Option<i64>,
+        quota_monthly_tokens: Option<i64>,
+        model_allowlist: Option<&str>,
+        ip_allowlist: Option<&str>,
     ) -> Result<i64, RepositoryError> {
         let conn = self
             .db_pool
             .get()
             .map_err(|_| RepositoryError::PoolUnavailable)?;
-        db::insert_api_key_for_user(&conn, user_id, api_key, created_at as i64).map_err(|err| {
-            error!(error = %err, "failed to insert api key");
+        db::insert_api_key_with_meta(
+            &conn,
+            user_id,
+            api_key,
+            created_at as i64,
+            name,
+            description,
+            expires_at,
+            quota_monthly_tokens,
+            model_allowlist,
+            ip_allowlist,
+        )
+        .map_err(|e| {
+            error!(error = %e, "insert api key with meta");
             RepositoryError::Internal("Failed to create api key".into())
+        })
+    }
+
+    fn update_api_key_for_user(
+        &self,
+        user_id: i64,
+        key_id: i64,
+        patch: &db::ApiKeyPatchDb,
+    ) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let n = db::update_api_key_for_user(&conn, user_id, key_id, patch).map_err(|e| {
+            error!(error = %e, "update api key");
+            RepositoryError::Internal("Failed to update api key".into())
+        })?;
+        if n == 0 && patch_has_changes(patch) {
+            return Err(RepositoryError::NotFound("api key not found".into()));
+        }
+        Ok(())
+    }
+
+    fn insert_api_key_audit(
+        &self,
+        user_id: i64,
+        key_id: i64,
+        action: &str,
+        created_at: i64,
+        detail: Option<&str>,
+    ) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::insert_api_key_audit(&conn, user_id, key_id, action, created_at, detail).map_err(|e| {
+            error!(error = %e, "insert api key audit");
+            RepositoryError::Internal("Failed to write audit".into())
         })
     }
 
@@ -332,6 +528,16 @@ impl Repository for SqliteRepository {
         }
         Ok(())
     }
+}
+
+fn patch_has_changes(p: &db::ApiKeyPatchDb) -> bool {
+    p.name.is_some()
+        || p.description.is_some()
+        || p.disabled.is_some()
+        || p.expires_at.is_some()
+        || p.quota_monthly_tokens.is_some()
+        || p.model_allowlist.is_some()
+        || p.ip_allowlist.is_some()
 }
 
 #[cfg(test)]

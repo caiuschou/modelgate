@@ -3,6 +3,7 @@ pub enum RepositoryError {
     PoolUnavailable,
     NotFound(String),
     Conflict(String),
+    Forbidden(String),
     Internal(String),
 }
 
@@ -10,8 +11,10 @@ pub enum RepositoryError {
 pub enum ServiceError {
     BadRequest(String),
     Unauthorized(String),
+    Forbidden(String),
     NotFound(String),
     Conflict(String),
+    TooManyRequests(String),
     Internal(String),
 }
 
@@ -23,6 +26,7 @@ impl From<RepositoryError> for ServiceError {
             }
             RepositoryError::NotFound(msg) => ServiceError::NotFound(msg),
             RepositoryError::Conflict(msg) => ServiceError::Conflict(msg),
+            RepositoryError::Forbidden(msg) => ServiceError::Forbidden(msg),
             RepositoryError::Internal(msg) => ServiceError::Internal(msg),
         }
     }

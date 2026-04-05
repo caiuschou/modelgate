@@ -20,11 +20,10 @@ async function gotoApiKeys(page: Page) {
 }
 
 test.describe('API 密钥页（已登录）', () => {
-  /** 共享 `e2e_user`，串行降低列表/吊销类用例互相干扰 */
   test.describe.configure({ mode: 'serial' })
+
   test('侧栏可进入且展示标题与主操作', async ({ page }) => {
     await page.goto('/')
-    // 侧栏折叠时链接文案为前两字，用 href 更稳
     await page.locator('aside a[href="/api-keys"]').click()
     await expect(page).toHaveURL(/\/api-keys$/)
     await expect(page.getByRole('heading', { name: 'API 密钥' })).toBeVisible()
@@ -42,7 +41,7 @@ test.describe('API 密钥页（已登录）', () => {
     expect(hasTable > 0 || (await empty.isVisible())).toBeTruthy()
   })
 
-  test('新建密钥：仅一次展示完整 sk-or-v1-，关闭后与列表掩码一致', async ({
+  test('新建密钥：表单填写名称后生成，仅一次展示完整 sk-or-v1-', async ({
     page,
   }) => {
     const token = await loginApiKey(consoleBase, e2eUser, e2ePass)
@@ -50,6 +49,11 @@ test.describe('API 密钥页（已登录）', () => {
 
     await gotoApiKeys(page)
     await page.getByRole('button', { name: '新建密钥' }).click()
+    await expect(page.getByPlaceholder('例如：生产-支付助手')).toBeVisible({
+      timeout: 10_000,
+    })
+    await page.getByPlaceholder('例如：生产-支付助手').fill('e2e-playwright-key')
+    await page.getByRole('button', { name: '生成密钥' }).click()
     await expect(
       page.getByText('请立即保存 — 完整密钥仅显示这一次', { exact: false }),
     ).toBeVisible({ timeout: 15_000 })
@@ -70,8 +74,9 @@ test.describe('API 密钥页（已登录）', () => {
     expect(created!.preview).toContain('…')
     expect(created!.preview.length).toBeLessThan(fullKey.length)
     expect(created!.revoked).toBe(false)
+    expect(created!.name).toContain('e2e-playwright')
 
-    const row = page.getByRole('row').filter({ hasText: created!.preview })
+    const row = page.getByRole('row').filter({ hasText: 'e2e-playwright' })
     await expect(row).toBeVisible()
     await expect(row.getByText('有效', { exact: true })).toBeVisible()
     await expect(row).not.toContainText(fullKey)
@@ -84,6 +89,8 @@ test.describe('API 密钥页（已登录）', () => {
 
     await gotoApiKeys(page)
     await page.getByRole('button', { name: '新建密钥' }).click()
+    await page.getByPlaceholder('例如：生产-支付助手').fill('clipboard-test')
+    await page.getByRole('button', { name: '生成密钥' }).click()
     await expect(page.locator('pre').filter({ hasText: /^sk-or-v1-/ })).toBeVisible({
       timeout: 15_000,
     })
@@ -104,16 +111,18 @@ test.describe('API 密钥页（已登录）', () => {
     page,
   }) => {
     const token = await loginApiKey(consoleBase, e2eUser, e2ePass)
-    const { id, api_key: disposableKey } = await createMyApiKey(consoleBase, token)
-    const { preview } = (await listMyApiKeys(consoleBase, token)).find((k) => k.id === id)!
-    expect(preview).toBeTruthy()
+    const { id, api_key: disposableKey } = await createMyApiKey(consoleBase, token, {
+      name: 'e2e-disposable',
+    })
+    const rowSummary = (await listMyApiKeys(consoleBase, token)).find((k) => k.id === id)!
+    expect(rowSummary.preview).toBeTruthy()
 
     await gotoApiKeys(page)
-    const row = page.getByRole('row').filter({ hasText: preview })
+    const row = page.getByRole('row').filter({ hasText: 'e2e-disposable' })
 
     page.once('dialog', (d) => {
       expect(d.message()).toContain('吊销')
-      expect(d.message()).toContain(preview)
+      expect(d.message()).toContain(rowSummary.preview)
       void d.accept()
     })
 
@@ -139,5 +148,24 @@ test.describe('API 密钥页（已登录）', () => {
         timeout: 15_000,
       })
     }
+  })
+
+  test('详情页与「相关日志」预填 token_id', async ({ page }) => {
+    const token = await loginApiKey(consoleBase, e2eUser, e2ePass)
+    const keys = await listMyApiKeys(consoleBase, token)
+    expect(keys.length).toBeGreaterThan(0)
+    const first = keys[0]!
+
+    await gotoApiKeys(page)
+    await page.getByRole('link', { name: first.name }).first().click()
+    await expect(page).toHaveURL(new RegExp(`/api-keys/${first.id}$`))
+    await expect(page.getByRole('heading', { name: first.name })).toBeVisible()
+
+    await page.getByRole('link', { name: '相关日志' }).click()
+    await expect(page).toHaveURL(new RegExp(`token_id=${first.id}`))
+    await expect(page.getByRole('heading', { name: '日志中心' })).toBeVisible()
+    await expect(page.getByPlaceholder('与审计日志中的 token_id 一致')).toHaveValue(
+      String(first.id),
+    )
   })
 })

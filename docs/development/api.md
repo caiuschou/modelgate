@@ -92,20 +92,56 @@
   "data": [
     {
       "id": 1,
+      "name": "生产-示例",
+      "description": "",
       "preview": "sk-or-v1-12…a3f2",
       "created_at": 1711920000,
-      "revoked": false
+      "last_used_at": null,
+      "revoked": false,
+      "disabled": false,
+      "expires_at": null,
+      "quota_monthly_tokens": null,
+      "quota_used_tokens": 0,
+      "model_allowlist": null,
+      "ip_allowlist": null,
+      "status": "active"
     }
   ]
 }
 ```
 
+`status`：`active` | `disabled` | `expired` | `revoked`。
+
 #### 新建密钥
 
 **`POST /api/v1/me/api-keys`**
 
-- **Body：** 无  
+- **Body（JSON，可选）：** 空 body 时等价于 `{ "name": "未命名密钥" }`。  
+  - `name`（必填语义）：1–64 字符；未传时使用 `未命名密钥`。  
+  - `description`：可选，最长 512 字符。  
+  - `expires_at`：可选，Unix 秒。  
+  - `quota_monthly_tokens`：可选，正整数，按**自然月**累计 `total_tokens` 用量（仅非流式成功响应计入）。  
+  - `model_allowlist` / `ip_allowlist`：可选，JSON 数组字符串；`chat/completions` 请求将校验模型名与客户端 IP（`X-Forwarded-For` 首选）。  
 - **成功：** `201`，`{ "id", "api_key": "<完整密钥>", "created_at" }` — **完整 `api_key` 仅此次响应返回**。
+
+#### 密钥详情
+
+**`GET /api/v1/me/api-keys/{key_id}`**
+
+- **成功：** `200`，单条密钥对象（与列表项字段一致）。  
+- **失败：** `404`。
+
+#### 更新密钥
+
+**`PATCH /api/v1/me/api-keys/{key_id}`**
+
+- **Body（JSON）：** 至少包含一个字段；未出现的字段不修改。  
+  - `name`、`description`、`disabled`  
+  - `expires_at`：`null` 表示清除过期时间  
+  - `quota_monthly_tokens`：`null` 表示取消配额  
+  - `model_allowlist` / `ip_allowlist`：`null` 表示清除策略  
+- **成功：** `200`，无 JSON 体  
+- **失败：** `400`（无可更新字段或校验失败）、`404`
 
 #### 吊销密钥
 

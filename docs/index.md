@@ -21,6 +21,7 @@
 - **[API 文档（产品规格）](product/api.md)** - 目标态 API、认证、错误处理、SDK 示例（部分尚未在服务端实现）
 - **[用户控制台（产品）](product/user-console.md)** - 管理门户能力规格
 - **[API 密钥管理（产品）](product/api-key-management.md)** - 用户 Key 生命周期、权限与配额（规划）、与实现状态对照
+- **[API 密钥能力增强（产品与交互规格）](product/api-key-capability-enhancement.md)** - 在现有 Key 能力上的分期增强、页面与流程级交互、API 草案与验收清单
 - **[请求审计日志（产品）](product/audit-log.md)** - 字段说明、查询/导出 API、权限
 - **[产品路线图](product/roadmap.md)** - MVP 定义、迭代计划、长期愿景
 

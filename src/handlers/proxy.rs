@@ -5,7 +5,9 @@ use reqwest::header as reqwest_header;
 use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
-use crate::{auth, errors::ApiError, upstream, AppState};
+use crate::{
+    api_key_policy, auth, errors::ApiError, upstream, AppState,
+};
 
 static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -38,10 +40,47 @@ pub async fn chat_completions(
     let api_key = auth::extract_bearer_token(&req)
         .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
 
-    let (token_id, user_id) = state.auth_service.get_api_key_scope(api_key)?;
-
     let is_stream = upstream::is_stream_request(&body);
     let model = parse_model_from_request(&body);
+
+    let auth_row = state.auth_service.get_api_key_auth(api_key)?;
+    let token_id = auth_row.id;
+    let user_id = auth_row.user_id;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    state
+        .user_service
+        .ensure_monthly_quota(token_id, now)
+        .map_err(ApiError::from)?;
+
+    api_key_policy::check_model_allowlist(
+        auth_row.model_allowlist.as_deref(),
+        model.as_deref(),
+    )
+    .map_err(|m| ApiError::Forbidden(m.into()))?;
+
+    if let Some(ip) = api_key_policy::client_ip(&req) {
+        api_key_policy::check_ip_allowlist(auth_row.ip_allowlist.as_deref(), ip)
+            .map_err(|m| ApiError::Forbidden(m.into()))?;
+    } else if auth_row
+        .ip_allowlist
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
+        return Err(ApiError::Forbidden(
+            "cannot determine client IP for this API key policy".into(),
+        ));
+    }
+
+    state
+        .user_service
+        .touch_api_key_last_used(token_id, now)
+        .map_err(ApiError::from)?;
     debug!(
         %request_id,
         user_id,
@@ -239,6 +278,12 @@ pub async fn chat_completions(
             total_tokens = usage.2,
             "chat completion proxied"
         );
+
+        if (200..300).contains(&status_i64) {
+            if let Some(total) = usage.2 {
+                let _ = state.user_service.increment_quota_tokens(token_id, total);
+            }
+        }
 
         Ok(HttpResponse::build(status)
             .content_type("application/json")

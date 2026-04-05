@@ -266,6 +266,29 @@ mod tests {
         fn get_api_key_info(&self, _api_key: &str) -> Result<(i64, i64), RepositoryError> {
             Err(RepositoryError::NotFound("api key not found".into()))
         }
+        fn get_api_key_auth(
+            &self,
+            _api_key: &str,
+        ) -> Result<crate::db::ApiKeyAuthRow, RepositoryError> {
+            Err(RepositoryError::NotFound("api key not found".into()))
+        }
+        fn touch_api_key_last_used(
+            &self,
+            _key_id: i64,
+            _now: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn ensure_monthly_quota(&self, _key_id: i64, _now: i64) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn increment_quota_tokens(
+            &self,
+            _key_id: i64,
+            _delta: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
         fn query_audit_logs(
             &self,
             _query: &AuditListQuery,
@@ -337,13 +360,44 @@ mod tests {
         ) -> Result<Vec<crate::services::repository::ApiKeySummary>, RepositoryError> {
             Ok(Vec::new())
         }
-        fn insert_api_key_for_user_returning_id(
+        fn get_api_key_for_user(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+        ) -> Result<crate::services::repository::ApiKeySummary, RepositoryError> {
+            Err(RepositoryError::NotFound("api key not found".into()))
+        }
+        fn insert_api_key_with_meta(
             &self,
             _user_id: i64,
             _api_key: &str,
             _created_at: u64,
+            _name: &str,
+            _description: &str,
+            _expires_at: Option<i64>,
+            _quota_monthly_tokens: Option<i64>,
+            _model_allowlist: Option<&str>,
+            _ip_allowlist: Option<&str>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
+        }
+        fn update_api_key_for_user(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+            _patch: &crate::db::ApiKeyPatchDb,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn insert_api_key_audit(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+            _action: &str,
+            _created_at: i64,
+            _detail: Option<&str>,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
         }
         fn revoke_api_key_for_user(
             &self,

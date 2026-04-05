@@ -6,8 +6,10 @@ use std::fmt;
 pub enum ApiError {
     BadRequest(String),
     Unauthorized(String),
+    Forbidden(String),
     Conflict(String),
     NotFound(String),
+    TooManyRequests(String),
     InternalError(String),
 }
 
@@ -16,8 +18,10 @@ impl ApiError {
         match self {
             ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
+            ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -26,8 +30,10 @@ impl ApiError {
         match self {
             ApiError::BadRequest(_) => "validation_error",
             ApiError::Unauthorized(_) => "authentication_error",
+            ApiError::Forbidden(_) => "forbidden_error",
             ApiError::Conflict(_) => "conflict_error",
             ApiError::NotFound(_) => "not_found_error",
+            ApiError::TooManyRequests(_) => "rate_limit_error",
             ApiError::InternalError(_) => "internal_error",
         }
     }
@@ -36,8 +42,10 @@ impl ApiError {
         match self {
             ApiError::BadRequest(message)
             | ApiError::Unauthorized(message)
+            | ApiError::Forbidden(message)
             | ApiError::Conflict(message)
             | ApiError::NotFound(message)
+            | ApiError::TooManyRequests(message)
             | ApiError::InternalError(message) => message,
         }
     }
@@ -69,8 +77,12 @@ impl From<crate::services::error::ServiceError> for ApiError {
         match value {
             crate::services::error::ServiceError::BadRequest(msg) => ApiError::BadRequest(msg),
             crate::services::error::ServiceError::Unauthorized(msg) => ApiError::Unauthorized(msg),
+            crate::services::error::ServiceError::Forbidden(msg) => ApiError::Forbidden(msg),
             crate::services::error::ServiceError::NotFound(msg) => ApiError::NotFound(msg),
             crate::services::error::ServiceError::Conflict(msg) => ApiError::Conflict(msg),
+            crate::services::error::ServiceError::TooManyRequests(msg) => {
+                ApiError::TooManyRequests(msg)
+            }
             crate::services::error::ServiceError::Internal(msg) => ApiError::InternalError(msg),
         }
     }
@@ -102,6 +114,11 @@ mod tests {
                 StatusCode::UNAUTHORIZED,
             ),
             (
+                ApiError::Forbidden("f".into()),
+                "forbidden_error",
+                StatusCode::FORBIDDEN,
+            ),
+            (
                 ApiError::Conflict("c".into()),
                 "conflict_error",
                 StatusCode::CONFLICT,
@@ -110,6 +127,11 @@ mod tests {
                 ApiError::NotFound("n".into()),
                 "not_found_error",
                 StatusCode::NOT_FOUND,
+            ),
+            (
+                ApiError::TooManyRequests("r".into()),
+                "rate_limit_error",
+                StatusCode::TOO_MANY_REQUESTS,
             ),
             (
                 ApiError::InternalError("i".into()),

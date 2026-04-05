@@ -44,6 +44,14 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::post().to(handlers::api_keys::create_my_api_key),
         )
         .route(
+            "/api/v1/me/api-keys/{key_id}",
+            web::get().to(handlers::api_keys::get_my_api_key),
+        )
+        .route(
+            "/api/v1/me/api-keys/{key_id}",
+            web::patch().to(handlers::api_keys::patch_my_api_key),
+        )
+        .route(
             "/api/v1/me/api-keys/{key_id}/revoke",
             web::post().to(handlers::api_keys::revoke_my_api_key),
         )

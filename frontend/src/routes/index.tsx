@@ -7,6 +7,7 @@ import { LoginPage } from '@/features/auth/pages/login-page'
 import { RegisterPage } from '@/features/auth/pages/register-page'
 import { NotFoundPage } from '@/features/common/pages/not-found-page'
 import { ApiKeysPage } from '@/features/api-keys/pages/api-keys-page'
+import { ApiKeyDetailPage } from '@/features/api-keys/pages/api-key-detail-page'
 import { LogDetailPage } from '@/features/logs/pages/log-detail-page'
 import { LogListPage } from '@/features/logs/pages/log-list-page'
 import { useAuthStore } from '@/stores/auth-store'
@@ -59,6 +60,7 @@ export const router = createBrowserRouter([
         ),
       },
       { path: 'api-keys', element: <ApiKeysPage /> },
+      { path: 'api-keys/:id', element: <ApiKeyDetailPage /> },
       {
         path: 'users',
         element: (

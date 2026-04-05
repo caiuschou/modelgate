@@ -16,13 +16,13 @@
 | 用户登录 `POST /api/v1/auth/login` | ✅ | 返回 JWT 式用途的 **API Key 字符串**（存于 `api_keys` 表），非 OAuth token |
 | 创建用户 `POST /users` | ✅ | 无鉴权（管理/内测用途）；返回新用户与 `api_key` |
 | 为用户新增 Key `POST /users/{username}/keys` | ✅ | 无鉴权（管理/内测用途） |
-| Chat Completions `POST /v1/chat/completions` | ✅ | Bearer 用户 Key；转发至配置的单一上游 `upstream.base_url`；支持流式 |
+| Chat Completions `POST /v1/chat/completions` | ✅ | Bearer 用户 Key；转发至配置的单一上游 `upstream.base_url`；支持流式；可按 Key 校验 **模型白名单**、**IP 白名单（CIDR）**、**月度 Token 配额**（非流式成功响应累加） |
 | 请求审计日志查询/详情/导出 | ✅ | 见 [开发 API 文档](development/api.md)、[审计日志产品说明](product/audit-log.md) |
-| 当前用户 API 密钥 `GET/POST /api/v1/me/api-keys`、`POST .../revoke` | ✅ | 需 Bearer；列表仅掩码预览，创建时返回完整密钥一次 |
+| 当前用户 API 密钥 | ✅ | `GET/POST /api/v1/me/api-keys`、`GET/PATCH /api/v1/me/api-keys/{id}`、`POST .../revoke`；名称/描述/禁用/过期/配额/策略；`api_key_audit_log` 记录创建/更新/吊销；`last_used_at` 节流更新 |
 | 多渠道配置与路由 | ❌ | 上游为 **一个** `base_url` + `api_key`（环境变量 `UPSTREAM_*`） |
 | `/v1/completions`、`/v1/embeddings`、Images、Audio | ❌ | 未注册路由 |
 | 用量 API `GET /v1/usage` 等 | ❌ | |
-| API 密钥吊销、IP 白名单、配额扣减 | ❌ | DB 有 `revoked` 等字段的部分能力未暴露为完整产品流程 |
+| API 密钥仅哈希存储（无明文落库） | ❌ | 仍为明文存储，与产品长期安全目标有差距 |
 | 限流响应头 `X-RateLimit-*` | ❌ | |
 
 **权威路由列表：** `src/routes.rs`。  
@@ -37,7 +37,7 @@
 | `/login`、`/register` | ✅ | |
 | `/` 首页（仪表盘） | ✅ | 以现有页面为准 |
 | `/logs`、`/logs/:requestId` | ✅ | 日志中心 |
-| `/api-keys` | ✅ | **API 密钥**列表、新建（完整密钥仅展示一次）、吊销 |
+| `/api-keys`、`/api-keys/:id` | ✅ | **API 密钥**列表与详情、新建（名称/描述）、禁用/吊销、轮换指引、跳转日志（`token_id` 预填） |
 | `/channels`、`/users`、`/analytics`、`/settings` | ⏳ | **占位页**（「页面建设中」）；管理员菜单项部分受 `AdminGuard` 限制 |
 
 **开发代理：** `frontend/vite.config.ts` 将 `/api`、`/healthz`、`/users` 代理到 `http://127.0.0.1:8000`。  

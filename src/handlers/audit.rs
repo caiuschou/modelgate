@@ -109,6 +109,27 @@ mod tests {
                 ))
             }
         }
+
+        fn get_api_key_auth(
+            &self,
+            api_key: &str,
+        ) -> Result<crate::db::ApiKeyAuthRow, ServiceError> {
+            if api_key == "ok-token" {
+                Ok(crate::db::ApiKeyAuthRow {
+                    id: 1,
+                    user_id: 100,
+                    model_allowlist: None,
+                    ip_allowlist: None,
+                    quota_monthly_tokens: None,
+                    quota_used_tokens: 0,
+                    quota_period_start: None,
+                })
+            } else {
+                Err(ServiceError::Unauthorized(
+                    "Invalid or missing API key".into(),
+                ))
+            }
+        }
     }
 
     struct MockAuditService;
@@ -271,12 +292,42 @@ mod tests {
         fn create_my_api_key(
             &self,
             _user_id: i64,
-            _created_at: u64,
+            created_at: u64,
+            _input: crate::services::user::CreateMyApiKeyInput,
         ) -> Result<(i64, String, u64), ServiceError> {
-            Ok((1, "sk-test".into(), _created_at))
+            Ok((1, "sk-test".into(), created_at))
+        }
+
+        fn get_my_api_key(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+        ) -> Result<crate::services::repository::ApiKeySummary, ServiceError> {
+            Err(ServiceError::NotFound("api key not found".into()))
+        }
+
+        fn update_my_api_key(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+            _patch: crate::db::ApiKeyPatchDb,
+        ) -> Result<(), ServiceError> {
+            Ok(())
         }
 
         fn revoke_my_api_key(&self, _user_id: i64, _key_id: i64) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
+        fn touch_api_key_last_used(&self, _key_id: i64, _now: i64) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
+        fn ensure_monthly_quota(&self, _key_id: i64, _now: i64) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
+        fn increment_quota_tokens(&self, _key_id: i64, _delta: i64) -> Result<(), ServiceError> {
             Ok(())
         }
     }

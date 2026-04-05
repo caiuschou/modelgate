@@ -1,7 +1,20 @@
 use std::sync::Arc;
 
+use super::error::RepositoryError;
 use super::error::ServiceError;
 use super::repository::{ApiKeySummary, Repository};
+use crate::db::ApiKeyPatchDb;
+
+/// Console create-key payload (validated in service).
+#[derive(Debug, Clone, Default)]
+pub struct CreateMyApiKeyInput {
+    pub name: String,
+    pub description: Option<String>,
+    pub expires_at: Option<u64>,
+    pub quota_monthly_tokens: Option<i64>,
+    pub model_allowlist: Option<Vec<String>>,
+    pub ip_allowlist: Option<Vec<String>>,
+}
 
 pub trait UserService: Send + Sync {
     fn create_user_with_api_key(
@@ -42,9 +55,23 @@ pub trait UserService: Send + Sync {
         &self,
         user_id: i64,
         created_at: u64,
+        input: CreateMyApiKeyInput,
     ) -> Result<(i64, String, u64), ServiceError>;
 
+    fn get_my_api_key(&self, user_id: i64, key_id: i64) -> Result<ApiKeySummary, ServiceError>;
+
+    fn update_my_api_key(
+        &self,
+        user_id: i64,
+        key_id: i64,
+        patch: ApiKeyPatchDb,
+    ) -> Result<(), ServiceError>;
+
     fn revoke_my_api_key(&self, user_id: i64, key_id: i64) -> Result<(), ServiceError>;
+
+    fn touch_api_key_last_used(&self, key_id: i64, now: i64) -> Result<(), ServiceError>;
+    fn ensure_monthly_quota(&self, key_id: i64, now: i64) -> Result<(), ServiceError>;
+    fn increment_quota_tokens(&self, key_id: i64, delta: i64) -> Result<(), ServiceError>;
 }
 
 pub struct DefaultUserService {
@@ -55,6 +82,30 @@ impl DefaultUserService {
     pub fn new(repo: Arc<dyn Repository>) -> Self {
         Self { repo }
     }
+}
+
+fn validate_create_input(input: &CreateMyApiKeyInput) -> Result<(), ServiceError> {
+    let n = input.name.trim();
+    if n.is_empty() || n.len() > 64 {
+        return Err(ServiceError::BadRequest(
+            "name is required and must be at most 64 characters".into(),
+        ));
+    }
+    if let Some(ref d) = input.description {
+        if d.len() > 512 {
+            return Err(ServiceError::BadRequest(
+                "description must be at most 512 characters".into(),
+            ));
+        }
+    }
+    if let Some(q) = input.quota_monthly_tokens {
+        if q <= 0 {
+            return Err(ServiceError::BadRequest(
+                "quota_monthly_tokens must be positive when set".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl UserService for DefaultUserService {
@@ -128,18 +179,79 @@ impl UserService for DefaultUserService {
         &self,
         user_id: i64,
         created_at: u64,
+        input: CreateMyApiKeyInput,
     ) -> Result<(i64, String, u64), ServiceError> {
+        validate_create_input(&input)?;
         let api_key = generate_api_key_string();
-        let id = self
-            .repo
-            .insert_api_key_for_user_returning_id(user_id, &api_key, created_at)
-            .map_err(ServiceError::from)?;
+        let name = input.name.trim().to_string();
+        let description = input.description.unwrap_or_default();
+        let expires_at = input.expires_at.map(|u| u as i64);
+        let model_json = input
+            .model_allowlist
+            .as_ref()
+            .filter(|v| !v.is_empty())
+            .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()));
+        let ip_json = input
+            .ip_allowlist
+            .as_ref()
+            .filter(|v| !v.is_empty())
+            .map(|v| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()));
+        let id = self.repo.insert_api_key_with_meta(
+            user_id,
+            &api_key,
+            created_at,
+            &name,
+            &description,
+            expires_at,
+            input.quota_monthly_tokens,
+            model_json.as_deref(),
+            ip_json.as_deref(),
+        )?;
         Ok((id, api_key, created_at))
+    }
+
+    fn get_my_api_key(&self, user_id: i64, key_id: i64) -> Result<ApiKeySummary, ServiceError> {
+        self.repo
+            .get_api_key_for_user(user_id, key_id)
+            .map_err(ServiceError::from)
+    }
+
+    fn update_my_api_key(
+        &self,
+        user_id: i64,
+        key_id: i64,
+        patch: ApiKeyPatchDb,
+    ) -> Result<(), ServiceError> {
+        self.repo
+            .update_api_key_for_user(user_id, key_id, &patch)
+            .map_err(ServiceError::from)
     }
 
     fn revoke_my_api_key(&self, user_id: i64, key_id: i64) -> Result<(), ServiceError> {
         self.repo
             .revoke_api_key_for_user(user_id, key_id)
+            .map_err(ServiceError::from)
+    }
+
+    fn touch_api_key_last_used(&self, key_id: i64, now: i64) -> Result<(), ServiceError> {
+        self.repo
+            .touch_api_key_last_used(key_id, now)
+            .map_err(ServiceError::from)
+    }
+
+    fn ensure_monthly_quota(&self, key_id: i64, now: i64) -> Result<(), ServiceError> {
+        match self.repo.ensure_monthly_quota(key_id, now) {
+            Ok(()) => Ok(()),
+            Err(RepositoryError::Forbidden(m)) if m.contains("quota") => {
+                Err(ServiceError::TooManyRequests(m))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn increment_quota_tokens(&self, key_id: i64, delta: i64) -> Result<(), ServiceError> {
+        self.repo
+            .increment_quota_tokens(key_id, delta)
             .map_err(ServiceError::from)
     }
 }
@@ -157,6 +269,7 @@ fn generate_api_key_string() -> String {
 mod tests {
     use super::*;
     use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
+    use crate::db::ApiKeyAuthRow;
     use crate::services::error::RepositoryError;
     use crate::services::repository::ApiKeySummary as RepoApiKeySummary;
 
@@ -165,6 +278,22 @@ mod tests {
     impl Repository for ConflictRepo {
         fn get_api_key_info(&self, _api_key: &str) -> Result<(i64, i64), RepositoryError> {
             Err(RepositoryError::NotFound("api key not found".into()))
+        }
+        fn get_api_key_auth(&self, _api_key: &str) -> Result<ApiKeyAuthRow, RepositoryError> {
+            Err(RepositoryError::NotFound("api key not found".into()))
+        }
+        fn touch_api_key_last_used(
+            &self,
+            _key_id: i64,
+            _now: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn ensure_monthly_quota(&self, _key_id: i64, _now: i64) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn increment_quota_tokens(&self, _key_id: i64, _delta: i64) -> Result<(), RepositoryError> {
+            Ok(())
         }
         fn query_audit_logs(
             &self,
@@ -231,13 +360,44 @@ mod tests {
         ) -> Result<Vec<RepoApiKeySummary>, RepositoryError> {
             Ok(Vec::new())
         }
-        fn insert_api_key_for_user_returning_id(
+        fn get_api_key_for_user(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+        ) -> Result<RepoApiKeySummary, RepositoryError> {
+            Err(RepositoryError::NotFound("x".into()))
+        }
+        fn insert_api_key_with_meta(
             &self,
             _user_id: i64,
             _api_key: &str,
             _created_at: u64,
+            _name: &str,
+            _description: &str,
+            _expires_at: Option<i64>,
+            _quota_monthly_tokens: Option<i64>,
+            _model_allowlist: Option<&str>,
+            _ip_allowlist: Option<&str>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
+        }
+        fn update_api_key_for_user(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+            _patch: &ApiKeyPatchDb,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn insert_api_key_audit(
+            &self,
+            _user_id: i64,
+            _key_id: i64,
+            _action: &str,
+            _created_at: i64,
+            _detail: Option<&str>,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
         }
         fn revoke_api_key_for_user(
             &self,

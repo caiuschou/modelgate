@@ -49,10 +49,12 @@ export function LogListPage() {
     searchParams.get('finish_reason') ?? '',
   )
   const [statusCode, setStatusCode] = useState(searchParams.get('status_code') ?? '')
+  const [tokenId, setTokenId] = useState(searchParams.get('token_id') ?? '')
 
   const listQuery = useMemo(() => {
     const sc = statusCode.trim()
     const code = sc === '' ? NaN : Number(sc)
+    const tid = tokenId.trim() === '' ? NaN : Number(tokenId.trim())
     return {
       start_time: startTime,
       end_time: endTime,
@@ -63,8 +65,20 @@ export function LogListPage() {
       ...(appId.trim() ? { app_id: appId.trim() } : {}),
       ...(finishReason.trim() ? { finish_reason: finishReason.trim() } : {}),
       ...(Number.isFinite(code) ? { status_code: code } : {}),
+      ...(Number.isFinite(tid) ? { token_id: tid } : {}),
     }
-  }, [startTime, endTime, limit, offset, keyword, model, appId, finishReason, statusCode])
+  }, [
+    startTime,
+    endTime,
+    limit,
+    offset,
+    keyword,
+    model,
+    appId,
+    finishReason,
+    statusCode,
+    tokenId,
+  ])
 
   const { data, isLoading, isError, refetch } = useAuditLogList(listQuery)
   const exportMutation = useExportAuditLogs()
@@ -79,6 +93,7 @@ export function LogListPage() {
     if (appId.trim()) next.set('app_id', appId.trim())
     if (finishReason.trim()) next.set('finish_reason', finishReason.trim())
     if (statusCode.trim()) next.set('status_code', statusCode.trim())
+    if (tokenId.trim()) next.set('token_id', tokenId.trim())
     setSearchParams(next)
   }, [
     startTime,
@@ -88,6 +103,7 @@ export function LogListPage() {
     appId,
     finishReason,
     statusCode,
+    tokenId,
     setSearchParams,
   ])
 
@@ -98,6 +114,7 @@ export function LogListPage() {
     setAppId('')
     setFinishReason('')
     setStatusCode('')
+    setTokenId('')
     setSearchParams({
       start_time: String(r.start),
       end_time: String(r.end),
@@ -221,6 +238,15 @@ export function LogListPage() {
               value={statusCode}
               onChange={(e) => setStatusCode(e.target.value)}
               placeholder="200"
+            />
+          </label>
+          <label className="text-sm">
+            <span className="text-muted-foreground">密钥 ID (token_id)</span>
+            <Input
+              className="mt-1 font-mono text-sm"
+              value={tokenId}
+              onChange={(e) => setTokenId(e.target.value)}
+              placeholder="与审计日志中的 token_id 一致"
             />
           </label>
         </div>

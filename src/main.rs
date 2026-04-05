@@ -1,3 +1,4 @@
+pub mod api_key_policy;
 pub mod audit;
 pub mod auth;
 pub mod config;

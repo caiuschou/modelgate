@@ -43,9 +43,19 @@ export async function createChatCompletion(
 
 export type ApiKeySummary = {
   id: number
+  name: string
+  description: string
   preview: string
   created_at: number
+  last_used_at: number | null
   revoked: boolean
+  disabled: boolean
+  expires_at: number | null
+  quota_monthly_tokens: number | null
+  quota_used_tokens: number
+  model_allowlist: string[] | null
+  ip_allowlist: string[] | null
+  status: string
 }
 
 export async function listMyApiKeys(
@@ -65,10 +75,15 @@ export async function listMyApiKeys(
 export async function createMyApiKey(
   consoleBaseUrl: string,
   token: string,
+  body?: Record<string, unknown>,
 ): Promise<{ id: number; api_key: string; created_at: number }> {
   const r = await fetch(`${consoleBaseUrl}/api/v1/me/api-keys`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body ?? { name: 'e2e-key' }),
   })
   if (!r.ok) {
     throw new Error(`create me/api-keys failed: ${r.status} ${await r.text()}`)

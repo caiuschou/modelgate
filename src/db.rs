@@ -4,7 +4,7 @@ use rusqlite::{params, params_from_iter, types::Value, Connection};
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 4] = [
+const MIGRATIONS: [(&str, &str); 5] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -20,6 +20,10 @@ const MIGRATIONS: [(&str, &str); 4] = [
     (
         "0004_audit_app_finish_reason.sql",
         include_str!("../migrations/0004_audit_app_finish_reason.sql"),
+    ),
+    (
+        "0005_api_keys_enhance.sql",
+        include_str!("../migrations/0005_api_keys_enhance.sql"),
     ),
 ];
 
@@ -104,11 +108,22 @@ pub struct ApiKeyRow {
     pub api_key: String,
     pub created_at: i64,
     pub revoked: i32,
+    pub name: String,
+    pub description: String,
+    pub disabled: i32,
+    pub last_used_at: Option<i64>,
+    pub expires_at: Option<i64>,
+    pub quota_monthly_tokens: Option<i64>,
+    pub quota_used_tokens: i64,
+    pub model_allowlist: Option<String>,
+    pub ip_allowlist: Option<String>,
 }
 
 pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, api_key, created_at, revoked FROM api_keys WHERE user_id = ?1 ORDER BY id DESC",
+        "SELECT id, api_key, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist
+         FROM api_keys WHERE user_id = ?1 ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![user_id], |row| {
         Ok(ApiKeyRow {
@@ -116,9 +131,170 @@ pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Resu
             api_key: row.get(1)?,
             created_at: row.get(2)?,
             revoked: row.get(3)?,
+            name: row.get(4)?,
+            description: row.get(5)?,
+            disabled: row.get(6)?,
+            last_used_at: row.get(7)?,
+            expires_at: row.get(8)?,
+            quota_monthly_tokens: row.get(9)?,
+            quota_used_tokens: row.get(10)?,
+            model_allowlist: row.get(11)?,
+            ip_allowlist: row.get(12)?,
         })
     })?;
     rows.collect()
+}
+
+pub fn get_api_key_row_for_user(
+    conn: &Connection,
+    user_id: i64,
+    key_id: i64,
+) -> rusqlite::Result<ApiKeyRow> {
+    conn.query_row(
+        "SELECT id, api_key, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist
+         FROM api_keys WHERE id = ?1 AND user_id = ?2",
+        params![key_id, user_id],
+        |row| {
+            Ok(ApiKeyRow {
+                id: row.get(0)?,
+                api_key: row.get(1)?,
+                created_at: row.get(2)?,
+                revoked: row.get(3)?,
+                name: row.get(4)?,
+                description: row.get(5)?,
+                disabled: row.get(6)?,
+                last_used_at: row.get(7)?,
+                expires_at: row.get(8)?,
+                quota_monthly_tokens: row.get(9)?,
+                quota_used_tokens: row.get(10)?,
+                model_allowlist: row.get(11)?,
+                ip_allowlist: row.get(12)?,
+            })
+        },
+    )
+}
+
+pub fn insert_api_key_with_meta(
+    conn: &Connection,
+    user_id: i64,
+    api_key: &str,
+    created_at: i64,
+    name: &str,
+    description: &str,
+    expires_at: Option<i64>,
+    quota_monthly_tokens: Option<i64>,
+    model_allowlist: Option<&str>,
+    ip_allowlist: Option<&str>,
+) -> rusqlite::Result<i64> {
+    let period = quota_monthly_tokens
+        .filter(|&q| q > 0)
+        .map(|_| crate::api_key_policy::unix_month_start(created_at));
+    conn.execute(
+        "INSERT INTO api_keys (user_id, api_key, created_at, name, description, expires_at,
+            quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            user_id,
+            api_key,
+            created_at,
+            name,
+            description,
+            expires_at,
+            quota_monthly_tokens,
+            model_allowlist,
+            ip_allowlist,
+            period,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[derive(Debug, Default)]
+pub struct ApiKeyPatchDb {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub disabled: Option<bool>,
+    pub expires_at: Option<Option<i64>>,
+    pub quota_monthly_tokens: Option<Option<i64>>,
+    pub model_allowlist: Option<Option<String>>,
+    pub ip_allowlist: Option<Option<String>>,
+}
+
+pub fn update_api_key_for_user(
+    conn: &Connection,
+    user_id: i64,
+    key_id: i64,
+    patch: &ApiKeyPatchDb,
+) -> rusqlite::Result<usize> {
+    let mut total: usize = 0;
+    if let Some(ref n) = patch.name {
+        total += conn.execute(
+            "UPDATE api_keys SET name = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+            params![n, key_id, user_id],
+        )?;
+    }
+    if let Some(ref d) = patch.description {
+        total += conn.execute(
+            "UPDATE api_keys SET description = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+            params![d, key_id, user_id],
+        )?;
+    }
+    if let Some(d) = patch.disabled {
+        total += conn.execute(
+            "UPDATE api_keys SET disabled = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+            params![if d { 1 } else { 0 }, key_id, user_id],
+        )?;
+    }
+    if let Some(ref e) = patch.expires_at {
+        total += match e {
+            Some(ts) => conn.execute(
+                "UPDATE api_keys SET expires_at = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+                params![*ts, key_id, user_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET expires_at = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    if let Some(ref q) = patch.quota_monthly_tokens {
+        total += match q {
+            Some(v) => conn.execute(
+                "UPDATE api_keys SET quota_monthly_tokens = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+                params![*v, key_id, user_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET quota_monthly_tokens = NULL, quota_used_tokens = 0, quota_period_start = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    if let Some(ref m) = patch.model_allowlist {
+        total += match m {
+            Some(s) => conn.execute(
+                "UPDATE api_keys SET model_allowlist = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+                params![s, key_id, user_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET model_allowlist = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    if let Some(ref ip) = patch.ip_allowlist {
+        total += match ip {
+            Some(s) => conn.execute(
+                "UPDATE api_keys SET ip_allowlist = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+                params![s, key_id, user_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET ip_allowlist = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    Ok(total)
 }
 
 /// Sets `revoked = 1` for the key if it belongs to `user_id` and is not already revoked.
@@ -186,20 +362,146 @@ pub fn get_first_api_key_for_user(
 }
 
 pub fn validate_api_key(conn: &Connection, api_key: &str) -> bool {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
     conn.query_row(
-        "SELECT 1 FROM api_keys WHERE api_key = ?1 AND revoked = 0",
-        params![api_key],
+        "SELECT 1 FROM api_keys WHERE api_key = ?1 AND revoked = 0 AND disabled = 0
+         AND (expires_at IS NULL OR expires_at > ?2)",
+        params![api_key, now],
         |_| Ok(()),
     )
     .is_ok()
 }
 
+/// Active key: not revoked/disabled/expired.
 pub fn get_api_key_info(conn: &Connection, api_key: &str) -> rusqlite::Result<(i64, i64)> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
     conn.query_row(
-        "SELECT id, user_id FROM api_keys WHERE api_key = ?1 AND revoked = 0",
-        params![api_key],
+        "SELECT id, user_id FROM api_keys WHERE api_key = ?1 AND revoked = 0 AND disabled = 0
+         AND (expires_at IS NULL OR expires_at > ?2)",
+        params![api_key, now],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
+}
+
+#[derive(Debug, Clone)]
+pub struct ApiKeyAuthRow {
+    pub id: i64,
+    pub user_id: i64,
+    pub model_allowlist: Option<String>,
+    pub ip_allowlist: Option<String>,
+    pub quota_monthly_tokens: Option<i64>,
+    pub quota_used_tokens: i64,
+    pub quota_period_start: Option<i64>,
+}
+
+pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Result<ApiKeyAuthRow> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    conn.query_row(
+        "SELECT id, user_id, model_allowlist, ip_allowlist, quota_monthly_tokens,
+                quota_used_tokens, quota_period_start
+         FROM api_keys WHERE api_key = ?1 AND revoked = 0 AND disabled = 0
+         AND (expires_at IS NULL OR expires_at > ?2)",
+        params![api_key, now],
+        |row| {
+            Ok(ApiKeyAuthRow {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                model_allowlist: row.get(2)?,
+                ip_allowlist: row.get(3)?,
+                quota_monthly_tokens: row.get(4)?,
+                quota_used_tokens: row.get(5)?,
+                quota_period_start: row.get(6)?,
+            })
+        },
+    )
+}
+
+/// Reset monthly quota if we crossed into a new UTC calendar month; then check headroom.
+pub fn ensure_monthly_quota(
+    conn: &Connection,
+    key_id: i64,
+    now: i64,
+) -> Result<(), &'static str> {
+    use crate::api_key_policy::unix_month_start;
+    let month_start = unix_month_start(now);
+    let (limit, used, period): (Option<i64>, i64, Option<i64>) = conn.query_row(
+        "SELECT quota_monthly_tokens, quota_used_tokens, quota_period_start FROM api_keys WHERE id = ?1",
+        params![key_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )
+    .map_err(|_| "api key not found")?;
+    let Some(limit) = limit.filter(|&l| l > 0) else {
+        return Ok(());
+    };
+    let mut used = used;
+    if period.map(|p| p < month_start).unwrap_or(true) {
+        used = 0;
+        conn.execute(
+            "UPDATE api_keys SET quota_used_tokens = 0, quota_period_start = ?1 WHERE id = ?2",
+            params![month_start, key_id],
+        )
+        .map_err(|_| "database error")?;
+    }
+    if used >= limit {
+        return Err("monthly token quota exceeded");
+    }
+    Ok(())
+}
+
+pub fn increment_quota_tokens(conn: &Connection, key_id: i64, delta: i64) -> rusqlite::Result<()> {
+    if delta <= 0 {
+        return Ok(());
+    }
+    conn.execute(
+        "UPDATE api_keys SET quota_used_tokens = quota_used_tokens + ?1 WHERE id = ?2 AND quota_monthly_tokens IS NOT NULL",
+        params![delta, key_id],
+    )?;
+    Ok(())
+}
+
+/// Throttle writes: only update if never set or older than `min_interval_secs`.
+pub fn touch_api_key_last_used(
+    conn: &Connection,
+    key_id: i64,
+    now: i64,
+    min_interval_secs: i64,
+) -> rusqlite::Result<()> {
+    let should: bool = conn.query_row(
+        "SELECT last_used_at IS NULL OR (?1 - last_used_at) >= ?2 FROM api_keys WHERE id = ?3",
+        params![now, min_interval_secs, key_id],
+        |row| row.get(0),
+    )?;
+    if should {
+        conn.execute(
+            "UPDATE api_keys SET last_used_at = ?1 WHERE id = ?2",
+            params![now, key_id],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn insert_api_key_audit(
+    conn: &Connection,
+    user_id: i64,
+    key_id: i64,
+    action: &str,
+    created_at: i64,
+    detail: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO api_key_audit_log (user_id, key_id, action, created_at, detail) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![user_id, key_id, action, created_at, detail],
+    )?;
+    Ok(())
 }
 
 pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusqlite::Result<()> {
