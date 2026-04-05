@@ -69,8 +69,11 @@ jobs:
             if [ ! -f "${DEPLOY_ROOT}/shared/config.toml" ]; then
               cp "${RELEASE_DIR}/config.example.toml" "${DEPLOY_ROOT}/shared/config.toml"
             fi
-            # Rolling tracing logs (WorkingDirectory is release dir → ../shared/logs resolves under DEPLOY_ROOT)
             CONFIG="${DEPLOY_ROOT}/shared/config.toml"
+            if [ -f "${CONFIG}" ]; then
+              sed -i 's/\r$//' "${CONFIG}" || true
+            fi
+            # Rolling tracing logs (WorkingDirectory is release dir → ../shared/logs resolves under DEPLOY_ROOT)
             if [ -f "${CONFIG}" ]; then
               if ! grep -q '^\[logging\]' "${CONFIG}"; then
                 printf '\n[logging]\ntracing_log_dir = "../shared/logs"\n' >> "${CONFIG}"
@@ -78,9 +81,21 @@ jobs:
                 sed -i 's|tracing_log_dir = ""|tracing_log_dir = "../shared/logs"|' "${CONFIG}"
               fi
             fi
+            # SQLite: default modelgate.db is per-release cwd; pin DB under shared/ so data survives deploys
+            if [ -f "${CONFIG}" ] && ! grep -q '^\[sqlite\]' "${CONFIG}"; then
+              printf '\n[sqlite]\npath = "../shared/modelgate.db"\n' >> "${CONFIG}"
+            fi
             chown -R modelgate:modelgate "${DEPLOY_ROOT}/shared/logs" 2>/dev/null || true
 
             ln -sfn "${DEPLOY_ROOT}/shared/config.toml" "${RELEASE_DIR}/config.toml"
+
+            # Migrate DB from previous current release before switching symlink (first time shared DB is empty)
+            SHARED_DB="${DEPLOY_ROOT}/shared/modelgate.db"
+            PREV_CURRENT=$(readlink -f "${DEPLOY_ROOT}/current" 2>/dev/null || true)
+            if [ ! -f "${SHARED_DB}" ] && [ -n "${PREV_CURRENT}" ] && [ -f "${PREV_CURRENT}/modelgate.db" ]; then
+              cp -a "${PREV_CURRENT}/modelgate.db" "${SHARED_DB}"
+              chown modelgate:modelgate "${SHARED_DB}" 2>/dev/null || true
+            fi
 
             # Point "current" to this release
             ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"

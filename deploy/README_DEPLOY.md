@@ -55,6 +55,8 @@ sudo chmod 600 /etc/modelgate/modelgate.env
 
 部署后确保 **`${DEPLOY_ROOT}/shared/logs`** 存在且 **`modelgate`** 用户可写（CD 工作流会 `mkdir` 并 `chown`）。tracing 日志文件名为 `modelgate.log.YYYY-MM-DD`。
 
+CD 还会在 **`shared/config.toml`** 中写入 **`[sqlite] path = "../shared/modelgate.db"`**（若尚未配置），并把**上一版 release** 里的 `modelgate.db` **复制**到 `shared/`（仅当 `shared/modelgate.db` 尚不存在时），避免每次发版换目录导致**用户/API Key 数据丢失**。
+
 ## GitHub Actions 工作流
 
 - `CI`: `.github/workflows/ci.yml`（fmt/clippy/test/build）

@@ -18,3 +18,6 @@ api_key = "sk-your-openai-key-here"
 [logging]
 tracing_log_dir = ""
 
+# SQLite defaults to `modelgate.db` in the process cwd (OK for local dev).
+# SSH deploy adds `[sqlite] path = "../shared/modelgate.db"` so the DB survives release switches.
+
