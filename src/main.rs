@@ -6,6 +6,7 @@ pub mod errors;
 pub mod handlers;
 pub mod logging;
 pub mod routes;
+pub mod secrets;
 pub mod services;
 #[cfg(test)]
 pub(crate) mod test_utils;
@@ -94,6 +95,12 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
     let host = state.cfg.server.host.clone();
     let port = state.cfg.server.port;
     info!(%host, %port, "starting server");
+    info!(
+        upstream_base_url = %state.cfg.upstream.base_url,
+        upstream_api_key_masked = %crate::secrets::mask_secret(&state.cfg.upstream.api_key),
+        upstream_api_key_sha256 = %crate::secrets::secret_sha256_hex(&state.cfg.upstream.api_key),
+        "upstream config at startup (masked key; sha256 matches `echo -n KEY | sha256sum` / local file)"
+    );
 
     let state_clone = state.clone();
     HttpServer::new(move || {
