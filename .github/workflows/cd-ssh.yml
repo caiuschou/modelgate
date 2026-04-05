@@ -61,6 +61,8 @@ jobs:
             mkdir -p "${DEPLOY_ROOT}/shared/logs"
             mkdir -p "${RELEASE_DIR}"
             tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
+            # Free /tmp (often a small tmpfs); leftover tarballs caused "No space left on device" on extract
+            rm -f "/tmp/${APP_NAME}-${SHA}.tar.gz"
 
             # Ensure executable bit
             chmod +x "${RELEASE_DIR}/modelgate"

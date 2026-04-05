@@ -89,6 +89,7 @@ jobs:
             mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared"
             mkdir -p "${RELEASE_DIR}"
             tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
+            rm -f "/tmp/${APP_NAME}-${SHA}.tar.gz"
 
             ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
 

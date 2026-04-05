@@ -60,7 +60,7 @@ CD 还会在 **`shared/config.toml`** 中写入 **`[sqlite] path = "../shared/mo
 ## GitHub Actions 工作流
 
 - `CI`: `.github/workflows/ci.yml`（fmt/clippy/test/build）
-- `CD`: `.github/workflows/cd-ssh.yml`（push main 自动 build -> scp -> ssh 解压 -> 切换 current -> systemd restart -> health check）
+- `CD`: `.github/workflows/cd-ssh.yml`（push main 自动 build -> scp -> ssh 解压 -> **删除 /tmp 下本包** -> 切换 current -> systemd restart -> health check）。若服务器 **`/tmp` 为 tmpfs 且很小**，务必保留该清理，否则会解压失败（`No space left on device`）。
 
 ## API 子域（Rust 后端对外域名）
 
