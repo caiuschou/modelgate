@@ -13,19 +13,11 @@ pub struct AppConfig {
     pub auth: AuthConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct LoggingConfig {
     /// Directory for daily rolling files `modelgate.log.YYYY-MM-DD`. Empty = no log files.
     #[serde(default)]
     pub tracing_log_dir: String,
-}
-
-impl Default for LoggingConfig {
-    fn default() -> Self {
-        Self {
-            tracing_log_dir: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

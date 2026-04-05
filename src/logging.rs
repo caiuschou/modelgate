@@ -1,23 +1,15 @@
 //! Tracing subscriber setup: stderr (journal under systemd) and optional rolling log files.
 use std::path::Path;
 
-use tracing_subscriber::{
-    fmt,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-    EnvFilter,
-};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::config::LoggingConfig;
 
 /// Initialize global tracing. Safe to call from tests: second `try_init` is ignored.
 pub fn init_tracing(cfg: &LoggingConfig) {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    let stderr = fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_target(true);
+    let stderr = fmt::layer().with_writer(std::io::stderr).with_target(true);
 
     let dir = cfg.tracing_log_dir.trim();
     if dir.is_empty() {

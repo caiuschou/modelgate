@@ -1,10 +1,10 @@
 pub mod audit;
 pub mod auth;
 pub mod config;
-pub mod logging;
 pub mod db;
 pub mod errors;
 pub mod handlers;
+pub mod logging;
 pub mod routes;
 pub mod services;
 #[cfg(test)]
