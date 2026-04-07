@@ -71,6 +71,19 @@ server {
   access_log /var/log/nginx/modelgate-frontend-access.log;
   error_log /var/log/nginx/modelgate-frontend-error.log warn;
 
+  # Fallback when an old bundle posts to https://modelgate.dev/api/* (empty VITE_API_BASE_URL).
+  # Primary setup: build with VITE_API_BASE_URL=https://api.modelgate.dev (see cd-frontend-ssh.yml).
+  location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+  }
+
   location / {
     try_files \$uri /index.html;
   }

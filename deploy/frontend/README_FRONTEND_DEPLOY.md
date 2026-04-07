@@ -60,7 +60,18 @@ On push to `main`:
 6. Reload Nginx
 7. Health check `http://127.0.0.1/`
 
-## 4) Manual rollback
+## 4) Troubleshooting
+
+**注册 / 登录请求 `POST https://modelgate.dev/api/v1/...` 返回 405**
+
+- 静态站点 Nginx 不接受对 `/api/` 的 POST，除非：  
+  - **前端构建**已设置 `VITE_API_BASE_URL=https://api.modelgate.dev`（请求应发往 `api` 子域），或  
+  - 已用 `init-production.sh` 里对 `/api/` 的 **反代**（见站点配置），将同机 Actix 暴露在 `127.0.0.1:8000`。
+- 重新部署前端（GitHub CD 已在 build 步骤注入 `VITE_API_BASE_URL`），并做一次硬刷新（或清 CDN 缓存）。
+
+若使用 **HTTPS（443）** 的独立 Nginx 配置，请在对应 `server { ... }` 中复制同样的 `location /api/ { ... }` 块。
+
+## 5) Manual rollback
 
 ```bash
 ls -1 /opt/modelgate/frontend/releases

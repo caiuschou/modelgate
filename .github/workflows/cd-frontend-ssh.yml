@@ -32,6 +32,9 @@ jobs:
         run: npm ci
 
       - name: Verify and build
+        env:
+          # Same-origin /api on modelgate.dev is only static nginx → POST returns 405 without this.
+          VITE_API_BASE_URL: https://api.modelgate.dev
         run: |
           npm run lint
           npm run test
