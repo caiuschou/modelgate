@@ -9,10 +9,7 @@ use ipnetwork::IpNetwork;
 
 /// UTC midnight at the first day of the calendar month containing `ts`.
 pub fn unix_month_start(ts: i64) -> i64 {
-    let dt = Utc
-        .timestamp_opt(ts, 0)
-        .single()
-        .unwrap_or_else(Utc::now);
+    let dt = Utc.timestamp_opt(ts, 0).single().unwrap_or_else(Utc::now);
     Utc.with_ymd_and_hms(dt.year(), dt.month(), 1, 0, 0, 0)
         .unwrap()
         .timestamp()
@@ -25,8 +22,7 @@ pub fn check_model_allowlist(
     let Some(raw) = model_allowlist_json.filter(|s| !s.is_empty()) else {
         return Ok(());
     };
-    let arr: Vec<String> =
-        serde_json::from_str(raw).map_err(|_| "invalid model_allowlist JSON")?;
+    let arr: Vec<String> = serde_json::from_str(raw).map_err(|_| "invalid model_allowlist JSON")?;
     if arr.is_empty() {
         return Ok(());
     }
@@ -89,10 +85,6 @@ mod tests {
     #[test]
     fn ip_allowlist_cidr() {
         let j = r#"["127.0.0.0/8","::1/128"]"#;
-        assert!(check_ip_allowlist(
-            Some(j),
-            "127.0.0.1".parse().unwrap()
-        )
-        .is_ok());
+        assert!(check_ip_allowlist(Some(j), "127.0.0.1".parse().unwrap()).is_ok());
     }
 }

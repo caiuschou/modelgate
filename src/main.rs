@@ -3,14 +3,14 @@ pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod db;
-pub mod jwt_session;
-pub mod session_auth;
 pub mod errors;
 pub mod handlers;
+pub mod jwt_session;
 pub mod logging;
 pub mod routes;
 pub mod secrets;
 pub mod services;
+pub mod session_auth;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod upstream;

@@ -8,7 +8,10 @@ pub struct ConsoleSession {
 }
 
 /// Resolves either a console JWT (Bearer) or an `sk-or-v1-*` API key for `/api/v1/*` routes.
-pub fn resolve_console_session(req: &HttpRequest, state: &AppState) -> Result<ConsoleSession, ApiError> {
+pub fn resolve_console_session(
+    req: &HttpRequest,
+    state: &AppState,
+) -> Result<ConsoleSession, ApiError> {
     let bearer = auth::extract_bearer_token(req)
         .ok_or_else(|| ApiError::Unauthorized("Invalid or missing credentials".into()))?;
     if bearer.starts_with("sk-or-v1-") {

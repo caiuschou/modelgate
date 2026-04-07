@@ -170,7 +170,10 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
             "empty audit body path",
         ));
     }
-    if stored.components().any(|c| matches!(c, Component::ParentDir)) {
+    if stored
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             "path escapes audit log directory",
@@ -178,10 +181,7 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
     }
 
     let dir_canon = log_root.canonicalize().map_err(|_| {
-        io::Error::new(
-            io::ErrorKind::NotFound,
-            "audit log directory not available",
-        )
+        io::Error::new(io::ErrorKind::NotFound, "audit log directory not available")
     })?;
 
     let candidates: Vec<PathBuf> = if stored.is_absolute() {
@@ -200,9 +200,8 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
         }
     }
 
-    let file_canon = file_canon.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::NotFound, "audit body file missing")
-    })?;
+    let file_canon = file_canon
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "audit body file missing"))?;
 
     fs::read(file_canon)
 }

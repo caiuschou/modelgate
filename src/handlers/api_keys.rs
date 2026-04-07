@@ -78,17 +78,13 @@ pub async fn create_my_api_key(
 ) -> Result<HttpResponse, ApiError> {
     let user_id = auth_user_id(&req, &state)?;
     let created_at = now_secs();
-    let b: CreateMyApiKeyBody = if bytes.is_empty()
-        || bytes
-            .as_ref()
-            .iter()
-            .all(|c| c.is_ascii_whitespace())
-    {
-        CreateMyApiKeyBody::default()
-    } else {
-        serde_json::from_slice(&bytes)
-            .map_err(|e| ApiError::BadRequest(format!("invalid JSON: {e}")))?
-    };
+    let b: CreateMyApiKeyBody =
+        if bytes.is_empty() || bytes.as_ref().iter().all(|c| c.is_ascii_whitespace()) {
+            CreateMyApiKeyBody::default()
+        } else {
+            serde_json::from_slice(&bytes)
+                .map_err(|e| ApiError::BadRequest(format!("invalid JSON: {e}")))?
+        };
     let input = CreateMyApiKeyInput {
         name: b.name,
         description: b.description,
@@ -97,10 +93,9 @@ pub async fn create_my_api_key(
         model_allowlist: b.model_allowlist,
         ip_allowlist: b.ip_allowlist,
     };
-    let (id, api_key, created_at) =
-        state
-            .user_service
-            .create_my_api_key(user_id, created_at, input)?;
+    let (id, api_key, created_at) = state
+        .user_service
+        .create_my_api_key(user_id, created_at, input)?;
     let conn = state
         .db
         .get()
@@ -167,9 +162,7 @@ pub async fn patch_my_api_key(
     if let Some(ref n) = b.name {
         let t = n.trim();
         if t.is_empty() || t.len() > 64 {
-            return Err(ApiError::BadRequest(
-                "name must be 1–64 characters".into(),
-            ));
+            return Err(ApiError::BadRequest("name must be 1–64 characters".into()));
         }
         patch.name = Some(t.to_string());
     }
@@ -191,14 +184,12 @@ pub async fn patch_my_api_key(
         patch.quota_monthly_tokens = Some(q);
     }
     if let Some(m) = b.model_allowlist {
-        patch.model_allowlist = Some(m.map(|v| {
-            serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string())
-        }));
+        patch.model_allowlist =
+            Some(m.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string())));
     }
     if let Some(ip) = b.ip_allowlist {
-        patch.ip_allowlist = Some(ip.map(|v| {
-            serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string())
-        }));
+        patch.ip_allowlist =
+            Some(ip.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string())));
     }
     if !patch_db_has_changes(&patch) {
         return Err(ApiError::BadRequest("no fields to update".into()));
@@ -228,14 +219,8 @@ pub async fn revoke_my_api_key(
     let kid = key_id.into_inner();
     state.user_service.revoke_my_api_key(user_id, kid)?;
     if let Ok(conn) = state.db.get() {
-        let _ = crate::db::insert_api_key_audit(
-            &conn,
-            user_id,
-            kid,
-            "revoke",
-            now_secs() as i64,
-            None,
-        );
+        let _ =
+            crate::db::insert_api_key_audit(&conn, user_id, kid, "revoke", now_secs() as i64, None);
     }
     Ok(HttpResponse::Ok().finish())
 }

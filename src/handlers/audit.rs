@@ -73,8 +73,8 @@ pub async fn get_audit_log_body(
             "No stored body for this entry (e.g. streaming responses are not saved)".into(),
         )
     })?;
-    let bytes = crate::audit::read_audit_body_bytes(&state.audit_config.log_dir, stored_path).map_err(
-        |e| match e.kind() {
+    let bytes = crate::audit::read_audit_body_bytes(&state.audit_config.log_dir, stored_path)
+        .map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => {
                 ApiError::NotFound("Audit body file is missing or was removed".into())
             }
@@ -85,17 +85,15 @@ pub async fn get_audit_log_body(
                 ApiError::BadRequest("Invalid audit body path".into())
             }
             _ => ApiError::InternalError(format!("Failed to read audit body: {e}")),
-        },
-    )?;
+        })?;
 
-    let content_type =
-        if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok() {
-            header::ContentType::json().to_string()
-        } else if std::str::from_utf8(&bytes).is_ok() {
-            "text/plain; charset=utf-8".to_string()
-        } else {
-            "application/octet-stream".to_string()
-        };
+    let content_type = if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok() {
+        header::ContentType::json().to_string()
+    } else if std::str::from_utf8(&bytes).is_ok() {
+        "text/plain; charset=utf-8".to_string()
+    } else {
+        "application/octet-stream".to_string()
+    };
 
     Ok(HttpResponse::Ok()
         .append_header((header::CONTENT_TYPE, content_type))

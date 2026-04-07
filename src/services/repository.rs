@@ -142,8 +142,13 @@ pub trait Repository: Send + Sync {
     ) -> Result<(), RepositoryError>;
 
     fn list_api_keys_for_user(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError>;
-    fn get_api_key_for_user(&self, user_id: i64, key_id: i64) -> Result<ApiKeySummary, RepositoryError>;
+    fn get_api_key_for_user(
+        &self,
+        user_id: i64,
+        key_id: i64,
+    ) -> Result<ApiKeySummary, RepositoryError>;
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_api_key_with_meta(
         &self,
         user_id: i64,
@@ -425,14 +430,17 @@ impl Repository for SqliteRepository {
         Ok(rows.into_iter().map(|r| row_to_summary(now, r)).collect())
     }
 
-    fn get_api_key_for_user(&self, user_id: i64, key_id: i64) -> Result<ApiKeySummary, RepositoryError> {
+    fn get_api_key_for_user(
+        &self,
+        user_id: i64,
+        key_id: i64,
+    ) -> Result<ApiKeySummary, RepositoryError> {
         let conn = self
             .db_pool
             .get()
             .map_err(|_| RepositoryError::PoolUnavailable)?;
-        let row = db::get_api_key_row_for_user(&conn, user_id, key_id).map_err(|_| {
-            RepositoryError::NotFound("api key not found".into())
-        })?;
+        let row = db::get_api_key_row_for_user(&conn, user_id, key_id)
+            .map_err(|_| RepositoryError::NotFound("api key not found".into()))?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -440,6 +448,7 @@ impl Repository for SqliteRepository {
         Ok(row_to_summary(now, row))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn insert_api_key_with_meta(
         &self,
         user_id: i64,
@@ -589,8 +598,13 @@ mod tests {
             .expect("load creds");
         let (user_id, stored) = creds.expect("user exists");
         assert_eq!(stored.as_deref(), Some(hash.as_str()));
-        assert!(repo.get_first_api_key_for_user(user_id).expect("load key").is_none());
-        let (tid, uid) = repo.get_api_key_info("sk-reg-1").expect("lookup by full key");
+        assert!(repo
+            .get_first_api_key_for_user(user_id)
+            .expect("load key")
+            .is_none());
+        let (tid, uid) = repo
+            .get_api_key_info("sk-reg-1")
+            .expect("lookup by full key");
         assert_eq!(uid, user_id);
         assert!(tid > 0);
     }

@@ -272,21 +272,13 @@ mod tests {
         ) -> Result<crate::db::ApiKeyAuthRow, RepositoryError> {
             Err(RepositoryError::NotFound("api key not found".into()))
         }
-        fn touch_api_key_last_used(
-            &self,
-            _key_id: i64,
-            _now: i64,
-        ) -> Result<(), RepositoryError> {
+        fn touch_api_key_last_used(&self, _key_id: i64, _now: i64) -> Result<(), RepositoryError> {
             Ok(())
         }
         fn ensure_monthly_quota(&self, _key_id: i64, _now: i64) -> Result<(), RepositoryError> {
             Ok(())
         }
-        fn increment_quota_tokens(
-            &self,
-            _key_id: i64,
-            _delta: i64,
-        ) -> Result<(), RepositoryError> {
+        fn increment_quota_tokens(&self, _key_id: i64, _delta: i64) -> Result<(), RepositoryError> {
             Ok(())
         }
         fn query_audit_logs(

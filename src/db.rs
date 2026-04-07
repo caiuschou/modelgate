@@ -216,6 +216,7 @@ pub fn get_api_key_row_for_user(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn insert_api_key_with_meta(
     conn: &Connection,
     user_id: i64,
@@ -473,11 +474,7 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
 }
 
 /// Reset monthly quota if we crossed into a new UTC calendar month; then check headroom.
-pub fn ensure_monthly_quota(
-    conn: &Connection,
-    key_id: i64,
-    now: i64,
-) -> Result<(), &'static str> {
+pub fn ensure_monthly_quota(conn: &Connection, key_id: i64, now: i64) -> Result<(), &'static str> {
     use crate::api_key_policy::unix_month_start;
     let month_start = unix_month_start(now);
     let (limit, used, period): (Option<i64>, i64, Option<i64>) = conn.query_row(

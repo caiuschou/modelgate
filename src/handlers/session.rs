@@ -129,13 +129,9 @@ pub async fn login(
         "user"
     };
 
-    let token = jwt_session::encode_session_jwt(
-        &state.cfg.auth.jwt_secret,
-        user_id,
-        username,
-        role,
-    )
-    .map_err(|_| ApiError::InternalError("session token failed".into()))?;
+    let token =
+        jwt_session::encode_session_jwt(&state.cfg.auth.jwt_secret, user_id, username, role)
+            .map_err(|_| ApiError::InternalError("session token failed".into()))?;
 
     Ok(HttpResponse::Ok().json(LoginResponse {
         token,

@@ -2,15 +2,13 @@ use actix_web::{http::StatusCode as ActixStatusCode, web, HttpRequest, HttpRespo
 use async_stream::stream;
 use bytes::Bytes;
 use futures_util::StreamExt;
-use tokio::io::AsyncWriteExt;
 use once_cell::sync::Lazy;
 use reqwest::header as reqwest_header;
 use serde_json::Value;
+use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    api_key_policy, auth, errors::ApiError, upstream, AppState,
-};
+use crate::{api_key_policy, auth, errors::ApiError, upstream, AppState};
 
 static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -65,11 +63,8 @@ pub async fn chat_completions(
         .ensure_monthly_quota(token_id, now)
         .map_err(ApiError::from)?;
 
-    api_key_policy::check_model_allowlist(
-        auth_row.model_allowlist.as_deref(),
-        model.as_deref(),
-    )
-    .map_err(|m| ApiError::Forbidden(m.into()))?;
+    api_key_policy::check_model_allowlist(auth_row.model_allowlist.as_deref(), model.as_deref())
+        .map_err(|m| ApiError::Forbidden(m.into()))?;
 
     if let Some(ip) = api_key_policy::client_ip(&req) {
         api_key_policy::check_ip_allowlist(auth_row.ip_allowlist.as_deref(), ip)
@@ -259,13 +254,15 @@ pub async fn chat_completions(
                             let _ = f.shutdown().await;
                             enqueue_stream_audit_completion(
                                 &st,
-                                stream_request_id.clone(),
-                                path,
-                                usage_state.clone(),
-                                start.elapsed().as_millis() as i64,
-                                false,
-                                true,
-                                Some("Upstream stream read failed".into()),
+                                StreamAuditCompletionJob {
+                                    request_id: stream_request_id.clone(),
+                                    response_body_path: path,
+                                    usage: usage_state.clone(),
+                                    latency_ms: start.elapsed().as_millis() as i64,
+                                    stream_completed: false,
+                                    stream_aborted: true,
+                                    error_message: Some("Upstream stream read failed".into()),
+                                },
                             )
                             .await;
                         }
@@ -282,13 +279,15 @@ pub async fn chat_completions(
                 let _ = f.shutdown().await;
                 enqueue_stream_audit_completion(
                     &st,
-                    stream_request_id.clone(),
-                    path,
-                    usage_state.clone(),
-                    start.elapsed().as_millis() as i64,
-                    true,
-                    false,
-                    None,
+                    StreamAuditCompletionJob {
+                        request_id: stream_request_id.clone(),
+                        response_body_path: path,
+                        usage: usage_state.clone(),
+                        latency_ms: start.elapsed().as_millis() as i64,
+                        stream_completed: true,
+                        stream_aborted: false,
+                        error_message: None,
+                    },
                 )
                 .await;
             }
@@ -377,11 +376,7 @@ pub async fn chat_completions(
     }
 }
 
-fn feed_sse_usage_lines(
-    buf: &mut Vec<u8>,
-    chunk: &[u8],
-    usage: &mut UsageTokensCostFinish,
-) {
+fn feed_sse_usage_lines(buf: &mut Vec<u8>, chunk: &[u8], usage: &mut UsageTokensCostFinish) {
     buf.extend_from_slice(chunk);
     while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
         let line: Vec<u8> = buf.drain(..=pos).collect();
@@ -457,6 +452,16 @@ type UsageTokensCostFinish = (
     Option<String>,
 );
 
+struct StreamAuditCompletionJob {
+    request_id: String,
+    response_body_path: String,
+    usage: UsageTokensCostFinish,
+    latency_ms: i64,
+    stream_completed: bool,
+    stream_aborted: bool,
+    error_message: Option<String>,
+}
+
 /// OpenAI-style chat completion JSON: `usage` + `choices[0].finish_reason`.
 fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
     let value = match serde_json::from_slice::<Value>(body) {
@@ -504,14 +509,17 @@ async fn send_audit_record(state: &web::Data<AppState>, record: crate::audit::Au
 
 async fn enqueue_stream_audit_completion(
     state: &web::Data<AppState>,
-    request_id: String,
-    response_body_path: String,
-    usage: UsageTokensCostFinish,
-    latency_ms: i64,
-    stream_completed: bool,
-    stream_aborted: bool,
-    error_message: Option<String>,
+    job: StreamAuditCompletionJob,
 ) {
+    let StreamAuditCompletionJob {
+        request_id,
+        response_body_path,
+        usage,
+        latency_ms,
+        stream_completed,
+        stream_aborted,
+        error_message,
+    } = job;
     let metadata = serde_json::json!({
         "stream": true,
         "stream_completed": stream_completed,
