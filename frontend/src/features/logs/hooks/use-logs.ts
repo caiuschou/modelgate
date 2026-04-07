@@ -34,9 +34,50 @@ export function useAuditLogDetail(requestId: string | undefined) {
   return useQuery({
     queryKey: ['logs', 'detail', requestId],
     queryFn: () =>
-      apiClient.get(apiPath(`api/v1/logs/request/${requestId}`)).json<AuditLogRecord>(),
+      apiClient
+        .get(apiPath(`api/v1/logs/request/${encodeURIComponent(requestId!)}`))
+        .json<AuditLogRecord>(),
     enabled: Boolean(requestId),
     staleTime: 15_000,
+    refetchInterval: (q) => {
+      const d = q.state.data
+      if (!d || !requestId) return false
+      const meta = d.metadata
+      const isStream =
+        meta !== null &&
+        typeof meta === 'object' &&
+        !Array.isArray(meta) &&
+        meta['stream'] === true
+      const completed =
+        meta !== null &&
+        typeof meta === 'object' &&
+        !Array.isArray(meta) &&
+        meta['stream_completed'] === true
+      if (isStream && !completed && !d.response_body_path) {
+        return 2000
+      }
+      return false
+    },
+  })
+}
+
+export function useAuditLogBody(
+  requestId: string | undefined,
+  part: 'request' | 'response',
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['logs', 'body', requestId, part],
+    queryFn: () =>
+      apiClient
+        .get(
+          apiPath(`api/v1/logs/request/${encodeURIComponent(requestId!)}/body`),
+          { searchParams: { part } },
+        )
+        .text(),
+    enabled: Boolean(requestId) && enabled,
+    staleTime: 30_000,
+    retry: false,
   })
 }
 

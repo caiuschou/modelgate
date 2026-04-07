@@ -96,6 +96,15 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
         }
     }
 
+    if let Ok(port_s) = std::env::var("MODELGATE_SERVER_PORT") {
+        if let Ok(p) = port_s.parse::<u16>() {
+            let mut builder = config::Config::builder();
+            builder = builder.add_source(config);
+            builder = builder.set_override("server.port", i64::from(p))?;
+            config = builder.build()?;
+        }
+    }
+
     let mut cfg: AppConfig = config.try_deserialize()?;
     if cfg.auth.jwt_secret.trim().is_empty() {
         cfg.auth.jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
@@ -234,6 +243,29 @@ mod tests {
             assert_eq!(cfg.upstream.api_key, "file-key");
             assert_eq!(cfg.server.host, "127.0.0.1");
             assert_eq!(cfg.server.port, 9000);
+        });
+    }
+
+    #[test]
+    fn modelgate_server_port_env_overrides_file() {
+        with_env_lock(|| {
+            clear_env_vars();
+
+            let dir = env::temp_dir().join("modelgate_port_env_test");
+            let _ = std::fs::remove_dir_all(&dir);
+            create_dir_all(&dir).expect("create config dir");
+
+            let mut file = File::create(dir.join("config.toml")).expect("create config file");
+            writeln!(
+                file,
+                "[upstream]\napi_key = \"file-key\"\n[server]\nhost = \"127.0.0.1\"\nport = 9000\n"
+            )
+            .expect("write config file");
+
+            env::set_var("MODELGATE_SERVER_PORT", "14040");
+            let cfg = load_config_from_dir(&dir).expect("load config");
+            assert_eq!(cfg.server.port, 14040);
+            env::remove_var("MODELGATE_SERVER_PORT");
         });
     }
 

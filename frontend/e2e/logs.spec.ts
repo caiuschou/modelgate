@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test'
 import {
   createChatCompletion,
+  createChatCompletionStream,
   getGatewayApiKeyForSession,
   loginApiKey,
+  waitForAuditDetailResponsePath,
   waitForAuditListRow,
 } from './helpers/api'
 
@@ -62,6 +64,76 @@ test('list shows audit row after chat completion and opens detail', async ({
   await expect(
     page.locator('dt', { hasText: 'Finish 原因' }).locator('+ dd'),
   ).toHaveText('stop')
+})
+
+test('detail page shows request and response body from audit files', async ({
+  page,
+}) => {
+  const model = `e2e_body_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model)
+  expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
+
+  const end = unixNow() + 3600
+  const row = await waitForAuditListRow(backendBase, session, {
+    start_time: '0',
+    end_time: String(end),
+    limit: '20',
+    offset: '0',
+    model,
+  })
+  expect(row, 'audit row did not appear (flush timeout)').not.toBeNull()
+
+  await page.goto('/logs')
+  await expect(page.getByRole('row').filter({ hasText: model })).toBeVisible({
+    timeout: 20_000,
+  })
+  await page.getByRole('row').filter({ hasText: model }).getByRole('link', { name: '详情' }).click()
+
+  await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '请求体' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '响应体' })).toBeVisible()
+
+  // Metadata `<pre>` can mount before body panels finish loading; match by content instead of DOM order.
+  const requestPre = page.locator('pre').filter({ hasText: model })
+  await expect(requestPre).toContainText('e2e audit ping', { timeout: 20_000 })
+  await expect(page.locator('pre').filter({ hasText: 'choices' })).toBeVisible({
+    timeout: 20_000,
+  })
+})
+
+test('stream chat persists SSE and detail shows body', async ({ page }) => {
+  const model = `e2e_stream_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const streamResp = await createChatCompletionStream(backendBase, gatewayKey, model)
+  const streamText = await streamResp.text()
+  expect(streamResp.ok, `stream chat failed: ${streamText}`).toBeTruthy()
+
+  const end = unixNow() + 3600
+  const row = await waitForAuditListRow(backendBase, session, {
+    start_time: '0',
+    end_time: String(end),
+    limit: '20',
+    offset: '0',
+    model,
+  })
+  expect(row).not.toBeNull()
+
+  const okPath = await waitForAuditDetailResponsePath(
+    backendBase,
+    session,
+    row!.request_id,
+  )
+  expect(okPath, 'stream response_body_path not set after completion').toBe(true)
+
+  await page.goto(`/logs/${encodeURIComponent(row!.request_id)}`)
+  await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
+  await expect(
+    page.getByText('e2e stream chunk', { exact: false }),
+  ).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('[DONE]', { exact: false })).toBeVisible()
 })
 
 test('keyword in URL shows matching audit row', async ({ page }) => {

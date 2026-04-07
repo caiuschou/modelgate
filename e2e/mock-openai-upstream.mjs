@@ -54,7 +54,10 @@ const server = http.createServer(async (req, res) => {
         'Cache-Control': 'no-cache',
       })
       res.write(
-        'data: {"id":"e2e","choices":[{"delta":{"content":"x"}}]}\n\n',
+        'data: {"id":"e2e","choices":[{"delta":{"content":"e2e stream chunk"}}]}\n\n',
+      )
+      res.write(
+        'data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5},"finish_reason":"stop"}\n\n',
       )
       res.write('data: [DONE]\n\n')
       res.end()

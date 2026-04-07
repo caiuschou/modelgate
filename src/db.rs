@@ -597,6 +597,38 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
     tx.commit()
 }
 
+pub fn update_audit_log_stream_completion(
+    conn: &mut Connection,
+    update: &crate::audit::AuditStreamCompletionUpdate,
+) -> rusqlite::Result<usize> {
+    let metadata = update.metadata.to_string();
+    conn.execute(
+        "UPDATE audit_logs SET
+            response_body_path = ?1,
+            prompt_tokens = ?2,
+            completion_tokens = ?3,
+            total_tokens = ?4,
+            cost = ?5,
+            finish_reason = ?6,
+            latency_ms = ?7,
+            metadata = ?8,
+            error_message = COALESCE(?9, error_message)
+         WHERE request_id = ?10",
+        params![
+            update.response_body_path,
+            update.prompt_tokens,
+            update.completion_tokens,
+            update.total_tokens,
+            update.cost,
+            update.finish_reason,
+            update.latency_ms,
+            metadata,
+            update.error_message,
+            update.request_id,
+        ],
+    )
+}
+
 pub fn query_audit_logs(
     conn: &Connection,
     query: &AuditListQuery,

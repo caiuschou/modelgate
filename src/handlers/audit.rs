@@ -1,4 +1,5 @@
 use actix_web::{http::header, web, HttpRequest, HttpResponse};
+use serde::Deserialize;
 
 use crate::audit::{
     AuditListQuery, AuditListResponse, ExportRequest, ExportResponse, ExportStatusResponse,
@@ -40,6 +41,65 @@ pub async fn get_audit_log(
     let (_, user_id) = auth_scope(&req, &state)?;
     let record = state.audit_service.get_audit_log(&request_id, user_id)?;
     Ok(HttpResponse::Ok().json(record))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuditBodyQuery {
+    pub part: String,
+}
+
+pub async fn get_audit_log_body(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    request_id: web::Path<String>,
+    query: web::Query<AuditBodyQuery>,
+) -> Result<HttpResponse, ApiError> {
+    let part = query.part.to_ascii_lowercase();
+    if part != "request" && part != "response" {
+        return Err(ApiError::BadRequest(
+            "query parameter part must be \"request\" or \"response\"".into(),
+        ));
+    }
+    let (_, user_id) = auth_scope(&req, &state)?;
+    let request_id = request_id.into_inner();
+    let record = state.audit_service.get_audit_log(&request_id, user_id)?;
+    let stored_path = match part.as_str() {
+        "request" => record.request_body_path.as_deref(),
+        "response" => record.response_body_path.as_deref(),
+        _ => unreachable!(),
+    };
+    let stored_path = stored_path.ok_or_else(|| {
+        ApiError::NotFound(
+            "No stored body for this entry (e.g. streaming responses are not saved)".into(),
+        )
+    })?;
+    let bytes = crate::audit::read_audit_body_bytes(&state.audit_config.log_dir, stored_path).map_err(
+        |e| match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                ApiError::NotFound("Audit body file is missing or was removed".into())
+            }
+            std::io::ErrorKind::PermissionDenied => {
+                ApiError::Forbidden("Invalid audit body path".into())
+            }
+            std::io::ErrorKind::InvalidInput => {
+                ApiError::BadRequest("Invalid audit body path".into())
+            }
+            _ => ApiError::InternalError(format!("Failed to read audit body: {e}")),
+        },
+    )?;
+
+    let content_type =
+        if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok() {
+            header::ContentType::json().to_string()
+        } else if std::str::from_utf8(&bytes).is_ok() {
+            "text/plain; charset=utf-8".to_string()
+        } else {
+            "application/octet-stream".to_string()
+        };
+
+    Ok(HttpResponse::Ok()
+        .append_header((header::CONTENT_TYPE, content_type))
+        .body(bytes))
 }
 
 pub async fn export_audit_logs(
@@ -177,8 +237,8 @@ mod tests {
                 channel_id: None,
                 model: Some("gpt-test".into()),
                 request_type: Some("chat".into()),
-                request_body_path: Some("request.json".into()),
-                response_body_path: Some("response.json".into()),
+                request_body_path: Some(format!("0/{request_id}-request.json")),
+                response_body_path: Some(format!("0/{request_id}-response.json")),
                 status_code: Some(200),
                 error_message: None,
                 prompt_tokens: Some(10),
@@ -335,6 +395,24 @@ mod tests {
     }
 
     fn build_test_state() -> AppState {
+        let audit_root = std::env::temp_dir().join(format!(
+            "modelgate_audit_test_{}_{}",
+            std::process::id(),
+            crate::audit::now_unix_millis()
+        ));
+        std::fs::create_dir_all(audit_root.join("0")).expect("audit test subdir");
+        std::fs::write(
+            audit_root.join("0").join("req_1-request.json"),
+            br#"{"model":"gpt-test"}"#,
+        )
+        .expect("write req body fixture");
+        std::fs::write(
+            audit_root.join("0").join("req_1-response.json"),
+            br#"{"id":"chat"}"#,
+        )
+        .expect("write resp body fixture");
+        let log_dir = audit_root.to_string_lossy().into_owned();
+
         let cfg = crate::config::AppConfig {
             server: crate::config::ServerConfig {
                 host: "127.0.0.1".into(),
@@ -348,7 +426,7 @@ mod tests {
                 path: ":memory:".into(),
             },
             audit: AuditConfig {
-                log_dir: "./audit_logs".into(),
+                log_dir,
                 retention_days: 90,
                 batch_size: 50,
                 flush_interval_seconds: 5,
@@ -427,6 +505,26 @@ mod tests {
             .contains("exp_1.csv"));
         let bytes = to_bytes(resp.into_body()).await.expect("read body");
         assert_eq!(bytes.as_ref(), b"csv,data\n1,2\n");
+    }
+
+    #[actix_web::test]
+    async fn get_audit_log_body_returns_request_file() {
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(build_test_state()))
+                .configure(routes::configure_routes),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/v1/logs/request/req_1/body?part=request")
+            .insert_header(("Authorization", "Bearer sk-or-v1-testok"))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = to_bytes(resp.into_body()).await.expect("read body");
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+        assert_eq!(body["model"], "gpt-test");
     }
 
     #[actix_web::test]

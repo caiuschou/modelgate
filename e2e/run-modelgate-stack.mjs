@@ -1,6 +1,6 @@
 /**
  * Starts OpenAI-compatible mock + `cargo run` with cwd = e2e/ (loads e2e/config.toml).
- * Playwright `webServer` runs this and waits on /healthz.
+ * Playwright passes random ports: MODELGATE_SERVER_PORT, E2E_MOCK_UPSTREAM_PORT, UPSTREAM_BASE_URL.
  */
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -11,7 +11,10 @@ const repoRoot = path.resolve(__dirname, '..')
 
 const mock = spawn(process.execPath, [path.join(__dirname, 'mock-openai-upstream.mjs')], {
   stdio: 'inherit',
-  env: { ...process.env },
+  env: {
+    ...process.env,
+    E2E_MOCK_UPSTREAM_PORT: process.env.E2E_MOCK_UPSTREAM_PORT ?? '18080',
+  },
 })
 
 const rust = spawn(
@@ -23,6 +26,7 @@ const rust = spawn(
     env: {
       ...process.env,
       RUST_LOG: process.env.RUST_LOG ?? 'error',
+      // MODELGATE_SERVER_PORT / UPSTREAM_BASE_URL set by Playwright webServer env
     },
   },
 )

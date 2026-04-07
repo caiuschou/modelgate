@@ -1,6 +1,48 @@
 import { defineConfig, devices } from '@playwright/test'
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
+/** Random ports in a wide private range; avoid duplicates. Env vars pin a port when set. */
+function allocatePorts(): {
+  gatewayPort: number
+  vitePort: number
+  mockPort: number
+} {
+  const used = new Set<number>()
+
+  function allocPort(envName: string): number {
+    const fromEnv = Number(process.env[envName])
+    if (Number.isFinite(fromEnv) && fromEnv > 0 && fromEnv < 65536) {
+      if (used.has(fromEnv)) {
+        throw new Error(`E2E: duplicate port ${fromEnv} from ${envName}`)
+      }
+      used.add(fromEnv)
+      return fromEnv
+    }
+    for (let i = 0; i < 500; i++) {
+      const p = 35000 + Math.floor(Math.random() * 25000)
+      if (!used.has(p)) {
+        used.add(p)
+        return p
+      }
+    }
+    throw new Error('E2E: could not allocate free port')
+  }
+
+  return {
+    gatewayPort: allocPort('E2E_BACKEND_PORT'),
+    vitePort: allocPort('E2E_FRONTEND_PORT'),
+    mockPort: allocPort('E2E_MOCK_PORT'),
+  }
+}
+
+const { gatewayPort, vitePort, mockPort } = allocatePorts()
+
+const gatewayUrl = `http://127.0.0.1:${gatewayPort}`
+const baseURL = `http://127.0.0.1:${vitePort}`
+const mockV1 = `http://127.0.0.1:${mockPort}/v1`
+
+process.env.E2E_BACKEND_URL = gatewayUrl
+process.env.PLAYWRIGHT_BASE_URL = baseURL
+process.env.E2E_GATEWAY_URL = gatewayUrl
 
 export default defineConfig({
   testDir: 'e2e',
@@ -22,15 +64,25 @@ export default defineConfig({
   webServer: [
     {
       command: 'node ../e2e/run-modelgate-stack.mjs',
-      url: 'http://127.0.0.1:8000/healthz',
+      url: `${gatewayUrl}/healthz`,
       reuseExistingServer: !process.env.CI,
       timeout: 180_000,
+      env: {
+        ...process.env,
+        MODELGATE_SERVER_PORT: String(gatewayPort),
+        E2E_MOCK_UPSTREAM_PORT: String(mockPort),
+        UPSTREAM_BASE_URL: mockV1,
+      },
     },
     {
-      command: 'npm run dev -- --host 127.0.0.1 --port 3000 --strictPort',
+      command: `npm run dev -- --host 127.0.0.1 --port ${vitePort} --strictPort`,
       url: baseURL,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
+      env: {
+        ...process.env,
+        E2E_GATEWAY_URL: gatewayUrl,
+      },
     },
   ],
 })

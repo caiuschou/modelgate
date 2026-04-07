@@ -2,6 +2,7 @@ use actix_web::{http::StatusCode as ActixStatusCode, web, HttpRequest, HttpRespo
 use async_stream::stream;
 use bytes::Bytes;
 use futures_util::StreamExt;
+use tokio::io::AsyncWriteExt;
 use once_cell::sync::Lazy;
 use reqwest::header as reqwest_header;
 use serde_json::Value;
@@ -212,13 +213,39 @@ pub async fn chat_completions(
         let st = state.clone();
         let status_ok = (200..300).contains(&status_i64);
         let stream = stream! {
+            let mut file_pair = match crate::audit::create_stream_response_body_file(
+                &st.audit_config,
+                &stream_request_id,
+            )
+            .await
+            {
+                Ok(pair) => Some(pair),
+                Err(e) => {
+                    error!(
+                        %stream_request_id,
+                        error = %e,
+                        "failed to create stream response audit file"
+                    );
+                    None
+                }
+            };
+            let mut usage_state: UsageTokensCostFinish =
+                (None, None, None, None, None);
             let mut upstream_stream = upstream_resp.bytes_stream();
             let mut buf: Vec<u8> = Vec::new();
-            let mut last_usage: Option<i64> = None;
             while let Some(item) = upstream_stream.next().await {
                 match item {
                     Ok(chunk) => {
-                        feed_sse_usage_lines(&mut buf, chunk.as_ref(), &mut last_usage);
+                        feed_sse_usage_lines(&mut buf, chunk.as_ref(), &mut usage_state);
+                        if let Some((_path, ref mut f)) = file_pair.as_mut() {
+                            if let Err(e) = f.write_all(chunk.as_ref()).await {
+                                error!(
+                                    %stream_request_id,
+                                    error = %e,
+                                    "failed to append stream chunk to audit file"
+                                );
+                            }
+                        }
                         yield Ok::<Bytes, actix_web::Error>(chunk);
                     }
                     Err(e) => {
@@ -227,6 +254,21 @@ pub async fn chat_completions(
                             error = %e,
                             "upstream stream read failed"
                         );
+                        if let Some((path, mut f)) = file_pair.take() {
+                            let _ = f.flush().await;
+                            let _ = f.shutdown().await;
+                            enqueue_stream_audit_completion(
+                                &st,
+                                stream_request_id.clone(),
+                                path,
+                                usage_state.clone(),
+                                start.elapsed().as_millis() as i64,
+                                false,
+                                true,
+                                Some("Upstream stream read failed".into()),
+                            )
+                            .await;
+                        }
                         yield Err(actix_web::error::ErrorBadGateway(
                             "upstream stream read failed",
                         ));
@@ -234,9 +276,24 @@ pub async fn chat_completions(
                     }
                 }
             }
-            flush_sse_usage_tail(&mut buf, &mut last_usage);
+            flush_sse_usage_tail(&mut buf, &mut usage_state);
+            if let Some((path, mut f)) = file_pair.take() {
+                let _ = f.flush().await;
+                let _ = f.shutdown().await;
+                enqueue_stream_audit_completion(
+                    &st,
+                    stream_request_id.clone(),
+                    path,
+                    usage_state.clone(),
+                    start.elapsed().as_millis() as i64,
+                    true,
+                    false,
+                    None,
+                )
+                .await;
+            }
             if status_ok {
-                if let Some(total) = last_usage {
+                if let Some(total) = usage_state.2 {
                     let _ = st.user_service.increment_quota_tokens(token_id, total);
                 }
             }
@@ -320,23 +377,27 @@ pub async fn chat_completions(
     }
 }
 
-fn feed_sse_usage_lines(buf: &mut Vec<u8>, chunk: &[u8], last_usage: &mut Option<i64>) {
+fn feed_sse_usage_lines(
+    buf: &mut Vec<u8>,
+    chunk: &[u8],
+    usage: &mut UsageTokensCostFinish,
+) {
     buf.extend_from_slice(chunk);
     while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
         let line: Vec<u8> = buf.drain(..=pos).collect();
-        parse_sse_data_line_for_usage(&line, last_usage);
+        parse_sse_data_line_merge_usage(&line, usage);
     }
 }
 
-fn flush_sse_usage_tail(buf: &mut Vec<u8>, last_usage: &mut Option<i64>) {
+fn flush_sse_usage_tail(buf: &mut Vec<u8>, usage: &mut UsageTokensCostFinish) {
     if buf.is_empty() {
         return;
     }
     let line = std::mem::take(buf);
-    parse_sse_data_line_for_usage(&line, last_usage);
+    parse_sse_data_line_merge_usage(&line, usage);
 }
 
-fn parse_sse_data_line_for_usage(line: &[u8], last_usage: &mut Option<i64>) {
+fn parse_sse_data_line_merge_usage(line: &[u8], usage: &mut UsageTokensCostFinish) {
     let s = String::from_utf8_lossy(line);
     let t = s.trim_end();
     let Some(rest) = t.strip_prefix("data: ") else {
@@ -346,15 +407,25 @@ fn parse_sse_data_line_for_usage(line: &[u8], last_usage: &mut Option<i64>) {
     if rest == "[DONE]" {
         return;
     }
-    let Ok(v) = serde_json::from_str::<Value>(rest) else {
-        return;
-    };
-    if let Some(u) = v
-        .get("usage")
-        .and_then(|u| u.get("total_tokens"))
-        .and_then(|x| x.as_i64())
-    {
-        *last_usage = Some(u);
+    merge_usage_tokens(usage, rest.as_bytes());
+}
+
+fn merge_usage_tokens(usage: &mut UsageTokensCostFinish, chunk: &[u8]) {
+    let (p, c, t, co, fr) = parse_usage_cost_and_finish(chunk);
+    if p.is_some() {
+        usage.0 = p;
+    }
+    if c.is_some() {
+        usage.1 = c;
+    }
+    if t.is_some() {
+        usage.2 = t;
+    }
+    if co.is_some() {
+        usage.3 = co;
+    }
+    if fr.is_some() {
+        usage.4 = fr;
     }
 }
 
@@ -428,5 +499,42 @@ async fn send_audit_record(state: &web::Data<AppState>, record: crate::audit::Au
         .await
     {
         error!(error = %err, "failed to enqueue audit record");
+    }
+}
+
+async fn enqueue_stream_audit_completion(
+    state: &web::Data<AppState>,
+    request_id: String,
+    response_body_path: String,
+    usage: UsageTokensCostFinish,
+    latency_ms: i64,
+    stream_completed: bool,
+    stream_aborted: bool,
+    error_message: Option<String>,
+) {
+    let metadata = serde_json::json!({
+        "stream": true,
+        "stream_completed": stream_completed,
+        "stream_aborted": stream_aborted,
+        "response_body_format": "text/event-stream",
+    });
+    let update = crate::audit::AuditStreamCompletionUpdate {
+        request_id,
+        response_body_path,
+        prompt_tokens: usage.0,
+        completion_tokens: usage.1,
+        total_tokens: usage.2,
+        cost: usage.3,
+        finish_reason: usage.4,
+        latency_ms,
+        metadata,
+        error_message,
+    };
+    if let Err(err) = state
+        .audit_sender
+        .send(crate::audit::AuditMessage::StreamCompletion(update))
+        .await
+    {
+        error!(error = %err, "failed to enqueue stream audit completion");
     }
 }

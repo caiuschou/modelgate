@@ -20,6 +20,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::get().to(audit::list_audit_logs),
         )
         .route(
+            "/api/v1/logs/request/{request_id}/body",
+            web::get().to(audit::get_audit_log_body),
+        )
+        .route(
             "/api/v1/logs/request/{request_id}",
             web::get().to(audit::get_audit_log),
         )

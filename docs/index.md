@@ -31,6 +31,7 @@
 - **[注册页交互](design/interaction/register.md)** - 简单注册（用户名、密码、邀请码由服务端配置）
 - **[导航设计](design/interaction/navigation.md)** - 全局导航、移动端导航、通知中心
 - **[日志中心 UI/交互规格](design/interaction/log-center.md)** - 请求日志列表、详情、导出与权限
+- **[流式审计持久化与详情不截断展示](design/streaming-audit-persistence.md)** - 流式 SSE 落盘、两段式更新、API 与前端「不截断」策略
 - **[设计令牌](design/interaction/design-tokens.md)** - 颜色、字体、间距、组件规范
 - **[移动端设计](design/interaction/mobile.md)** - 移动端适配方案、触控交互
 

@@ -46,7 +46,7 @@
 | 考量 | 说明 |
 |------|------|
 | 稳定性 | 自动等待、网络/路由拦截、trace 与视频便于排障 |
-| 与 Vite 协作 | `webServer` 启动 dev server；`baseURL` 指向 `http://127.0.0.1:3000` |
+| 与 Vite 协作 | `webServer` 启动 dev server；`playwright.config.ts` 默认为本机**随机端口**（网关 / Vite / Mock 各一），并写入 `process.env`（`E2E_BACKEND_URL`、`PLAYWRIGHT_BASE_URL` 等），避免与本机已占用 8000/3000 冲突；也可用 `E2E_BACKEND_PORT`、`E2E_FRONTEND_PORT`、`E2E_MOCK_PORT` 固定端口 |
 | CI | 官方 GitHub Actions 镜像、浏览器缓存成熟 |
 | 团队 | TypeScript 一等公民，与前端栈一致 |
 

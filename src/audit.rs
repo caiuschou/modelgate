@@ -1,7 +1,8 @@
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::Path;
+use std::io;
+use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::error;
@@ -38,9 +39,25 @@ pub struct AuditRecord {
     pub created_at: i64,
 }
 
+/// Second-phase update for streaming chat completions (response file + usage + metadata).
+#[derive(Debug, Clone)]
+pub struct AuditStreamCompletionUpdate {
+    pub request_id: String,
+    pub response_body_path: String,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
+    pub cost: Option<f64>,
+    pub finish_reason: Option<String>,
+    pub latency_ms: i64,
+    pub metadata: serde_json::Value,
+    pub error_message: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub enum AuditMessage {
     Record(AuditRecord),
+    StreamCompletion(AuditStreamCompletionUpdate),
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +154,73 @@ pub fn generate_request_id() -> String {
     format!("{ts}_{random}")
 }
 
+/// Read an audit body file after resolving `stored_path` under `log_dir`. Rejects `..`
+/// segments and paths over `max_bytes`.
+///
+/// `save_body_to_file` stores paths relative to the process working directory, typically
+/// `<log_dir>/<bucket>/<request_id>-{request|response}.json` (the `log_dir` segment appears in
+/// `stored_path`). Callers may also store paths relative to `log_dir` only (e.g. `685/id.json`).
+/// We try `log_dir.join(stored)` first, then `stored` as-is relative to cwd.
+pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec<u8>> {
+    let log_root = Path::new(log_dir);
+    let stored = Path::new(stored_path.trim());
+    if stored.as_os_str().is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "empty audit body path",
+        ));
+    }
+    if stored.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "path escapes audit log directory",
+        ));
+    }
+
+    let dir_canon = log_root.canonicalize().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "audit log directory not available",
+        )
+    })?;
+
+    let candidates: Vec<PathBuf> = if stored.is_absolute() {
+        vec![stored.to_path_buf()]
+    } else {
+        vec![log_root.join(stored), stored.to_path_buf()]
+    };
+
+    let mut file_canon: Option<PathBuf> = None;
+    for c in candidates {
+        if let Ok(p) = c.canonicalize() {
+            if p.starts_with(&dir_canon) {
+                file_canon = Some(p);
+                break;
+            }
+        }
+    }
+
+    let file_canon = file_canon.ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "audit body file missing")
+    })?;
+
+    fs::read(file_canon)
+}
+
+/// Create an empty response body file for streaming SSE (same layout as [`save_body_to_file`]).
+pub async fn create_stream_response_body_file(
+    cfg: &AuditConfig,
+    request_id: &str,
+) -> io::Result<(String, tokio::fs::File)> {
+    let now = now_unix_secs();
+    let month_bucket = now / (30 * 24 * 3600);
+    let dir = Path::new(&cfg.log_dir).join(format!("{month_bucket}"));
+    tokio::fs::create_dir_all(&dir).await?;
+    let file_path = dir.join(format!("{request_id}-response.json"));
+    let file = tokio::fs::File::create(&file_path).await?;
+    Ok((path_to_string(&file_path), file))
+}
+
 pub fn save_body_to_file(
     cfg: &AuditConfig,
     request_id: &str,
@@ -183,6 +267,28 @@ pub async fn audit_writer_loop(
                             should_flush = true;
                         }
                     }
+                    Some(AuditMessage::StreamCompletion(update)) => {
+                        if !buffer.is_empty() {
+                            if let Ok(mut conn) = db.get() {
+                                if let Err(err) = crate::db::insert_audit_logs(&mut conn, &buffer) {
+                                    error!(error = %err, "audit flush before stream completion failed");
+                                }
+                            }
+                            buffer.clear();
+                        }
+                        match db.get() {
+                            Ok(mut conn) => {
+                                if let Err(err) =
+                                    crate::db::update_audit_log_stream_completion(&mut conn, &update)
+                                {
+                                    error!(error = %err, %update.request_id, "audit stream completion update failed");
+                                }
+                            }
+                            Err(err) => {
+                                error!(error = %err, "failed to get sqlite connection for stream completion");
+                            }
+                        }
+                    }
                     None => {
                         if !buffer.is_empty() {
                             let mut conn = match db.get() {
@@ -219,5 +325,30 @@ pub async fn audit_writer_loop(
             }
             buffer.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod read_body_tests {
+    use super::*;
+
+    #[test]
+    fn read_rejects_parent_dir_components() {
+        let tmp = std::env::temp_dir().join(format!("mg_audit_parent_{}", now_unix_millis()));
+        fs::create_dir_all(&tmp).unwrap();
+        let err = read_audit_body_bytes(&tmp.to_string_lossy(), "../outside").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn read_relative_file_under_log_dir() {
+        let tmp = std::env::temp_dir().join(format!("mg_audit_rel_{}", now_unix_millis()));
+        fs::create_dir_all(tmp.join("0")).unwrap();
+        let rel = "0/xyz-request.json";
+        fs::write(tmp.join(rel), br#"{"ok":true}"#).unwrap();
+        let got = read_audit_body_bytes(&tmp.to_string_lossy(), rel).unwrap();
+        assert_eq!(got, br#"{"ok":true}"#.as_slice());
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

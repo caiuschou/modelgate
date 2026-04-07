@@ -29,6 +29,26 @@ export async function getGatewayApiKeyForSession(
   return api_key
 }
 
+/** Drain the body; streaming audit finalizes after the upstream closes the body. */
+export async function createChatCompletionStream(
+  backendBaseUrl: string,
+  apiKey: string,
+  model: string,
+): Promise<Response> {
+  return fetch(`${backendBaseUrl}/v1/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: 'e2e stream ping' }],
+      stream: true,
+    }),
+  })
+}
+
 export async function createChatCompletion(
   backendBaseUrl: string,
   apiKey: string,
@@ -118,6 +138,30 @@ export async function revokeMyApiKey(
   if (!r.ok) {
     throw new Error(`revoke me/api-keys failed: ${r.status} ${await r.text()}`)
   }
+}
+
+/** Poll detail until `response_body_path` is set (streaming second-phase update). */
+export async function waitForAuditDetailResponsePath(
+  backendBaseUrl: string,
+  token: string,
+  requestId: string,
+  timeoutMs = 25_000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const r = await fetch(
+      `${backendBaseUrl}/api/v1/logs/request/${encodeURIComponent(requestId)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    )
+    if (r.ok) {
+      const row = (await r.json()) as { response_body_path?: string | null }
+      if (row.response_body_path) {
+        return true
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300))
+  }
+  return false
 }
 
 export async function waitForAuditListRow(
