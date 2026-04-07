@@ -1,4 +1,8 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { defineConfig, devices } from '@playwright/test'
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** Random ports in a wide private range; avoid duplicates. Env vars pin a port when set. */
 function allocatePorts(): {
@@ -27,11 +31,17 @@ function allocatePorts(): {
     throw new Error('E2E: could not allocate free port')
   }
 
-  return {
-    gatewayPort: allocPort('E2E_BACKEND_PORT'),
-    vitePort: allocPort('E2E_FRONTEND_PORT'),
-    mockPort: allocPort('E2E_MOCK_PORT'),
-  }
+  const gatewayPort = allocPort('E2E_BACKEND_PORT')
+  const vitePort = allocPort('E2E_FRONTEND_PORT')
+  const mockPort = allocPort('E2E_MOCK_PORT')
+
+  // Workers reload this config in a new process; without persisting, they pick new random ports while
+  // webServer stays on the ports chosen in the runner process → ECONNREFUSED.
+  process.env.E2E_BACKEND_PORT = String(gatewayPort)
+  process.env.E2E_FRONTEND_PORT = String(vitePort)
+  process.env.E2E_MOCK_PORT = String(mockPort)
+
+  return { gatewayPort, vitePort, mockPort }
 }
 
 const { gatewayPort, vitePort, mockPort } = allocatePorts()
@@ -69,6 +79,10 @@ export default defineConfig({
       timeout: 180_000,
       env: {
         ...process.env,
+        // Avoid clobbering `target/debug/modelgate.exe` while `cargo run` is active locally.
+        CARGO_TARGET_DIR: path.join(repoRoot, 'target', 'e2e-playwright'),
+        // Pin invite for `global-setup.ts` even when the shell has dev `AUTH_INVITE_CODE` (e.g. ZW9Z).
+        AUTH_INVITE_CODE: process.env.E2E_INVITE_CODE ?? 'e2e-invite-code',
         MODELGATE_SERVER_PORT: String(gatewayPort),
         E2E_MOCK_UPSTREAM_PORT: String(mockPort),
         UPSTREAM_BASE_URL: mockV1,

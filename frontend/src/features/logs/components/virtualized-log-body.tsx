@@ -5,6 +5,8 @@ import { useMemo, useRef } from 'react'
 export function VirtualizedLogBody({ text }: { text: string }) {
   const parentRef = useRef<HTMLDivElement>(null)
   const lines = useMemo(() => text.split('\n'), [text])
+  // TanStack Virtual is intentionally imperative; React Compiler skips memoizing this subtree.
+  // eslint-disable-next-line react-hooks/incompatible-library -- virtualization row measurement API
   const virtualizer = useVirtualizer({
     count: lines.length,
     getScrollElement: () => parentRef.current,

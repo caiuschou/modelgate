@@ -7,11 +7,19 @@ import {
   waitForAuditDetailResponsePath,
   waitForAuditListRow,
 } from './helpers/api'
+import { loadE2eSessionCredentials } from './load-e2e-credentials'
 
 const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
 const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
-const e2eUser = process.env.E2E_USERNAME ?? 'e2e_user'
-const e2ePass = process.env.E2E_PASSWORD ?? 'E2e_local_pass_1'
+
+let e2eUser: string
+let e2ePass: string
+
+test.beforeAll(() => {
+  const c = loadE2eSessionCredentials()
+  e2eUser = c.username
+  e2ePass = c.password
+})
 
 function unixNow(): number {
   return Math.floor(Date.now() / 1000)

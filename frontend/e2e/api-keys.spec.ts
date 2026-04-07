@@ -6,15 +6,15 @@ import {
   loginApiKey,
   revokeMyApiKey,
 } from './helpers/api'
+import { loadE2eSessionCredentials } from './load-e2e-credentials'
 
 const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
 const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
-const e2eUser = process.env.E2E_USERNAME ?? 'e2e_user'
-const e2ePass = process.env.E2E_PASSWORD ?? 'E2e_local_pass_1'
 
 /** 与侧栏用例一致：先加载 `/` 再客户端跳转，避免直链 `/api-keys` 时 persist 未恢复 */
 async function gotoApiKeys(page: Page) {
   await page.goto('/')
+  await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
   await page.locator('aside a[href="/api-keys"]').click()
   await expect(page).toHaveURL(/\/api-keys$/)
 }
@@ -22,8 +22,18 @@ async function gotoApiKeys(page: Page) {
 test.describe('API 密钥页（已登录）', () => {
   test.describe.configure({ mode: 'serial' })
 
+  let e2eUser: string
+  let e2ePass: string
+
+  test.beforeAll(() => {
+    const c = loadE2eSessionCredentials()
+    e2eUser = c.username
+    e2ePass = c.password
+  })
+
   test('侧栏可进入且展示标题与主操作', async ({ page }) => {
     await page.goto('/')
+    await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
     await page.locator('aside a[href="/api-keys"]').click()
     await expect(page).toHaveURL(/\/api-keys$/)
     await expect(page.getByRole('heading', { name: 'API 密钥' })).toBeVisible()
