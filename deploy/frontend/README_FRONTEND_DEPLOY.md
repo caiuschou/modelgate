@@ -62,14 +62,51 @@ On push to `main`:
 
 ## 4) Troubleshooting
 
-**注册 / 登录请求 `POST https://modelgate.dev/api/v1/...` 返回 405**
+**注册 / 登录 `POST https://modelgate.dev/api/v1/...` → 405，且 DevTools 里 Remote Address 是 `172.67.x.x` / `104.21.x.x`**
 
-- 静态站点 Nginx 不接受对 `/api/` 的 POST，除非：  
-  - **前端构建**已设置 `VITE_API_BASE_URL=https://api.modelgate.dev`（请求应发往 `api` 子域），或  
-  - 已用 `init-production.sh` 里对 `/api/` 的 **反代**（见站点配置），将同机 Actix 暴露在 `127.0.0.1:8000`。
-- 重新部署前端（GitHub CD 已在 build 步骤注入 `VITE_API_BASE_URL`），并做一次硬刷新（或清 CDN 缓存）。
+那是 **Cloudflare** 边缘 IP：浏览器先到 Cloudflare，再由 CF 访问你的源站。**405 几乎总是源站 Nginx** 对路径 `/api/` 没有反代（只有静态 `try_files`），与「挂没挂」无关。
 
-若使用 **HTTPS（443）** 的独立 Nginx 配置，请在对应 `server { ... }` 中复制同样的 `location /api/ { ... }` 块。
+按下面顺序处理：
+
+### A) 源站 443 也要反代 `/api/`（最常见漏配）
+
+`init-production.sh` 只写了 **监听 80** 的站点。若你为 `modelgate.dev` 另有 **HTTPS**（Certbot、Cloudflare Origin Certificate 等），通常会有一个 `listen 443 ssl` 的 `server { ... }`，**里面往往没有** `location /api/`。
+
+在源机执行：
+
+```bash
+sudo grep -R "server_name.*modelgate" /etc/nginx/ -n
+```
+
+打开对应配置文件，在每个服务于 `modelgate.dev` 的 `server` 块里、**在** `location / { ... }` **之前**插入仓库内片段：
+
+`deploy/frontend/snippets/nginx-api-proxy.conf`
+
+然后：
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+再用（本机或笔记本）试：
+
+```bash
+curl -i -X POST "https://modelgate.dev/api/v1/auth/register" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"curl_probe","password":"Xx1_probe_pass","invite_code":"wrong"}'
+```
+
+期望：`400` 或 `409` 等 JSON 业务错误；**不应再是 405**。若仍是 405，说明改动的不是实际被 CF 命中的那个 `server` 块。
+
+### B) 让浏览器改请求 `api.modelgate.dev`（推荐长期方案）
+
+确保最新前端 **构建时** 带有 `VITE_API_BASE_URL=https://api.modelgate.dev`（GitHub CD `cd-frontend-ssh.yml` 已注入）。部署后在 Network 里注册请求应指向 **`https://api.modelgate.dev`**，而不是 `modelgate.dev`。
+
+Cloudflare **缓存**：对 `modelgate.dev` 的 JS 做强缓存时，用户可能仍加载旧 bundle。**缓存清除**（Cache Rules / Purge Everything）或版本化文件名未命中时做一次 **硬刷新**。
+
+### C) 仍异常时
+
+在 Cloudflare 控制台看 **Security → Events** 是否拦截；源站 `error.log` 中是否有对应时间的记录。
 
 ## 5) Manual rollback
 
