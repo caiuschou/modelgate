@@ -67,14 +67,14 @@ mod tests {
         fn query_audit_logs(
             &self,
             _query: &AuditListQuery,
-            _scoped_user_id: Option<i64>,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<(Vec<AuditListItem>, i64), RepositoryError> {
             Ok((Vec::new(), 0))
         }
         fn query_audit_analytics(
             &self,
             _query: &AuditListQuery,
-            _scoped_user_id: Option<i64>,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<AuditAnalyticsResponse, RepositoryError> {
             Ok(AuditAnalyticsResponse {
                 summary: AuditAnalyticsSummary {
@@ -92,7 +92,7 @@ mod tests {
         fn get_audit_log_by_request_id(
             &self,
             _request_id: &str,
-            _scoped_user_id: Option<i64>,
+            _viewer_user_id: i64,
         ) -> Result<AuditRecord, RepositoryError> {
             Err(RepositoryError::NotFound("audit log not found".into()))
         }
@@ -165,8 +165,37 @@ mod tests {
             _quota_monthly_tokens: Option<i64>,
             _model_allowlist: Option<&str>,
             _ip_allowlist: Option<&str>,
+            _team_id: Option<i64>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
+        }
+        fn list_api_keys_for_team(
+            &self,
+            _team_id: i64,
+        ) -> Result<Vec<crate::services::repository::ApiKeySummary>, RepositoryError> {
+            Ok(Vec::new())
+        }
+        fn get_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+        ) -> Result<crate::services::repository::ApiKeySummary, RepositoryError> {
+            Err(RepositoryError::NotFound("api key not found".into()))
+        }
+        fn update_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+            _patch: &crate::db::ApiKeyPatchDb,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn revoke_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
         }
         fn update_api_key_for_user(
             &self,

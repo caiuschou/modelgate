@@ -96,6 +96,9 @@ export default defineConfig({
       env: {
         ...process.env,
         E2E_GATEWAY_URL: gatewayUrl,
+        // `.env` sets `VITE_API_BASE_URL=http://localhost:3000` for local dev; E2E Vite
+        // runs on a random port and must proxy `/api` on that same origin. Empty = unset for Vite.
+        VITE_API_BASE_URL: '',
       },
     },
   ],

@@ -17,6 +17,7 @@
 
 ### 产品文档
 
+- **[产品范围与原则](product/product-scope-principles.md)** — v1 边界：单账户资源归属、无团队；实例隔离与文档对齐约定
 - **[产品概述](product/overview.md)** — 产品定位、核心功能、产品优势
 - **[功能详解](product/features.md)** - 渠道管理、API 密钥管理、用户管理等详细功能说明
 - **[应用场景](product/scenarios.md)** - 企业内部网关、API 分发、成本控制等典型场景
@@ -30,6 +31,7 @@
 ### 设计文档
 
 - **[设计概述](design/interaction/overview.md)** - 设计目标、原则、用户角色
+- **[团队与成员交互](design/interaction/teams-and-members.md)** - 团队上下文、成员与邀请流程（后续里程碑）
 - **[注册页交互](design/interaction/register.md)** - 简单注册（用户名、密码、邀请码由服务端配置）
 - **[导航设计](design/interaction/navigation.md)** - 全局导航、移动端导航、通知中心
 - **[日志中心 UI/交互规格](design/interaction/log-center.md)** - 请求日志列表、详情、导出与权限
@@ -55,6 +57,7 @@
 - **[前端开发约定](development/frontend-conventions.md)** - 命名、分层、提交流程与质量门禁
 - **[前端 E2E 测试方案](development/e2e-testing-plan.md)** - Playwright、环境数据策略、用例范围；CI 见仓库 `.github/workflows/ci-e2e.yml`
 - **[审计日志开发实现](development/audit-log-implementation.md)** - 审计日志开发实现方案
+- **[团队与成员开发方案](development/teams-and-members-implementation.md)** - 数据模型、API、团队上下文与前后端分期（后续里程碑）
 - **[代理处理器重构](development/proxy-handler-refactoring.md)** - proxy.rs 重构方案与实施计划
 - **[开发计划（历史规划）](development-plan.md)** - 多阶段团队规划；与当前仓库栈不完全一致
 
@@ -71,9 +74,10 @@
 如果你是第一次了解 ModelGate，建议从以下文档开始：
 
 1. [实现状态](implementation-status.md) - 区分「已上线」与「规划中」
-2. [产品概述](product/overview.md) - 了解 ModelGate 是什么
-3. [应用场景](product/scenarios.md) - 查看 ModelGate 能解决什么问题
-4. [功能详解](product/features.md) - 深入了解核心功能（含目标验收标准）
+2. [产品范围与原则](product/product-scope-principles.md) - 当前版本做什么、不做什么（单账户、无团队）
+3. [产品概述](product/overview.md) - 了解 ModelGate 是什么
+4. [应用场景](product/scenarios.md) - 查看 ModelGate 能解决什么问题
+5. [功能详解](product/features.md) - 深入了解核心功能（含目标验收标准）
 
 ### 2. 设计实施
 
@@ -99,15 +103,18 @@
 |------|------|---------|
 | 实现状态 | 1.0 | 2026-04-03 |
 | 开发 API / 部署 / 更新日志 | 1.0 | 2026-04-03 |
-| 产品概述 | 1.1 | 2026-04-03 |
-| 功能详解 | 1.3 | 2026-04-03 |
+| 产品范围与原则 | 1.0 | 2026-04-07 |
+| 产品概述 | 1.2 | 2026-04-07 |
+| 功能详解 | 1.5 | 2026-04-07 |
 | 请求审计日志（产品） | 1.1 | 2026-04-02 |
 | 应用场景 | 1.1 | 2026-04-03 |
 | 产品路线图 | 1.1 | 2026-04-03 |
 | 用户控制台（产品） | 1.2 | 2026-04-03 |
 | API 密钥管理（产品） | 1.0 | 2026-04-03 |
 | 产品 API 规格 | 1.1 | 2026-04-03 |
-| 设计概述 | 1.1 | 2026-04-03 |
+| 设计概述 | 1.3 | 2026-04-07 |
+| 团队与成员交互 | 1.0 | 2026-04-07 |
+| 团队与成员开发方案 | 1.0 | 2026-04-07 |
 | 导航设计 | 1.1 | 2026-04-03 |
 | 日志中心 UI/交互规格 | 1.3 | 2026-04-02 |
 | 设计令牌 | 1.0 | 2026-03-30 |
@@ -129,4 +136,4 @@ ModelGate 文档采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by
 
 ---
 
-**最后更新:** 2026年4月3日
+**最后更新:** 2026年4月7日

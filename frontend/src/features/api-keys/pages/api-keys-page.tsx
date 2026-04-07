@@ -10,6 +10,8 @@ import {
   usePatchMyApiKey,
   useRevokeMyApiKey,
 } from '@/features/api-keys/hooks/use-api-keys'
+import { useMyTeams } from '@/features/teams/hooks/use-teams'
+import { useTeamStore } from '@/stores/team-store'
 
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
@@ -31,6 +33,12 @@ function statusLabel(status: string): string {
 }
 
 export function ApiKeysPage() {
+  const currentTeamId = useTeamStore((s) => s.currentTeamId)
+  const { data: teamsRes } = useMyTeams()
+  const teamName =
+    currentTeamId == null
+      ? null
+      : teamsRes?.data?.find((t) => t.id === currentTeamId)?.name ?? null
   const { data, isLoading, isError, refetch } = useMyApiKeys()
   const createMutation = useCreateMyApiKey()
   const revokeMutation = useRevokeMyApiKey()
@@ -133,6 +141,18 @@ export function ApiKeysPage() {
           </Button>
         </div>
       </div>
+
+      <p className="mt-4 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+        当前工作空间：
+        {currentTeamId == null ? (
+          <span className="text-foreground">个人空间</span>
+        ) : (
+          <span className="text-foreground">
+            {teamName ?? `团队 #${currentTeamId}`}
+          </span>
+        )}
+        。在团队上下文中新建密钥需具备 owner 或 admin 角色；权限不足时请求将失败。
+      </p>
 
       {showCreateForm ? (
         <Card className="mt-6 space-y-3 p-4">

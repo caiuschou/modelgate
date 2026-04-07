@@ -15,6 +15,7 @@
 | **全栈长期蓝图**（多中间件、团队分工） | [开发计划](../development-plan.md) | 历史总规划；技术栈与当前开源原型（SQLite、单进程等）**不完全一致**，引用前务必对照实现状态 |
 | **统计分析页** 产品与交互分期 | [统计分析页方案](../design/interaction/analytics.md) | 与前端计划 §3.8 对应 |
 | **日志中心** UI 与验收 | [日志中心 UI/交互规格](../design/interaction/log-center.md) | 与前端计划 §3.4 对应 |
+| **团队与成员（后端/全栈）** | [团队与成员开发方案](teams-and-members-implementation.md) · [交互规格](../design/interaction/teams-and-members.md) | 后续里程碑；非当前 v1 契约 |
 | **浏览器 E2E** | [E2E 测试方案](e2e-testing-plan.md) · 仓库根 `AGENTS.md` | |
 
 ---
@@ -32,3 +33,4 @@
 - [开发 API（当前实现）](api.md)  
 - [部署与运行](deployment.md)  
 - [审计日志实现（开发）](audit-log-implementation.md)  
+- [团队与成员开发方案](teams-and-members-implementation.md)  

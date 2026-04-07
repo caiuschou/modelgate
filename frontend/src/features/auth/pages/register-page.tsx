@@ -1,11 +1,10 @@
 import type { FormEvent } from 'react'
 import { useState } from 'react'
-import { HTTPError } from 'ky'
 import { Link, Navigate, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { apiPath, publicApi } from '@/lib/api-client'
+import { apiPath } from '@/lib/api-client'
 import { useAuthStore } from '@/stores/auth-store'
 
 export function RegisterPage() {
@@ -29,28 +28,28 @@ export function RegisterPage() {
 
     setSubmitting(true)
     try {
-      await publicApi.post(apiPath('/api/v1/auth/register'), {
-        json: {
+      const res = await fetch(apiPath('/api/v1/auth/register'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           username: u,
           password,
           invite_code: inviteCode.trim(),
-        },
+        }),
       })
-      navigate(`/login?username=${encodeURIComponent(u)}`, { replace: true })
-    } catch (err) {
-      if (err instanceof HTTPError) {
+      const text = await res.text()
+      if (!res.ok) {
         try {
-          const body = (await err.response.json()) as {
-            error?: { message?: string }
-          }
-          const msg = body.error?.message
-          setFormError(msg ?? '注册失败，请稍后重试')
+          const body = JSON.parse(text) as { error?: { message?: string } }
+          setFormError(body.error?.message ?? '注册失败，请稍后重试')
         } catch {
           setFormError('注册失败，请稍后重试')
         }
-      } else {
-        setFormError('网络错误，请稍后重试')
+        return
       }
+      navigate(`/login?username=${encodeURIComponent(u)}`, { replace: true })
+    } catch {
+      setFormError('网络错误，请稍后重试')
     } finally {
       setSubmitting(false)
     }

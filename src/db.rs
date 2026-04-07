@@ -4,7 +4,7 @@ use rusqlite::{params, params_from_iter, types::Value, Connection};
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 6] = [
+const MIGRATIONS: [(&str, &str); 8] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -29,7 +29,24 @@ const MIGRATIONS: [(&str, &str); 6] = [
         "0006_api_keys_hash.sql",
         include_str!("../migrations/0006_api_keys_hash.sql"),
     ),
+    (
+        "0007_teams.sql",
+        include_str!("../migrations/0007_teams.sql"),
+    ),
+    (
+        "0008_team_scope_api_audit.sql",
+        include_str!("../migrations/0008_team_scope_api_audit.sql"),
+    ),
 ];
+
+/// How the console scopes audit listing / detail access.
+#[derive(Clone, Copy, Debug)]
+pub enum AuditConsoleScope {
+    /// `WHERE user_id = ? AND team_id IS NULL`
+    Personal(i64),
+    /// `WHERE team_id = ?` (caller must verify membership)
+    Team(i64),
+}
 
 pub type DbConn = Pool<SqliteConnectionManager>;
 
@@ -142,6 +159,7 @@ pub fn insert_api_key_for_user(
 #[derive(Debug, Clone)]
 pub struct ApiKeyRow {
     pub id: i64,
+    pub user_id: i64,
     /// Legacy plaintext; always `None` after migration 0006 backfill.
     pub api_key_plain: Option<String>,
     pub key_preview: String,
@@ -156,32 +174,50 @@ pub struct ApiKeyRow {
     pub quota_used_tokens: i64,
     pub model_allowlist: Option<String>,
     pub ip_allowlist: Option<String>,
+    /// `None` = personal (non-team) key.
+    pub team_id: Option<i64>,
 }
 
+fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
+    Ok(ApiKeyRow {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        api_key_plain: row.get(2)?,
+        key_preview: row.get(3)?,
+        created_at: row.get(4)?,
+        revoked: row.get(5)?,
+        name: row.get(6)?,
+        description: row.get(7)?,
+        disabled: row.get(8)?,
+        last_used_at: row.get(9)?,
+        expires_at: row.get(10)?,
+        quota_monthly_tokens: row.get(11)?,
+        quota_used_tokens: row.get(12)?,
+        model_allowlist: row.get(13)?,
+        ip_allowlist: row.get(14)?,
+        team_id: row.get(15)?,
+    })
+}
+
+/// Personal console keys: owned by user, not tied to a team.
 pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist
-         FROM api_keys WHERE user_id = ?1 ORDER BY id DESC",
+        "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+         FROM api_keys WHERE user_id = ?1 AND team_id IS NULL ORDER BY id DESC",
     )?;
-    let rows = stmt.query_map(params![user_id], |row| {
-        Ok(ApiKeyRow {
-            id: row.get(0)?,
-            api_key_plain: row.get(1)?,
-            key_preview: row.get(2)?,
-            created_at: row.get(3)?,
-            revoked: row.get(4)?,
-            name: row.get(5)?,
-            description: row.get(6)?,
-            disabled: row.get(7)?,
-            last_used_at: row.get(8)?,
-            expires_at: row.get(9)?,
-            quota_monthly_tokens: row.get(10)?,
-            quota_used_tokens: row.get(11)?,
-            model_allowlist: row.get(12)?,
-            ip_allowlist: row.get(13)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![user_id], map_api_key_row)?;
+    rows.collect()
+}
+
+/// All keys belonging to a team (any member may list).
+pub fn list_api_keys_for_team(conn: &Connection, team_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+         FROM api_keys WHERE team_id = ?1 ORDER BY id DESC",
+    )?;
+    let rows = stmt.query_map(params![team_id], map_api_key_row)?;
     rows.collect()
 }
 
@@ -191,28 +227,21 @@ pub fn get_api_key_row_for_user(
     key_id: i64,
 ) -> rusqlite::Result<ApiKeyRow> {
     conn.query_row(
-        "SELECT id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist
-         FROM api_keys WHERE id = ?1 AND user_id = ?2",
+        "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+         FROM api_keys WHERE id = ?1 AND user_id = ?2 AND team_id IS NULL",
         params![key_id, user_id],
-        |row| {
-            Ok(ApiKeyRow {
-                id: row.get(0)?,
-                api_key_plain: row.get(1)?,
-                key_preview: row.get(2)?,
-                created_at: row.get(3)?,
-                revoked: row.get(4)?,
-                name: row.get(5)?,
-                description: row.get(6)?,
-                disabled: row.get(7)?,
-                last_used_at: row.get(8)?,
-                expires_at: row.get(9)?,
-                quota_monthly_tokens: row.get(10)?,
-                quota_used_tokens: row.get(11)?,
-                model_allowlist: row.get(12)?,
-                ip_allowlist: row.get(13)?,
-            })
-        },
+        map_api_key_row,
+    )
+}
+
+pub fn get_api_key_row_by_id(conn: &Connection, key_id: i64) -> rusqlite::Result<ApiKeyRow> {
+    conn.query_row(
+        "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+         FROM api_keys WHERE id = ?1",
+        params![key_id],
+        map_api_key_row,
     )
 }
 
@@ -228,6 +257,7 @@ pub fn insert_api_key_with_meta(
     quota_monthly_tokens: Option<i64>,
     model_allowlist: Option<&str>,
     ip_allowlist: Option<&str>,
+    team_id: Option<i64>,
 ) -> rusqlite::Result<i64> {
     let period = quota_monthly_tokens
         .filter(|&q| q > 0)
@@ -236,8 +266,8 @@ pub fn insert_api_key_with_meta(
     let preview = crate::secrets::api_key_preview_short(api_key);
     conn.execute(
         "INSERT INTO api_keys (user_id, api_key, api_key_hash, key_preview, created_at, name, description, expires_at,
-            quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start, team_id)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             user_id,
             hash,
@@ -250,6 +280,7 @@ pub fn insert_api_key_with_meta(
             model_allowlist,
             ip_allowlist,
             period,
+            team_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -350,10 +381,166 @@ pub fn revoke_api_key_for_user(
     key_id: i64,
 ) -> rusqlite::Result<usize> {
     let n = conn.execute(
-        "UPDATE api_keys SET revoked = 1 WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+        "UPDATE api_keys SET revoked = 1 WHERE id = ?1 AND user_id = ?2 AND team_id IS NULL AND revoked = 0",
         params![key_id, user_id],
     )?;
     Ok(n)
+}
+
+/// Creator may revoke their own team-scoped key; personal keys use [revoke_api_key_for_user].
+pub fn revoke_team_api_key_for_creator(
+    conn: &Connection,
+    creator_user_id: i64,
+    key_id: i64,
+) -> rusqlite::Result<usize> {
+    let n = conn.execute(
+        "UPDATE api_keys SET revoked = 1 WHERE id = ?1 AND user_id = ?2 AND team_id IS NOT NULL AND revoked = 0",
+        params![key_id, creator_user_id],
+    )?;
+    Ok(n)
+}
+
+/// Fetch key if visible in console: personal owner or any team member (team keys).
+pub fn get_api_key_row_for_console(
+    conn: &Connection,
+    viewer_user_id: i64,
+    key_id: i64,
+) -> rusqlite::Result<ApiKeyRow> {
+    let row = get_api_key_row_by_id(conn, key_id)?;
+    if row.team_id.is_none() {
+        if row.revoked != 0 || row.user_id != viewer_user_id {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        return Ok(row);
+    }
+    let tid = row.team_id.unwrap();
+    if !user_is_team_member(conn, tid, viewer_user_id)? {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(row)
+}
+
+/// Personal key: must be owner. Team key: must be creating user (same as revoke policy for v1).
+pub fn update_api_key_for_console(
+    conn: &Connection,
+    viewer_user_id: i64,
+    key_id: i64,
+    patch: &ApiKeyPatchDb,
+) -> rusqlite::Result<usize> {
+    let row = get_api_key_row_by_id(conn, key_id)?;
+    if row.user_id != viewer_user_id {
+        return Ok(0);
+    }
+    if row.team_id.is_none() {
+        return update_api_key_for_user(conn, viewer_user_id, key_id, patch);
+    }
+    let tid = row.team_id.unwrap();
+    if !user_is_team_member(conn, tid, viewer_user_id)? {
+        return Ok(0);
+    }
+    update_api_key_by_id(conn, key_id, patch)
+}
+
+/// Revoke if viewer is the key creator (team or personal).
+pub fn revoke_api_key_for_console(
+    conn: &Connection,
+    viewer_user_id: i64,
+    key_id: i64,
+) -> rusqlite::Result<usize> {
+    let row = get_api_key_row_by_id(conn, key_id)?;
+    if row.user_id != viewer_user_id {
+        return Ok(0);
+    }
+    if row.team_id.is_none() {
+        return revoke_api_key_for_user(conn, viewer_user_id, key_id);
+    }
+    let tid = row.team_id.unwrap();
+    if !user_is_team_member(conn, tid, viewer_user_id)? {
+        return Ok(0);
+    }
+    revoke_api_key_by_id(conn, key_id)
+}
+
+fn update_api_key_by_id(
+    conn: &Connection,
+    key_id: i64,
+    patch: &ApiKeyPatchDb,
+) -> rusqlite::Result<usize> {
+    let mut total: usize = 0;
+    if let Some(ref n) = patch.name {
+        total += conn.execute(
+            "UPDATE api_keys SET name = ?1 WHERE id = ?2 AND revoked = 0",
+            params![n, key_id],
+        )?;
+    }
+    if let Some(ref d) = patch.description {
+        total += conn.execute(
+            "UPDATE api_keys SET description = ?1 WHERE id = ?2 AND revoked = 0",
+            params![d, key_id],
+        )?;
+    }
+    if let Some(d) = patch.disabled {
+        total += conn.execute(
+            "UPDATE api_keys SET disabled = ?1 WHERE id = ?2 AND revoked = 0",
+            params![if d { 1 } else { 0 }, key_id],
+        )?;
+    }
+    if let Some(ref e) = patch.expires_at {
+        total += match e {
+            Some(ts) => conn.execute(
+                "UPDATE api_keys SET expires_at = ?1 WHERE id = ?2 AND revoked = 0",
+                params![*ts, key_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET expires_at = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    if let Some(ref q) = patch.quota_monthly_tokens {
+        total += match q {
+            Some(v) => conn.execute(
+                "UPDATE api_keys SET quota_monthly_tokens = ?1 WHERE id = ?2 AND revoked = 0",
+                params![*v, key_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET quota_monthly_tokens = NULL, quota_used_tokens = 0, quota_period_start = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    if let Some(ref m) = patch.model_allowlist {
+        total += match m {
+            Some(s) => conn.execute(
+                "UPDATE api_keys SET model_allowlist = ?1 WHERE id = ?2 AND revoked = 0",
+                params![s, key_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET model_allowlist = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    if let Some(ref ip) = patch.ip_allowlist {
+        total += match ip {
+            Some(s) => conn.execute(
+                "UPDATE api_keys SET ip_allowlist = ?1 WHERE id = ?2 AND revoked = 0",
+                params![s, key_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET ip_allowlist = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    Ok(total)
+}
+
+fn revoke_api_key_by_id(conn: &Connection, key_id: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE api_keys SET revoked = 1 WHERE id = ?1 AND revoked = 0",
+        params![key_id],
+    )
 }
 
 pub fn find_user_id(conn: &Connection, username: &str) -> rusqlite::Result<i64> {
@@ -362,6 +549,316 @@ pub fn find_user_id(conn: &Connection, username: &str) -> rusqlite::Result<i64> 
         params![username],
         |row| row.get(0),
     )
+}
+
+// --- Teams -----------------------------------------------------------------
+
+pub fn user_is_team_member(
+    conn: &Connection,
+    team_id: i64,
+    user_id: i64,
+) -> rusqlite::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(1) FROM team_members WHERE team_id = ?1 AND user_id = ?2",
+        params![team_id, user_id],
+        |row| row.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+pub fn team_member_role(
+    conn: &Connection,
+    team_id: i64,
+    user_id: i64,
+) -> rusqlite::Result<Option<String>> {
+    let mut stmt =
+        conn.prepare("SELECT role FROM team_members WHERE team_id = ?1 AND user_id = ?2")?;
+    let mut rows = stmt.query_map(params![team_id, user_id], |row| row.get::<_, String>(0))?;
+    match rows.next() {
+        Some(Ok(r)) => Ok(Some(r)),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
+    }
+}
+
+pub fn is_team_admin_or_owner(
+    conn: &Connection,
+    team_id: i64,
+    user_id: i64,
+) -> rusqlite::Result<bool> {
+    Ok(matches!(
+        team_member_role(conn, team_id, user_id)?.as_deref(),
+        Some("owner") | Some("admin")
+    ))
+}
+
+#[derive(Debug, Clone)]
+pub struct TeamRow {
+    pub id: i64,
+    pub name: String,
+    pub slug: String,
+    pub created_by_user_id: i64,
+    pub created_at: i64,
+}
+
+pub fn insert_team(
+    conn: &Connection,
+    name: &str,
+    slug: &str,
+    created_by_user_id: i64,
+    created_at: i64,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO teams (name, slug, created_by_user_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![name, slug, created_by_user_id, created_at],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn add_team_member(
+    conn: &Connection,
+    team_id: i64,
+    user_id: i64,
+    role: &str,
+    joined_at: i64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO team_members (team_id, user_id, role, joined_at) VALUES (?1, ?2, ?3, ?4)",
+        params![team_id, user_id, role, joined_at],
+    )?;
+    Ok(())
+}
+
+pub fn list_teams_for_user(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<TeamRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.name, t.slug, t.created_by_user_id, t.created_at
+         FROM teams t
+         INNER JOIN team_members m ON m.team_id = t.id AND m.user_id = ?1
+         ORDER BY t.name COLLATE NOCASE ASC",
+    )?;
+    let rows = stmt.query_map(params![user_id], |row| {
+        Ok(TeamRow {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            slug: row.get(2)?,
+            created_by_user_id: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn get_team_by_id(conn: &Connection, team_id: i64) -> rusqlite::Result<TeamRow> {
+    conn.query_row(
+        "SELECT id, name, slug, created_by_user_id, created_at FROM teams WHERE id = ?1",
+        params![team_id],
+        |row| {
+            Ok(TeamRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                slug: row.get(2)?,
+                created_by_user_id: row.get(3)?,
+                created_at: row.get(4)?,
+            })
+        },
+    )
+}
+
+pub fn update_team_name_slug(
+    conn: &Connection,
+    team_id: i64,
+    name: Option<&str>,
+    slug: Option<&str>,
+) -> rusqlite::Result<()> {
+    if let Some(n) = name {
+        conn.execute(
+            "UPDATE teams SET name = ?1 WHERE id = ?2",
+            params![n, team_id],
+        )?;
+    }
+    if let Some(s) = slug {
+        conn.execute(
+            "UPDATE teams SET slug = ?1 WHERE id = ?2",
+            params![s, team_id],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn delete_team(conn: &Connection, team_id: i64) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM teams WHERE id = ?1", params![team_id])
+}
+
+pub fn count_team_owners(conn: &Connection, team_id: i64) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(1) FROM team_members WHERE team_id = ?1 AND role = 'owner'",
+        params![team_id],
+        |row| row.get(0),
+    )
+}
+
+#[derive(Debug, Clone)]
+pub struct TeamMemberRow {
+    pub user_id: i64,
+    pub username: String,
+    pub role: String,
+    pub joined_at: i64,
+}
+
+pub fn list_team_members(conn: &Connection, team_id: i64) -> rusqlite::Result<Vec<TeamMemberRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.user_id, u.username, m.role, m.joined_at
+         FROM team_members m
+         INNER JOIN users u ON u.id = m.user_id
+         WHERE m.team_id = ?1
+         ORDER BY m.role = 'owner' DESC, u.username COLLATE NOCASE ASC",
+    )?;
+    let rows = stmt.query_map(params![team_id], |row| {
+        Ok(TeamMemberRow {
+            user_id: row.get(0)?,
+            username: row.get(1)?,
+            role: row.get(2)?,
+            joined_at: row.get(3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+pub fn remove_team_member(
+    conn: &Connection,
+    team_id: i64,
+    user_id: i64,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM team_members WHERE team_id = ?1 AND user_id = ?2",
+        params![team_id, user_id],
+    )
+}
+
+pub fn set_team_member_role(
+    conn: &Connection,
+    team_id: i64,
+    user_id: i64,
+    role: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE team_members SET role = ?1 WHERE team_id = ?2 AND user_id = ?3",
+        params![role, team_id, user_id],
+    )
+}
+
+#[derive(Debug, Clone)]
+pub struct TeamInvitationRow {
+    pub id: i64,
+    pub team_id: i64,
+    pub invitee_username: String,
+    pub role: String,
+    pub token_hash: String,
+    pub created_by_user_id: i64,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub accepted_at: Option<i64>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn insert_team_invitation(
+    conn: &Connection,
+    team_id: i64,
+    invitee_username: &str,
+    role: &str,
+    token_hash: &str,
+    created_by_user_id: i64,
+    created_at: i64,
+    expires_at: i64,
+) -> rusqlite::Result<i64> {
+    conn.execute(
+        "INSERT INTO team_invitations (team_id, invitee_username, role, token_hash, created_by_user_id, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            team_id,
+            invitee_username,
+            role,
+            token_hash,
+            created_by_user_id,
+            created_at,
+            expires_at
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn find_pending_invitation_by_hash(
+    conn: &Connection,
+    token_hash: &str,
+) -> rusqlite::Result<TeamInvitationRow> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    conn.query_row(
+        "SELECT id, team_id, invitee_username, role, token_hash, created_by_user_id, created_at, expires_at, accepted_at
+         FROM team_invitations WHERE token_hash = ?1 AND accepted_at IS NULL AND expires_at > ?2",
+        params![token_hash, now],
+        |row| {
+            Ok(TeamInvitationRow {
+                id: row.get(0)?,
+                team_id: row.get(1)?,
+                invitee_username: row.get(2)?,
+                role: row.get(3)?,
+                token_hash: row.get(4)?,
+                created_by_user_id: row.get(5)?,
+                created_at: row.get(6)?,
+                expires_at: row.get(7)?,
+                accepted_at: row.get(8)?,
+            })
+        },
+    )
+}
+
+pub fn mark_invitation_accepted(
+    conn: &Connection,
+    invitation_id: i64,
+    at: i64,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE team_invitations SET accepted_at = ?1 WHERE id = ?2 AND accepted_at IS NULL",
+        params![at, invitation_id],
+    )
+}
+
+pub fn delete_team_invitation(
+    conn: &Connection,
+    invitation_id: i64,
+    team_id: i64,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM team_invitations WHERE id = ?1 AND team_id = ?2",
+        params![invitation_id, team_id],
+    )
+}
+
+pub fn list_pending_invitations_for_team(
+    conn: &Connection,
+    team_id: i64,
+) -> rusqlite::Result<Vec<TeamInvitationRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, team_id, invitee_username, role, token_hash, created_by_user_id, created_at, expires_at, accepted_at
+         FROM team_invitations WHERE team_id = ?1 AND accepted_at IS NULL ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map(params![team_id], |row| {
+        Ok(TeamInvitationRow {
+            id: row.get(0)?,
+            team_id: row.get(1)?,
+            invitee_username: row.get(2)?,
+            role: row.get(3)?,
+            token_hash: row.get(4)?,
+            created_by_user_id: row.get(5)?,
+            created_at: row.get(6)?,
+            expires_at: row.get(7)?,
+            accepted_at: row.get(8)?,
+        })
+    })?;
+    rows.collect()
 }
 
 /// Returns `Some((user_id, password_hash))` if the user exists. `password_hash` is `None` for legacy rows.
@@ -445,6 +942,7 @@ pub struct ApiKeyAuthRow {
     pub quota_monthly_tokens: Option<i64>,
     pub quota_used_tokens: i64,
     pub quota_period_start: Option<i64>,
+    pub team_id: Option<i64>,
 }
 
 pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Result<ApiKeyAuthRow> {
@@ -455,7 +953,7 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
     let hash = crate::secrets::api_key_sha256_hex(api_key);
     conn.query_row(
         "SELECT id, user_id, model_allowlist, ip_allowlist, quota_monthly_tokens,
-                quota_used_tokens, quota_period_start
+                quota_used_tokens, quota_period_start, team_id
          FROM api_keys WHERE (api_key_hash = ?1 OR api_key = ?2) AND revoked = 0 AND disabled = 0
          AND (expires_at IS NULL OR expires_at > ?3)",
         params![hash, api_key, now],
@@ -468,6 +966,7 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
                 quota_monthly_tokens: row.get(4)?,
                 quota_used_tokens: row.get(5)?,
                 quota_period_start: row.get(6)?,
+                team_id: row.get(7)?,
             })
         },
     )
@@ -560,9 +1059,9 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 request_id, user_id, token_id, channel_id, model, request_type,
                 request_body_path, response_body_path, status_code, error_message,
                 prompt_tokens, completion_tokens, total_tokens, cost, latency_ms,
-                app_id, finish_reason, metadata, created_at
+                app_id, finish_reason, metadata, created_at, team_id
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
             )",
         )?;
 
@@ -587,7 +1086,8 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 record.app_id,
                 record.finish_reason,
                 metadata,
-                record.created_at
+                record.created_at,
+                record.team_id,
             ])?;
         }
     }
@@ -629,15 +1129,15 @@ pub fn update_audit_log_stream_completion(
 pub fn query_audit_logs(
     conn: &Connection,
     query: &AuditListQuery,
-    scoped_user_id: Option<i64>,
+    scope: AuditConsoleScope,
 ) -> rusqlite::Result<(Vec<AuditListItem>, i64)> {
-    let (where_sql, where_args) = build_audit_where_clause(query, scoped_user_id);
+    let (where_sql, where_args) = build_audit_where_clause(query, scope);
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let offset = query.offset.unwrap_or(0);
 
     let list_sql = format!(
         "SELECT
-            request_id, user_id, token_id, channel_id, model, request_type,
+            request_id, user_id, team_id, token_id, channel_id, model, request_type,
             status_code, error_message, prompt_tokens, completion_tokens,
             total_tokens, cost, latency_ms, app_id, finish_reason, created_at
          FROM audit_logs
@@ -654,20 +1154,21 @@ pub fn query_audit_logs(
         Ok(AuditListItem {
             request_id: row.get(0)?,
             user_id: row.get(1)?,
-            token_id: row.get(2)?,
-            channel_id: row.get(3)?,
-            model: row.get(4)?,
-            request_type: row.get(5)?,
-            status_code: row.get(6)?,
-            error_message: row.get(7)?,
-            prompt_tokens: row.get(8)?,
-            completion_tokens: row.get(9)?,
-            total_tokens: row.get(10)?,
-            cost: row.get(11)?,
-            latency_ms: row.get(12)?,
-            app_id: row.get(13)?,
-            finish_reason: row.get(14)?,
-            created_at: row.get(15)?,
+            team_id: row.get(2)?,
+            token_id: row.get(3)?,
+            channel_id: row.get(4)?,
+            model: row.get(5)?,
+            request_type: row.get(6)?,
+            status_code: row.get(7)?,
+            error_message: row.get(8)?,
+            prompt_tokens: row.get(9)?,
+            completion_tokens: row.get(10)?,
+            total_tokens: row.get(11)?,
+            cost: row.get(12)?,
+            latency_ms: row.get(13)?,
+            app_id: row.get(14)?,
+            finish_reason: row.get(15)?,
+            created_at: row.get(16)?,
         })
     })?;
 
@@ -683,26 +1184,31 @@ pub fn query_audit_logs(
     Ok((records, total))
 }
 
+pub fn audit_record_visible_to_user(
+    conn: &Connection,
+    record: &AuditRecord,
+    viewer_user_id: i64,
+) -> rusqlite::Result<bool> {
+    match record.team_id {
+        None => Ok(record.user_id == Some(viewer_user_id)),
+        Some(tid) => user_is_team_member(conn, tid, viewer_user_id),
+    }
+}
+
 pub fn get_audit_log_by_request_id(
     conn: &Connection,
     request_id: &str,
-    scoped_user_id: Option<i64>,
+    viewer_user_id: i64,
 ) -> rusqlite::Result<AuditRecord> {
-    let mut sql = "SELECT
+    let sql = "SELECT
             request_id, user_id, token_id, channel_id, model, request_type,
             request_body_path, response_body_path, status_code, error_message,
             prompt_tokens, completion_tokens, total_tokens, cost, latency_ms,
-            app_id, finish_reason, metadata, created_at
+            app_id, finish_reason, metadata, created_at, team_id
          FROM audit_logs
-         WHERE request_id = ?"
-        .to_string();
-    let mut args = vec![Value::Text(request_id.to_string())];
-    if let Some(user_id) = scoped_user_id {
-        sql.push_str(" AND user_id = ?");
-        args.push(Value::Integer(user_id));
-    }
+         WHERE request_id = ?1";
 
-    conn.query_row(&sql, params_from_iter(args.iter()), |row| {
+    let record = conn.query_row(sql, params![request_id], |row| {
         let metadata_str: Option<String> = row.get(17)?;
         let metadata = metadata_str.and_then(|raw| serde_json::from_str(&raw).ok());
         Ok(AuditRecord {
@@ -725,20 +1231,33 @@ pub fn get_audit_log_by_request_id(
             finish_reason: row.get(16)?,
             metadata,
             created_at: row.get(18)?,
+            team_id: row.get(19)?,
         })
-    })
+    })?;
+
+    if !audit_record_visible_to_user(conn, &record, viewer_user_id)? {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(record)
 }
 
 fn build_audit_where_clause(
     query: &AuditListQuery,
-    scoped_user_id: Option<i64>,
+    scope: AuditConsoleScope,
 ) -> (String, Vec<Value>) {
     let mut where_clauses: Vec<String> = Vec::new();
     let mut args: Vec<Value> = Vec::new();
 
-    if let Some(user_id) = scoped_user_id.or(query.user_id) {
-        where_clauses.push("user_id = ?".to_string());
-        args.push(Value::Integer(user_id));
+    match scope {
+        AuditConsoleScope::Personal(user_id) => {
+            where_clauses.push("user_id = ?".to_string());
+            args.push(Value::Integer(user_id));
+            where_clauses.push("team_id IS NULL".to_string());
+        }
+        AuditConsoleScope::Team(team_id) => {
+            where_clauses.push("team_id = ?".to_string());
+            args.push(Value::Integer(team_id));
+        }
     }
     if let Some(token_id) = query.token_id {
         where_clauses.push("token_id = ?".to_string());
@@ -834,7 +1353,7 @@ const ANALYTICS_MAX_RANGE_SECS: i64 = 366 * 86400;
 pub fn query_audit_analytics(
     conn: &Connection,
     filter: &AuditListQuery,
-    scoped_user_id: Option<i64>,
+    scope: AuditConsoleScope,
 ) -> rusqlite::Result<crate::audit::AuditAnalyticsResponse> {
     use crate::audit::{
         AuditAnalyticsModelSlice, AuditAnalyticsResponse, AuditAnalyticsSummary,
@@ -863,7 +1382,7 @@ pub fn query_audit_analytics(
     base.offset = None;
 
     let bucket_sec = audit_analytics_bucket_seconds(eff_start, eff_end);
-    let (where_sql, where_args) = build_audit_where_clause(&base, scoped_user_id);
+    let (where_sql, where_args) = build_audit_where_clause(&base, scope);
 
     let summary_sql = format!(
         "SELECT COUNT(1),
@@ -874,10 +1393,8 @@ pub fn query_audit_analytics(
          FROM audit_logs {where_sql}"
     );
 
-    let (total_requests, success_requests, total_tokens, total_cost, avg_latency_ms) = conn.query_row(
-        &summary_sql,
-        params_from_iter(where_args.iter()),
-        |row| {
+    let (total_requests, success_requests, total_tokens, total_cost, avg_latency_ms) = conn
+        .query_row(&summary_sql, params_from_iter(where_args.iter()), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, i64>(1)?,
@@ -885,8 +1402,7 @@ pub fn query_audit_analytics(
                 row.get::<_, f64>(3)?,
                 row.get::<_, Option<f64>>(4)?,
             ))
-        },
-    )?;
+        })?;
 
     let series_sql = format!(
         "SELECT (created_at / ?) * ? AS bucket_start,
@@ -1035,6 +1551,7 @@ mod tests {
                     finish_reason: None,
                     metadata: None,
                     created_at: t0,
+                    team_id: None,
                 },
                 AuditRecord {
                     request_id: "q2".into(),
@@ -1056,6 +1573,7 @@ mod tests {
                     finish_reason: None,
                     metadata: None,
                     created_at: t0 + 4000,
+                    team_id: None,
                 },
             ],
         )
@@ -1080,7 +1598,8 @@ mod tests {
             offset: None,
         };
 
-        let resp = query_audit_analytics(&conn, &filter, Some(7)).expect("analytics");
+        let resp = query_audit_analytics(&conn, &filter, AuditConsoleScope::Personal(7))
+            .expect("analytics");
         assert_eq!(resp.summary.total_requests, 2);
         assert_eq!(resp.summary.success_requests, 1);
         assert_eq!(resp.summary.total_tokens, 15);

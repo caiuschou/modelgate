@@ -29,3 +29,58 @@ pub fn resolve_console_session(
         })
     }
 }
+
+pub fn parse_x_team_id(req: &HttpRequest) -> Option<i64> {
+    let h = req.headers().get("X-Team-Id")?;
+    let s = h.to_str().ok()?.trim();
+    if s.is_empty() {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// Resolves [crate::db::AuditConsoleScope] from optional `X-Team-Id` header (membership checked).
+pub fn audit_scope_for_request(
+    req: &HttpRequest,
+    state: &AppState,
+    user_id: i64,
+) -> Result<crate::db::AuditConsoleScope, ApiError> {
+    match parse_x_team_id(req) {
+        None => Ok(crate::db::AuditConsoleScope::Personal(user_id)),
+        Some(tid) => {
+            let conn = state
+                .db
+                .get()
+                .map_err(|_| ApiError::InternalError("database pool error".into()))?;
+            if !crate::db::user_is_team_member(&conn, tid, user_id)
+                .map_err(|_| ApiError::InternalError("database error".into()))?
+            {
+                return Err(ApiError::Forbidden("not a member of this team".into()));
+            }
+            Ok(crate::db::AuditConsoleScope::Team(tid))
+        }
+    }
+}
+
+/// Optional team context from `X-Team-Id` with membership enforcement.
+pub fn team_context_or_none(
+    req: &HttpRequest,
+    state: &AppState,
+    user_id: i64,
+) -> Result<Option<i64>, ApiError> {
+    match parse_x_team_id(req) {
+        None => Ok(None),
+        Some(tid) => {
+            let conn = state
+                .db
+                .get()
+                .map_err(|_| ApiError::InternalError("database pool error".into()))?;
+            if !crate::db::user_is_team_member(&conn, tid, user_id)
+                .map_err(|_| ApiError::InternalError("database error".into()))?
+            {
+                return Err(ApiError::Forbidden("not a member of this team".into()));
+            }
+            Ok(Some(tid))
+        }
+    }
+}

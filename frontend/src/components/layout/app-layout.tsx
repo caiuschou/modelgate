@@ -1,11 +1,14 @@
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import { useMyTeams } from '@/features/teams/hooks/use-teams'
 import { useAuthStore } from '@/stores/auth-store'
+import { useTeamStore } from '@/stores/team-store'
 import { useUiStore } from '@/stores/ui-store'
 
 const menuItems = [
   { to: '/', label: '首页' },
   { to: '/api-keys', label: 'API 密钥' },
+  { to: '/teams', label: '团队' },
   { to: '/users', label: '用户管理' },
   { to: '/logs', label: '日志中心' },
   { to: '/analytics', label: '统计分析' },
@@ -17,6 +20,9 @@ export function AppLayout() {
   const navigate = useNavigate()
   const user = useAuthStore((state) => state.user)
   const logout = useAuthStore((state) => state.logout)
+  const currentTeamId = useTeamStore((s) => s.currentTeamId)
+  const setTeamContext = useTeamStore((s) => s.setTeamContext)
+  const { data: teamsRes } = useMyTeams()
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed)
   const toggleSidebar = useUiStore((state) => state.toggleSidebar)
   const theme = useUiStore((state) => state.theme)
@@ -37,6 +43,25 @@ export function AppLayout() {
           <span className="font-semibold">ModelGate Console</span>
         </div>
         <div className="flex items-center gap-3 text-sm">
+          <label className="flex items-center gap-2 text-muted-foreground">
+            <span className="hidden sm:inline">空间</span>
+            <select
+              aria-label="工作空间"
+              value={currentTeamId == null ? '' : String(currentTeamId)}
+              onChange={(e) => {
+                const v = e.target.value
+                setTeamContext(v === '' ? null : Number.parseInt(v, 10))
+              }}
+              className="max-w-[200px] rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
+            >
+              <option value="">个人空间</option>
+              {(teamsRes?.data ?? []).map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <select
             value={theme}
             onChange={(event) =>

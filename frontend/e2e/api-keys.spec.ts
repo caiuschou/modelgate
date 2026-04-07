@@ -17,6 +17,14 @@ async function gotoApiKeys(page: Page) {
   await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
   await page.locator('aside a[href="/api-keys"]').click()
   await expect(page).toHaveURL(/\/api-keys$/)
+  await expect(page.getByRole('heading', { name: 'API 密钥' })).toBeVisible()
+  await expect(async () => {
+    if (await page.getByText('加载中…').isVisible()) return false
+    const tableRows = await page.locator('table tbody tr').count()
+    const empty = await page.getByText('暂无密钥', { exact: false }).isVisible()
+    const failed = await page.getByText('加载失败').isVisible()
+    return failed || tableRows > 0 || empty
+  }).toPass({ timeout: 20_000 })
 }
 
 test.describe('API 密钥页（已登录）', () => {
@@ -164,19 +172,22 @@ test.describe('API 密钥页（已登录）', () => {
   test('详情页与「相关日志」预填 token_id', async ({ page }) => {
     const token = await loginApiKey(consoleBase, e2eUser, e2ePass)
     const keys = await listMyApiKeys(consoleBase, token)
-    expect(keys.length).toBeGreaterThan(0)
-    const first = keys[0]!
+    const activeKey = keys.find((k) => !k.revoked)
+    expect(
+      activeKey,
+      '需要一条未吊销的密钥（前序用例可能刚吊销了列表首行）',
+    ).toBeTruthy()
 
     await gotoApiKeys(page)
-    await page.getByRole('link', { name: first.name }).first().click()
-    await expect(page).toHaveURL(new RegExp(`/api-keys/${first.id}$`))
-    await expect(page.getByRole('heading', { name: first.name })).toBeVisible()
+    await page.getByRole('link', { name: activeKey!.name }).first().click()
+    await expect(page).toHaveURL(new RegExp(`/api-keys/${activeKey!.id}$`))
+    await expect(page.getByRole('heading', { name: activeKey!.name })).toBeVisible()
 
     await page.getByRole('link', { name: '相关日志' }).click()
-    await expect(page).toHaveURL(new RegExp(`token_id=${first.id}`))
+    await expect(page).toHaveURL(new RegExp(`token_id=${activeKey!.id}`))
     await expect(page.getByRole('heading', { name: '日志中心' })).toBeVisible()
     await expect(page.getByPlaceholder('与审计日志中的 token_id 一致')).toHaveValue(
-      String(first.id),
+      String(activeKey!.id),
     )
   })
 })

@@ -93,9 +93,14 @@ export type ApiKeySummary = {
 export async function listMyApiKeys(
   consoleBaseUrl: string,
   token: string,
+  options?: { teamId?: number | null },
 ): Promise<ApiKeySummary[]> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+  if (options?.teamId != null) {
+    headers['X-Team-Id'] = String(options.teamId)
+  }
   const r = await fetch(`${consoleBaseUrl}/api/v1/me/api-keys`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers,
   })
   if (!r.ok) {
     throw new Error(`list me/api-keys failed: ${r.status} ${await r.text()}`)
@@ -108,13 +113,18 @@ export async function createMyApiKey(
   consoleBaseUrl: string,
   token: string,
   body?: Record<string, unknown>,
+  options?: { teamId?: number | null },
 ): Promise<{ id: number; api_key: string; created_at: number }> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  }
+  if (options?.teamId != null) {
+    headers['X-Team-Id'] = String(options.teamId)
+  }
   const r = await fetch(`${consoleBaseUrl}/api/v1/me/api-keys`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(body ?? { name: 'e2e-key' }),
   })
   if (!r.ok) {
@@ -188,4 +198,67 @@ export async function waitForAuditListRow(
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
   return null
+}
+
+export async function createTeam(
+  consoleBaseUrl: string,
+  token: string,
+  body: { name: string; slug: string },
+): Promise<{ team: { id: number; name: string; slug: string; role: string } }> {
+  const r = await fetch(`${consoleBaseUrl}/api/v1/teams`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!r.ok) {
+    throw new Error(`create team failed: ${r.status} ${await r.text()}`)
+  }
+  return (await r.json()) as {
+    team: { id: number; name: string; slug: string; role: string }
+  }
+}
+
+export async function listTeamMembers(
+  consoleBaseUrl: string,
+  token: string,
+  teamId: number,
+): Promise<{ user_id: number; username: string; role: string; joined_at: number }[]> {
+  const r = await fetch(`${consoleBaseUrl}/api/v1/teams/${teamId}/members`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!r.ok) {
+    throw new Error(`list team members failed: ${r.status} ${await r.text()}`)
+  }
+  const body = (await r.json()) as {
+    data: { user_id: number; username: string; role: string; joined_at: number }[]
+  }
+  return body.data ?? []
+}
+
+export async function registerTeamMemberOnBehalf(
+  consoleBaseUrl: string,
+  token: string,
+  teamId: number,
+  body: { username: string; password: string; role: string },
+): Promise<{ user_id: number; username: string }> {
+  const r = await fetch(
+    `${consoleBaseUrl}/api/v1/teams/${teamId}/members/register-on-behalf`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    },
+  )
+  if (!r.ok) {
+    throw new Error(
+      `register member on behalf failed: ${r.status} ${await r.text()}`,
+    )
+  }
+  return r.json() as Promise<{ user_id: number; username: string }>
 }

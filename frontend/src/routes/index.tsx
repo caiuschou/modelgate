@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { Navigate, createBrowserRouter } from 'react-router-dom'
 import { EmptyState } from '@/components/shared/empty-state'
 import { AppLayout } from '@/components/layout/app-layout'
@@ -11,10 +12,35 @@ import { ApiKeyDetailPage } from '@/features/api-keys/pages/api-key-detail-page'
 import { LogDetailPage } from '@/features/logs/pages/log-detail-page'
 import { LogListPage } from '@/features/logs/pages/log-list-page'
 import { AnalyticsPage } from '@/features/analytics/pages/analytics-page'
+import { TeamsPage } from '@/features/teams/pages/teams-page'
+import { TeamMembersPage } from '@/features/teams/pages/team-members-page'
+import { AcceptInvitePage } from '@/features/teams/pages/accept-invite-page'
 import { useAuthStore } from '@/stores/auth-store'
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const token = useAuthStore((state) => state.token)
+  const [authHydrated, setAuthHydrated] = useState(() =>
+    useAuthStore.persist.hasHydrated(),
+  )
+
+  useEffect(() => {
+    const finish = () => {
+      setAuthHydrated(true)
+    }
+    if (useAuthStore.persist.hasHydrated()) {
+      queueMicrotask(finish)
+      return
+    }
+    return useAuthStore.persist.onFinishHydration(finish)
+  }, [])
+
+  if (!authHydrated) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-6 text-sm text-muted-foreground">
+        加载中…
+      </div>
+    )
+  }
   if (!token) {
     return (
       <Navigate
@@ -52,6 +78,9 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <DashboardPage /> },
+      { path: 'teams', element: <TeamsPage /> },
+      { path: 'teams/:teamId/members', element: <TeamMembersPage /> },
+      { path: 'invite', element: <AcceptInvitePage /> },
       { path: 'api-keys', element: <ApiKeysPage /> },
       { path: 'api-keys/:id', element: <ApiKeyDetailPage /> },
       {

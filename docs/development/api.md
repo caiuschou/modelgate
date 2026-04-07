@@ -1,7 +1,7 @@
 # ModelGate 服务端 API（当前实现）
 
-**版本:** 1.1  
-**更新日期:** 2026年4月3日  
+**版本:** 1.2  
+**更新日期:** 2026年4月7日  
 **适用范围:** 本仓库 Rust 服务（`cargo run`）
 
 本文档描述**已实现**的 HTTP 接口。OpenAI 兼容能力的完整产品规格见 [产品 API 文档](../product/api.md)；若与本文冲突，**以本文与 `src/routes.rs` 为准**。
@@ -79,11 +79,16 @@
 
 ### 3.3 当前用户的 API 密钥（控制台）
 
-均需 **`Authorization: Bearer <api_key>`**，且仅能操作**当前密钥所属用户**名下的记录。
+均需 **`Authorization: Bearer <api_key>`**。
+
+- **未带** `X-Team-Id`：仅列出 / 操作**个人**密钥（`team_id` 为空），归属当前用户。  
+- **携带** `X-Team-Id: <numeric_team_id>`：须为该团队成员；列表返回该团队下全部密钥（各成员创建）；新建团队密钥须为 **owner 或 admin**；查看 / 更新 / 吊销规则见代码（创建者可管理自己创建的团队密钥）。
 
 #### 列出密钥（掩码预览）
 
 **`GET /api/v1/me/api-keys`**
+
+可选请求头：`X-Team-Id`（见上）。
 
 **响应示例：**
 
@@ -104,17 +109,20 @@
       "quota_used_tokens": 0,
       "model_allowlist": null,
       "ip_allowlist": null,
-      "status": "active"
+      "status": "active",
+      "team_id": null
     }
   ]
 }
 ```
 
-`status`：`active` | `disabled` | `expired` | `revoked`。
+`status`：`active` | `disabled` | `expired` | `revoked`。`team_id`：团队密钥时为团队 id，个人密钥为 `null`。
 
 #### 新建密钥
 
 **`POST /api/v1/me/api-keys`**
+
+可选请求头：`X-Team-Id`（owner/admin 可在团队上下文中创建，写入 `team_id`）。
 
 - **Body（JSON，可选）：** 空 body 时等价于 `{ "name": "未命名密钥" }`。  
   - `name`（必填语义）：1–64 字符；未传时使用 `未命名密钥`。  
@@ -150,6 +158,24 @@
 - **成功：** `200`，无 JSON 体  
 - **失败：** `404`（非本人或不存在或已吊销）  
 - 若吊销的是当前用于 `Authorization` 的密钥，后续请求将 `401`。
+
+### 3.4 团队与成员
+
+均需 **`Authorization: Bearer <api_key>`**。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/teams` | 当前用户所属团队列表 `{ data: [...] }` |
+| POST | `/api/v1/teams` | 创建团队，body：`{ "name", "slug" }` → `201` + `team` |
+| GET | `/api/v1/teams/{id}` | 详情（成员可见） |
+| PATCH | `/api/v1/teams/{id}` | owner/admin 更新 `name` / `slug`（JSON 可选字段） |
+| DELETE | `/api/v1/teams/{id}` | 仅 **owner**，级联删除成员与团队密钥等 |
+| GET | `/api/v1/teams/{id}/members` | 成员列表 |
+| PATCH | `/api/v1/teams/{id}/members/{user_id}` | admin+ 将角色改为 `member` 或 `admin`（不可改 owner） |
+| DELETE | `/api/v1/teams/{id}/members/{user_id}` | admin+ 移除成员；唯一 owner 不可被移除 |
+| POST | `/api/v1/teams/{id}/invitations` | admin+ 邀请，`{ "invitee_username", "role": "member"|"admin" }`；响应含 **一次性 `token`** |
+| DELETE | `/api/v1/teams/{team_id}/invitations/{invitation_id}` | admin+ 撤销待处理邀请 |
+| POST | `/api/v1/invitations/accept` | `{ "token" }`，登录用户用户名须与邀请一致 |
 
 ---
 
@@ -194,7 +220,10 @@
 
 以下接口均需：**`Authorization: Bearer <api_key>`**（与登录返回的 `token` 一致）。
 
-普通用户仅能查询**本人** `user_id` 范围内的记录（由服务层过滤）。
+- **未带** `X-Team-Id`：仅 **`user_id` = 当前用户且 `team_id` IS NULL** 的日志（个人上下文）。  
+- **携带** `X-Team-Id`**：须为团队成员；返回该 **`team_id`** 下全部日志（团队网关密钥产生的审计）。
+
+详情 `GET /api/v1/logs/request/{request_id}` 按记录归属校验：个人记录匹配 `user_id`，团队记录要求当前用户为该团队成员。
 
 ### 6.0 统计聚合（控制台）
 

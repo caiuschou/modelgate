@@ -14,6 +14,8 @@ pub struct CreateMyApiKeyInput {
     pub quota_monthly_tokens: Option<i64>,
     pub model_allowlist: Option<Vec<String>>,
     pub ip_allowlist: Option<Vec<String>>,
+    /// When set, key is scoped to this team (caller must verify admin membership).
+    pub team_id: Option<i64>,
 }
 
 pub trait UserService: Send + Sync {
@@ -48,7 +50,11 @@ pub trait UserService: Send + Sync {
         created_at: u64,
     ) -> Result<(), ServiceError>;
 
-    fn list_my_api_keys(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, ServiceError>;
+    fn list_my_api_keys(
+        &self,
+        user_id: i64,
+        team_id: Option<i64>,
+    ) -> Result<Vec<ApiKeySummary>, ServiceError>;
 
     /// Returns `(id, full_api_key, created_at)` — full key only at creation time.
     fn create_my_api_key(
@@ -169,10 +175,21 @@ impl UserService for DefaultUserService {
             .map_err(ServiceError::from)
     }
 
-    fn list_my_api_keys(&self, user_id: i64) -> Result<Vec<ApiKeySummary>, ServiceError> {
-        self.repo
-            .list_api_keys_for_user(user_id)
-            .map_err(ServiceError::from)
+    fn list_my_api_keys(
+        &self,
+        user_id: i64,
+        team_id: Option<i64>,
+    ) -> Result<Vec<ApiKeySummary>, ServiceError> {
+        match team_id {
+            None => self
+                .repo
+                .list_api_keys_for_user(user_id)
+                .map_err(ServiceError::from),
+            Some(tid) => self
+                .repo
+                .list_api_keys_for_team(tid)
+                .map_err(ServiceError::from),
+        }
     }
 
     fn create_my_api_key(
@@ -206,13 +223,14 @@ impl UserService for DefaultUserService {
             input.quota_monthly_tokens,
             model_json.as_deref(),
             ip_json.as_deref(),
+            input.team_id,
         )?;
         Ok((id, api_key, created_at))
     }
 
     fn get_my_api_key(&self, user_id: i64, key_id: i64) -> Result<ApiKeySummary, ServiceError> {
         self.repo
-            .get_api_key_for_user(user_id, key_id)
+            .get_api_key_for_console(user_id, key_id)
             .map_err(ServiceError::from)
     }
 
@@ -223,13 +241,13 @@ impl UserService for DefaultUserService {
         patch: ApiKeyPatchDb,
     ) -> Result<(), ServiceError> {
         self.repo
-            .update_api_key_for_user(user_id, key_id, &patch)
+            .update_api_key_for_console(user_id, key_id, &patch)
             .map_err(ServiceError::from)
     }
 
     fn revoke_my_api_key(&self, user_id: i64, key_id: i64) -> Result<(), ServiceError> {
         self.repo
-            .revoke_api_key_for_user(user_id, key_id)
+            .revoke_api_key_for_console(user_id, key_id)
             .map_err(ServiceError::from)
     }
 
@@ -297,14 +315,14 @@ mod tests {
         fn query_audit_logs(
             &self,
             _query: &AuditListQuery,
-            _scoped_user_id: Option<i64>,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<(Vec<AuditListItem>, i64), RepositoryError> {
             Ok((Vec::new(), 0))
         }
         fn query_audit_analytics(
             &self,
             _query: &AuditListQuery,
-            _scoped_user_id: Option<i64>,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<AuditAnalyticsResponse, RepositoryError> {
             Ok(AuditAnalyticsResponse {
                 summary: AuditAnalyticsSummary {
@@ -322,7 +340,7 @@ mod tests {
         fn get_audit_log_by_request_id(
             &self,
             _request_id: &str,
-            _scoped_user_id: Option<i64>,
+            _viewer_user_id: i64,
         ) -> Result<AuditRecord, RepositoryError> {
             Err(RepositoryError::NotFound("audit log not found".into()))
         }
@@ -395,8 +413,37 @@ mod tests {
             _quota_monthly_tokens: Option<i64>,
             _model_allowlist: Option<&str>,
             _ip_allowlist: Option<&str>,
+            _team_id: Option<i64>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
+        }
+        fn list_api_keys_for_team(
+            &self,
+            _team_id: i64,
+        ) -> Result<Vec<RepoApiKeySummary>, RepositoryError> {
+            Ok(Vec::new())
+        }
+        fn get_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+        ) -> Result<RepoApiKeySummary, RepositoryError> {
+            Err(RepositoryError::NotFound("x".into()))
+        }
+        fn update_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+            _patch: &ApiKeyPatchDb,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn revoke_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
         }
         fn update_api_key_for_user(
             &self,

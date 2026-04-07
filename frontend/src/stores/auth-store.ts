@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { useTeamStore } from '@/stores/team-store'
 
 type UserRole = 'admin' | 'user'
 
@@ -20,8 +21,14 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       token: null,
       user: null,
-      login: (token, user) => set({ token, user }),
-      logout: () => set({ token: null, user: null }),
+      login: (token, user) => {
+        useTeamStore.getState().setTeamContext(null)
+        set({ token, user })
+      },
+      logout: () => {
+        useTeamStore.getState().setTeamContext(null)
+        set({ token: null, user: null })
+      },
     }),
     { name: 'modelgate-auth' },
   ),

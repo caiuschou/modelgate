@@ -1,6 +1,7 @@
 import ky from 'ky'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 import { useAuthStore } from '@/stores/auth-store'
+import { useTeamStore } from '@/stores/team-store'
 
 const retry = {
   limit: 1,
@@ -18,12 +19,18 @@ function kyPrefixUrl(): string | undefined {
 
 /**
  * ky forbids a leading slash on the request path when `prefixUrl` is set (including `''`).
- * - Same-origin / dev proxy: no `prefixUrl` → use root-absolute path (`/api/...`).
  * - Remote API base: `prefixUrl` + path without leading slash (`api/...`).
+ * - Same-origin (browser / Vite): root-relative `/${path}` so the request stays on the dev
+ *   origin and `beforeRequest` hooks attach `Authorization` reliably (absolute URLs + `ky`
+ *   have regressed in Playwright/Chromium E2E to missing Bearer → 401 + hard redirect).
  */
 export function apiPath(pathFromRoot: string): string {
   const normalized = pathFromRoot.replace(/^\//, '')
-  return kyPrefixUrl() ? normalized : `/${normalized}`
+  const remote = kyPrefixUrl()
+  if (remote) {
+    return normalized
+  }
+  return `/${normalized}`
 }
 
 const prefixUrlForKy = kyPrefixUrl()
@@ -47,11 +54,23 @@ export const apiClient = ky.create({
         if (token) {
           request.headers.set('Authorization', `Bearer ${token}`)
         }
+        const teamId = useTeamStore.getState().currentTeamId
+        const url = request.url
+        if (
+          teamId != null &&
+          /\/api\/v1\/(?!auth\/)/.test(url)
+        ) {
+          request.headers.set('X-Team-Id', String(teamId))
+        }
       },
     ],
     afterResponse: [
       (_request, _options, response) => {
         if (response.status !== 401) {
+          return
+        }
+        // Session may not be rehydrated yet; unauthenticated probes must not clear persist / hard-redirect.
+        if (!useAuthStore.persist.hasHydrated()) {
           return
         }
         const path = window.location.pathname

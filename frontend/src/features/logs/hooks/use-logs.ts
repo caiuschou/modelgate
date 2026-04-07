@@ -1,5 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiClient, apiPath } from '@/lib/api-client'
+import { useConsoleSessionReady } from '@/hooks/use-console-session-ready'
+import { useTeamStore } from '@/stores/team-store'
 import type {
   AuditLogListResponse,
   AuditLogRecord,
@@ -18,26 +20,31 @@ function toSearchParams(
 }
 
 export function useAuditLogList(query: Record<string, string | number | undefined | null>) {
+  const sessionReady = useConsoleSessionReady()
   const search = toSearchParams(query)
+  const teamId = useTeamStore((s) => s.currentTeamId)
   return useQuery({
-    queryKey: ['logs', 'list', search.toString()],
+    queryKey: ['logs', 'list', teamId ?? 'personal', search.toString()],
     queryFn: async () => {
       const path = apiPath('api/v1/logs/request')
       const url = search.toString() ? `${path}?${search}` : path
       return apiClient.get(url).json<AuditLogListResponse>()
     },
     staleTime: 15_000,
+    enabled: sessionReady,
   })
 }
 
 export function useAuditLogDetail(requestId: string | undefined) {
+  const sessionReady = useConsoleSessionReady()
+  const teamId = useTeamStore((s) => s.currentTeamId)
   return useQuery({
-    queryKey: ['logs', 'detail', requestId],
+    queryKey: ['logs', 'detail', requestId, teamId ?? 'personal'],
     queryFn: () =>
       apiClient
         .get(apiPath(`api/v1/logs/request/${encodeURIComponent(requestId!)}`))
         .json<AuditLogRecord>(),
-    enabled: Boolean(requestId),
+    enabled: sessionReady && Boolean(requestId),
     staleTime: 15_000,
     refetchInterval: (q) => {
       const d = q.state.data
@@ -66,6 +73,7 @@ export function useAuditLogBody(
   part: 'request' | 'response',
   enabled: boolean,
 ) {
+  const sessionReady = useConsoleSessionReady()
   return useQuery({
     queryKey: ['logs', 'body', requestId, part],
     queryFn: () =>
@@ -75,7 +83,7 @@ export function useAuditLogBody(
           { searchParams: { part } },
         )
         .text(),
-    enabled: Boolean(requestId) && enabled,
+    enabled: sessionReady && Boolean(requestId) && enabled,
     staleTime: 30_000,
     retry: false,
   })

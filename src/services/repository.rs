@@ -2,10 +2,8 @@ use rusqlite::ErrorCode;
 use serde::Serialize;
 use tracing::error;
 
-use crate::audit::{
-    AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord,
-};
-use crate::db;
+use crate::audit::{AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord};
+use crate::db::{self, AuditConsoleScope};
 
 use super::error::RepositoryError;
 
@@ -25,6 +23,8 @@ pub struct ApiKeySummary {
     pub model_allowlist: Option<Vec<String>>,
     pub ip_allowlist: Option<Vec<String>>,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<i64>,
 }
 
 fn mask_api_key_preview(full: &str) -> String {
@@ -88,6 +88,7 @@ fn row_to_summary(now: i64, r: db::ApiKeyRow) -> ApiKeySummary {
         model_allowlist: parse_json_string_list(r.model_allowlist.clone()),
         ip_allowlist: parse_json_string_list(r.ip_allowlist.clone()),
         status,
+        team_id: r.team_id,
     }
 }
 
@@ -101,17 +102,17 @@ pub trait Repository: Send + Sync {
     fn query_audit_logs(
         &self,
         query: &AuditListQuery,
-        scoped_user_id: Option<i64>,
+        scope: AuditConsoleScope,
     ) -> Result<(Vec<AuditListItem>, i64), RepositoryError>;
     fn query_audit_analytics(
         &self,
         query: &AuditListQuery,
-        scoped_user_id: Option<i64>,
+        scope: AuditConsoleScope,
     ) -> Result<AuditAnalyticsResponse, RepositoryError>;
     fn get_audit_log_by_request_id(
         &self,
         request_id: &str,
-        scoped_user_id: Option<i64>,
+        viewer_user_id: i64,
     ) -> Result<AuditRecord, RepositoryError>;
     fn create_user_with_api_key(
         &self,
@@ -167,7 +168,29 @@ pub trait Repository: Send + Sync {
         quota_monthly_tokens: Option<i64>,
         model_allowlist: Option<&str>,
         ip_allowlist: Option<&str>,
+        team_id: Option<i64>,
     ) -> Result<i64, RepositoryError>;
+
+    fn list_api_keys_for_team(&self, team_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError>;
+
+    fn get_api_key_for_console(
+        &self,
+        viewer_user_id: i64,
+        key_id: i64,
+    ) -> Result<ApiKeySummary, RepositoryError>;
+
+    fn update_api_key_for_console(
+        &self,
+        viewer_user_id: i64,
+        key_id: i64,
+        patch: &db::ApiKeyPatchDb,
+    ) -> Result<(), RepositoryError>;
+
+    fn revoke_api_key_for_console(
+        &self,
+        viewer_user_id: i64,
+        key_id: i64,
+    ) -> Result<(), RepositoryError>;
 
     fn update_api_key_for_user(
         &self,
@@ -257,26 +280,26 @@ impl Repository for SqliteRepository {
     fn query_audit_logs(
         &self,
         query: &AuditListQuery,
-        scoped_user_id: Option<i64>,
+        scope: AuditConsoleScope,
     ) -> Result<(Vec<AuditListItem>, i64), RepositoryError> {
         let conn = self
             .db_pool
             .get()
             .map_err(|_| RepositoryError::PoolUnavailable)?;
-        db::query_audit_logs(&conn, query, scoped_user_id)
+        db::query_audit_logs(&conn, query, scope)
             .map_err(|_| RepositoryError::Internal("Failed to query audit logs".into()))
     }
 
     fn query_audit_analytics(
         &self,
         query: &AuditListQuery,
-        scoped_user_id: Option<i64>,
+        scope: AuditConsoleScope,
     ) -> Result<AuditAnalyticsResponse, RepositoryError> {
         let conn = self
             .db_pool
             .get()
             .map_err(|_| RepositoryError::PoolUnavailable)?;
-        db::query_audit_analytics(&conn, query, scoped_user_id).map_err(|e| {
+        db::query_audit_analytics(&conn, query, scope).map_err(|e| {
             error!(error = %e, "query_audit_analytics");
             RepositoryError::Internal("Failed to query analytics".into())
         })
@@ -285,13 +308,13 @@ impl Repository for SqliteRepository {
     fn get_audit_log_by_request_id(
         &self,
         request_id: &str,
-        scoped_user_id: Option<i64>,
+        viewer_user_id: i64,
     ) -> Result<AuditRecord, RepositoryError> {
         let conn = self
             .db_pool
             .get()
             .map_err(|_| RepositoryError::PoolUnavailable)?;
-        db::get_audit_log_by_request_id(&conn, request_id, scoped_user_id)
+        db::get_audit_log_by_request_id(&conn, request_id, viewer_user_id)
             .map_err(|_| RepositoryError::NotFound("audit log not found".into()))
     }
 
@@ -482,6 +505,7 @@ impl Repository for SqliteRepository {
         quota_monthly_tokens: Option<i64>,
         model_allowlist: Option<&str>,
         ip_allowlist: Option<&str>,
+        team_id: Option<i64>,
     ) -> Result<i64, RepositoryError> {
         let conn = self
             .db_pool
@@ -498,11 +522,86 @@ impl Repository for SqliteRepository {
             quota_monthly_tokens,
             model_allowlist,
             ip_allowlist,
+            team_id,
         )
         .map_err(|e| {
             error!(error = %e, "insert api key with meta");
             RepositoryError::Internal("Failed to create api key".into())
         })
+    }
+
+    fn list_api_keys_for_team(&self, team_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let rows = db::list_api_keys_for_team(&conn, team_id).map_err(|err| {
+            error!(error = %err, "failed to list team api keys");
+            RepositoryError::Internal("Failed to list api keys".into())
+        })?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        Ok(rows.into_iter().map(|r| row_to_summary(now, r)).collect())
+    }
+
+    fn get_api_key_for_console(
+        &self,
+        viewer_user_id: i64,
+        key_id: i64,
+    ) -> Result<ApiKeySummary, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let row = db::get_api_key_row_for_console(&conn, viewer_user_id, key_id)
+            .map_err(|_| RepositoryError::NotFound("api key not found".into()))?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        Ok(row_to_summary(now, row))
+    }
+
+    fn update_api_key_for_console(
+        &self,
+        viewer_user_id: i64,
+        key_id: i64,
+        patch: &db::ApiKeyPatchDb,
+    ) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let n =
+            db::update_api_key_for_console(&conn, viewer_user_id, key_id, patch).map_err(|e| {
+                error!(error = %e, "update api key console");
+                RepositoryError::Internal("Failed to update api key".into())
+            })?;
+        if n == 0 && patch_has_changes(patch) {
+            return Err(RepositoryError::NotFound("api key not found".into()));
+        }
+        Ok(())
+    }
+
+    fn revoke_api_key_for_console(
+        &self,
+        viewer_user_id: i64,
+        key_id: i64,
+    ) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let n = db::revoke_api_key_for_console(&conn, viewer_user_id, key_id).map_err(|e| {
+            error!(error = %e, "revoke api key console");
+            RepositoryError::Internal("Failed to revoke api key".into())
+        })?;
+        if n == 0 {
+            return Err(RepositoryError::NotFound("api key not found".into()));
+        }
+        Ok(())
     }
 
     fn update_api_key_for_user(

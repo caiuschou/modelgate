@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { FullConfig } from '@playwright/test'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const authDir = path.join(__dirname, '../playwright/.auth')
@@ -12,16 +13,30 @@ type LoginJson = {
   user: { username: string; role: string }
 }
 
-export default async function globalSetup() {
-  const baseURL = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
+function resolveBaseURL(config: FullConfig): string {
+  for (const p of config.projects ?? []) {
+    const u = p.use?.baseURL
+    if (typeof u === 'string' && u.length > 0) {
+      return u
+    }
+  }
+  const fromEnv = process.env.PLAYWRIGHT_BASE_URL
+  if (typeof fromEnv === 'string' && fromEnv.length > 0) {
+    return fromEnv
+  }
+  return 'http://127.0.0.1:3000'
+}
+
+export default async function globalSetup(config: FullConfig) {
+  mkdirSync(authDir, { recursive: true })
+  const baseURL = resolveBaseURL(config)
+  process.env.PLAYWRIGHT_BASE_URL = baseURL
   const invite = process.env.E2E_INVITE_CODE ?? 'e2e-invite-code'
   // Unique default user so a reused `e2e/modelgate-e2e.db` cannot 409 with a mismatched password.
   const username =
     process.env.E2E_USERNAME ??
     `e2e_user_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
   const password = process.env.E2E_PASSWORD ?? 'E2e_local_pass_1'
-
-  mkdirSync(authDir, { recursive: true })
 
   const reg = await fetch(`${baseURL}/api/v1/auth/register`, {
     method: 'POST',
@@ -49,6 +64,16 @@ export default async function globalSetup() {
   const data = JSON.parse(loginText) as LoginJson
   const role = data.user.role === 'admin' ? 'admin' : 'user'
 
+  const bearerProbe = await fetch(`${baseURL}/api/v1/teams`, {
+    headers: { Authorization: `Bearer ${data.token}` },
+  })
+  if (!bearerProbe.ok) {
+    const body = await bearerProbe.text()
+    throw new Error(
+      `globalSetup GET /api/v1/teams with session JWT failed: ${bearerProbe.status} ${body}`,
+    )
+  }
+
   writeFileSync(
     sessionCredFile,
     JSON.stringify({ username, password }, null, 2),
@@ -68,6 +93,13 @@ export default async function globalSetup() {
     version: 0,
   }
 
+  const teamPersisted = {
+    state: {
+      currentTeamId: null,
+    },
+    version: 0,
+  }
+
   writeFileSync(
     authFile,
     JSON.stringify(
@@ -80,6 +112,10 @@ export default async function globalSetup() {
               {
                 name: 'modelgate-auth',
                 value: JSON.stringify(persisted),
+              },
+              {
+                name: 'modelgate-team',
+                value: JSON.stringify(teamPersisted),
               },
             ],
           },

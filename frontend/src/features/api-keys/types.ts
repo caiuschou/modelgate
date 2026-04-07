@@ -13,6 +13,7 @@ export interface ApiKeySummary {
   model_allowlist: string[] | null
   ip_allowlist: string[] | null
   status: string
+  team_id?: number | null
 }
 
 export interface ApiKeyListResponse {

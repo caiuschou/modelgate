@@ -21,6 +21,7 @@ pub async fn get_audit_analytics(
     query: web::Query<AuditAnalyticsParams>,
 ) -> Result<HttpResponse, ApiError> {
     let (_, user_id) = auth_scope(&req, &state)?;
+    let scope = session_auth::audit_scope_for_request(&req, &state, user_id)?;
     let p = query.into_inner();
     let list_query = AuditListQuery {
         start_time: p.start_time,
@@ -42,7 +43,7 @@ pub async fn get_audit_analytics(
     };
     let resp = state
         .audit_service
-        .get_audit_analytics(&list_query, user_id)?;
+        .get_audit_analytics(&list_query, scope)?;
     Ok(HttpResponse::Ok().json(resp))
 }
 
@@ -52,10 +53,11 @@ pub async fn list_audit_logs(
     query: web::Query<AuditListQuery>,
 ) -> Result<HttpResponse, ApiError> {
     let (_, user_id) = auth_scope(&req, &state)?;
+    let scope = session_auth::audit_scope_for_request(&req, &state, user_id)?;
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let offset = query.offset.unwrap_or(0);
 
-    let (data, total) = state.audit_service.list_audit_logs(&query, user_id)?;
+    let (data, total) = state.audit_service.list_audit_logs(&query, scope)?;
 
     Ok(HttpResponse::Ok().json(AuditListResponse {
         data,
@@ -138,10 +140,11 @@ pub async fn export_audit_logs(
     payload: web::Json<ExportRequest>,
 ) -> Result<HttpResponse, ApiError> {
     let (_, user_id) = auth_scope(&req, &state)?;
+    let scope = session_auth::audit_scope_for_request(&req, &state, user_id)?;
     let resp: ExportResponse =
         state
             .audit_service
-            .export_audit_logs(user_id, &payload, &state.audit_config.export_dir)?;
+            .export_audit_logs(scope, &payload, &state.audit_config.export_dir)?;
     Ok(HttpResponse::Ok().json(resp))
 }
 
@@ -215,6 +218,7 @@ mod tests {
                     quota_monthly_tokens: None,
                     quota_used_tokens: 0,
                     quota_period_start: None,
+                    team_id: None,
                 })
             } else {
                 Err(ServiceError::Unauthorized(
@@ -230,12 +234,13 @@ mod tests {
         fn list_audit_logs(
             &self,
             query: &AuditListQuery,
-            _user_id: i64,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<(Vec<AuditListItem>, i64), ServiceError> {
             Ok((
                 vec![AuditListItem {
                     request_id: "req_1".into(),
                     user_id: Some(100),
+                    team_id: None,
                     token_id: Some(1),
                     channel_id: None,
                     model: Some("gpt-test".into()),
@@ -280,12 +285,13 @@ mod tests {
                 finish_reason: Some("stop".into()),
                 metadata: None,
                 created_at: 1,
+                team_id: None,
             })
         }
 
         fn export_audit_logs(
             &self,
-            _user_id: i64,
+            _scope: crate::db::AuditConsoleScope,
             _payload: &crate::audit::ExportRequest,
             _export_dir: &str,
         ) -> Result<crate::audit::ExportResponse, ServiceError> {
@@ -322,7 +328,7 @@ mod tests {
         fn get_audit_analytics(
             &self,
             _query: &AuditListQuery,
-            _user_id: i64,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<crate::audit::AuditAnalyticsResponse, ServiceError> {
             Ok(crate::audit::AuditAnalyticsResponse {
                 summary: crate::audit::AuditAnalyticsSummary {
@@ -404,6 +410,7 @@ mod tests {
         fn list_my_api_keys(
             &self,
             _user_id: i64,
+            _team_id: Option<i64>,
         ) -> Result<Vec<crate::services::repository::ApiKeySummary>, ServiceError> {
             Ok(Vec::new())
         }

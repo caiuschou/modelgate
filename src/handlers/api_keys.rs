@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::ApiKeyPatchDb;
 use crate::services::user::CreateMyApiKeyInput;
-use crate::{errors::ApiError, session_auth, AppState};
+use crate::{db, errors::ApiError, session_auth, AppState};
 
 fn auth_user_id(req: &HttpRequest, state: &web::Data<AppState>) -> Result<i64, ApiError> {
     Ok(session_auth::resolve_console_session(req, state)?.user_id)
@@ -27,7 +27,8 @@ pub async fn list_my_api_keys(
     state: web::Data<AppState>,
 ) -> Result<HttpResponse, ApiError> {
     let user_id = auth_user_id(&req, &state)?;
-    let data = state.user_service.list_my_api_keys(user_id)?;
+    let team_id = session_auth::team_context_or_none(&req, &state, user_id)?;
+    let data = state.user_service.list_my_api_keys(user_id, team_id)?;
     Ok(HttpResponse::Ok().json(ApiKeyListResponse { data }))
 }
 
@@ -77,6 +78,20 @@ pub async fn create_my_api_key(
     bytes: web::Bytes,
 ) -> Result<HttpResponse, ApiError> {
     let user_id = auth_user_id(&req, &state)?;
+    let team_id = session_auth::team_context_or_none(&req, &state, user_id)?;
+    if let Some(tid) = team_id {
+        let conn = state
+            .db
+            .get()
+            .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
+        if !db::is_team_admin_or_owner(&conn, tid, user_id)
+            .map_err(|_| ApiError::InternalError("database error".into()))?
+        {
+            return Err(ApiError::Forbidden(
+                "team owner or admin required to create team API keys".into(),
+            ));
+        }
+    }
     let created_at = now_secs();
     let b: CreateMyApiKeyBody =
         if bytes.is_empty() || bytes.as_ref().iter().all(|c| c.is_ascii_whitespace()) {
@@ -92,6 +107,7 @@ pub async fn create_my_api_key(
         quota_monthly_tokens: b.quota_monthly_tokens,
         model_allowlist: b.model_allowlist,
         ip_allowlist: b.ip_allowlist,
+        team_id,
     };
     let (id, api_key, created_at) = state
         .user_service

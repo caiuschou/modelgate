@@ -1,6 +1,6 @@
 use actix_web::web;
 
-use crate::handlers::{self, audit, proxy, session, user};
+use crate::handlers::{self, audit, proxy, session, team, user};
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(handlers::health))
@@ -62,6 +62,39 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route(
             "/api/v1/me/api-keys/{key_id}/revoke",
             web::post().to(handlers::api_keys::revoke_my_api_key),
+        )
+        .route("/api/v1/teams", web::get().to(team::list_my_teams))
+        .route("/api/v1/teams", web::post().to(team::create_team))
+        .route(
+            "/api/v1/teams/{id}/members",
+            web::get().to(team::list_team_members),
+        )
+        .route(
+            "/api/v1/teams/{id}/members/register-on-behalf",
+            web::post().to(team::register_member_on_behalf),
+        )
+        .route(
+            "/api/v1/teams/{id}/invitations",
+            web::post().to(team::create_invitation),
+        )
+        .route(
+            "/api/v1/teams/{team_id}/invitations/{invitation_id}",
+            web::delete().to(team::delete_invitation),
+        )
+        .route(
+            "/api/v1/teams/{id}/members/{user_id}",
+            web::patch().to(team::patch_team_member),
+        )
+        .route(
+            "/api/v1/teams/{id}/members/{user_id}",
+            web::delete().to(team::remove_team_member),
+        )
+        .route("/api/v1/teams/{id}", web::get().to(team::get_team))
+        .route("/api/v1/teams/{id}", web::patch().to(team::patch_team))
+        .route("/api/v1/teams/{id}", web::delete().to(team::delete_team))
+        .route(
+            "/api/v1/invitations/accept",
+            web::post().to(team::accept_invitation),
         )
         .default_service(web::route().to(handlers::not_found));
 }

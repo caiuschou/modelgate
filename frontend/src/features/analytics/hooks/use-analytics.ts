@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { apiClient, apiPath } from '@/lib/api-client'
+import { useConsoleSessionReady } from '@/hooks/use-console-session-ready'
+import { useTeamStore } from '@/stores/team-store'
 import type { AnalyticsResponse } from '@/features/analytics/types'
 
 function toSearchParams(
@@ -14,14 +16,17 @@ function toSearchParams(
 }
 
 export function useAnalytics(query: Record<string, string | number | undefined | null>) {
+  const sessionReady = useConsoleSessionReady()
   const search = toSearchParams(query)
+  const teamId = useTeamStore((s) => s.currentTeamId)
   return useQuery({
-    queryKey: ['analytics', search.toString()],
+    queryKey: ['analytics', teamId ?? 'personal', search.toString()],
     queryFn: async () => {
       const path = apiPath('api/v1/analytics')
       const url = search.toString() ? `${path}?${search}` : path
       return apiClient.get(url).json<AnalyticsResponse>()
     },
     staleTime: 15_000,
+    enabled: sessionReady,
   })
 }

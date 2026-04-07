@@ -37,6 +37,9 @@ pub struct AuditRecord {
     pub finish_reason: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: i64,
+    /// Team context for gateway keys; personal keys use `None`.
+    #[serde(default)]
+    pub team_id: Option<i64>,
 }
 
 /// Second-phase update for streaming chat completions (response file + usage + metadata).
@@ -86,6 +89,8 @@ pub struct AuditListQuery {
 pub struct AuditListItem {
     pub request_id: String,
     pub user_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<i64>,
     pub token_id: Option<i64>,
     pub channel_id: Option<String>,
     pub model: Option<String>,

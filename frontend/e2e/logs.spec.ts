@@ -103,10 +103,16 @@ test('detail page shows request and response body from audit files', async ({
   await expect(page.getByRole('heading', { name: '请求体' })).toBeVisible()
   await expect(page.getByRole('heading', { name: '响应体' })).toBeVisible()
 
-  // Metadata `<pre>` can mount before body panels finish loading; match by content instead of DOM order.
-  const requestPre = page.locator('pre').filter({ hasText: model })
-  await expect(requestPre).toContainText('e2e audit ping', { timeout: 20_000 })
-  await expect(page.locator('pre').filter({ hasText: 'choices' })).toBeVisible({
+  // Bodies render in `VirtualizedLogBody`; scope to panels so metadata `<dd>` does not collide.
+  const requestSection = page.getByRole('heading', { name: '请求体' }).locator('..')
+  const responseSection = page.getByRole('heading', { name: '响应体' }).locator('..')
+  await expect(requestSection.getByText(model, { exact: false })).toBeVisible({
+    timeout: 20_000,
+  })
+  await expect(
+    requestSection.getByText('e2e audit ping', { exact: false }),
+  ).toBeVisible({ timeout: 20_000 })
+  await expect(responseSection.getByText('choices', { exact: false })).toBeVisible({
     timeout: 20_000,
   })
 })

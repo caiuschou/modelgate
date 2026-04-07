@@ -1,6 +1,6 @@
 # ModelGate 实现状态（文档与代码对照）
 
-**版本:** 1.1  
+**版本:** 1.2  
 **更新日期:** 2026年4月7日  
 
 本文档说明**当前仓库代码已落地的能力**，与 `docs/product/`、`docs/design/` 中描述的**产品目标与交互规格**区分。阅读产品文档时，请同时参考本节，避免将「规划能力」误认为已上线。
@@ -17,8 +17,9 @@
 | 创建用户 `POST /users` | ✅ | 无鉴权（管理/内测用途）；返回新用户与 `api_key` |
 | 为用户新增 Key `POST /users/{username}/keys` | ✅ | 无鉴权（管理/内测用途） |
 | Chat Completions `POST /v1/chat/completions` | ✅ | Bearer 用户 Key；转发至配置的单一上游 `upstream.base_url`；支持流式；可按 Key 校验 **模型白名单**、**IP 白名单（CIDR）**、**月度 Token 配额**（非流式成功响应累加） |
-| 请求审计日志查询/详情/导出 | ✅ | 见 [开发 API 文档](development/api.md)、[审计日志产品说明](product/audit-log.md) |
-| 当前用户 API 密钥 | ✅ | `GET/POST /api/v1/me/api-keys`、`GET/PATCH /api/v1/me/api-keys/{id}`、`POST .../revoke`；名称/描述/禁用/过期/配额/策略；`api_key_audit_log` 记录创建/更新/吊销；`last_used_at` 节流更新 |
+| 请求审计日志查询/详情/导出 | ✅ | 见 [开发 API 文档](development/api.md)、[审计日志产品说明](product/audit-log.md)；控制台可选 **`X-Team-Id`** 筛选团队审计；个人上下文仅 `team_id IS NULL` |
+| 当前用户 API 密钥 | ✅ | `GET/POST /api/v1/me/api-keys`、`GET/PATCH /api/v1/me/api-keys/{id}`、`POST .../revoke`；名称/描述/禁用/过期/配额/策略；`api_key_audit_log` 记录创建/更新/吊销；`last_used_at` 节流更新；可选请求头 **`X-Team-Id`** 切换个人 / 团队密钥上下文（团队下列出全部团队密钥；新建须 owner/admin） |
+| 团队与成员 | ✅ | `GET/POST /api/v1/teams`、详情与 PATCH/DELETE；成员列表与角色 PATCH、移除；邀请与接受 `POST /api/v1/invitations/accept`；数据表见迁移 `0007_teams.sql`、`0008_team_scope_api_audit.sql` |
 | 多渠道配置与路由 | ❌ | 上游为 **一个** `base_url` + `api_key`（环境变量 `UPSTREAM_*`） |
 | `/v1/completions`、`/v1/embeddings`、Images、Audio | ❌ | 未注册路由 |
 | 用量 API `GET /v1/usage` 等 | ❌ | |

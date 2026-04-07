@@ -5,6 +5,7 @@ use crate::audit::{
     now_unix_millis, AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord,
     ExportRequest, ExportResponse, ExportStatusResponse,
 };
+use crate::db::AuditConsoleScope;
 
 use super::error::ServiceError;
 use super::repository::Repository;
@@ -13,12 +14,16 @@ pub trait AuditService: Send + Sync {
     fn list_audit_logs(
         &self,
         query: &AuditListQuery,
-        user_id: i64,
+        scope: AuditConsoleScope,
     ) -> Result<(Vec<AuditListItem>, i64), ServiceError>;
-    fn get_audit_log(&self, request_id: &str, user_id: i64) -> Result<AuditRecord, ServiceError>;
+    fn get_audit_log(
+        &self,
+        request_id: &str,
+        viewer_user_id: i64,
+    ) -> Result<AuditRecord, ServiceError>;
     fn export_audit_logs(
         &self,
-        user_id: i64,
+        scope: AuditConsoleScope,
         payload: &ExportRequest,
         export_dir: &str,
     ) -> Result<ExportResponse, ServiceError>;
@@ -35,7 +40,7 @@ pub trait AuditService: Send + Sync {
     fn get_audit_analytics(
         &self,
         query: &AuditListQuery,
-        user_id: i64,
+        scope: AuditConsoleScope,
     ) -> Result<AuditAnalyticsResponse, ServiceError>;
 }
 
@@ -59,22 +64,26 @@ impl AuditService for DefaultAuditService {
     fn list_audit_logs(
         &self,
         query: &AuditListQuery,
-        user_id: i64,
+        scope: AuditConsoleScope,
     ) -> Result<(Vec<AuditListItem>, i64), ServiceError> {
         self.repo
-            .query_audit_logs(query, Some(user_id))
+            .query_audit_logs(query, scope)
             .map_err(ServiceError::from)
     }
 
-    fn get_audit_log(&self, request_id: &str, user_id: i64) -> Result<AuditRecord, ServiceError> {
+    fn get_audit_log(
+        &self,
+        request_id: &str,
+        viewer_user_id: i64,
+    ) -> Result<AuditRecord, ServiceError> {
         self.repo
-            .get_audit_log_by_request_id(request_id, Some(user_id))
+            .get_audit_log_by_request_id(request_id, viewer_user_id)
             .map_err(ServiceError::from)
     }
 
     fn export_audit_logs(
         &self,
-        user_id: i64,
+        scope: AuditConsoleScope,
         payload: &ExportRequest,
         export_dir: &str,
     ) -> Result<ExportResponse, ServiceError> {
@@ -113,7 +122,7 @@ impl AuditService for DefaultAuditService {
             };
             let (rows, _total) = self
                 .repo
-                .query_audit_logs(&query, Some(user_id))
+                .query_audit_logs(&query, scope)
                 .map_err(ServiceError::from)?;
             let count = rows.len() as u32;
             all_rows.extend(rows);
@@ -195,10 +204,10 @@ impl AuditService for DefaultAuditService {
     fn get_audit_analytics(
         &self,
         query: &AuditListQuery,
-        user_id: i64,
+        scope: AuditConsoleScope,
     ) -> Result<AuditAnalyticsResponse, ServiceError> {
         self.repo
-            .query_audit_analytics(query, Some(user_id))
+            .query_audit_analytics(query, scope)
             .map_err(ServiceError::from)
     }
 }
@@ -225,13 +234,14 @@ fn escape_csv(value: &str) -> String {
 
 fn build_csv_content(rows: &[AuditListItem]) -> String {
     let mut out = String::from(
-        "request_id,user_id,token_id,channel_id,model,request_type,status_code,error_message,prompt_tokens,completion_tokens,total_tokens,cost,latency_ms,app_id,finish_reason,created_at\n",
+        "request_id,user_id,team_id,token_id,channel_id,model,request_type,status_code,error_message,prompt_tokens,completion_tokens,total_tokens,cost,latency_ms,app_id,finish_reason,created_at\n",
     );
     for row in rows {
         let line = format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             escape_csv(&row.request_id),
             row.user_id.map(|v| v.to_string()).unwrap_or_default(),
+            row.team_id.map(|v| v.to_string()).unwrap_or_default(),
             row.token_id.map(|v| v.to_string()).unwrap_or_default(),
             row.channel_id
                 .as_deref()
@@ -303,7 +313,7 @@ mod tests {
         fn query_audit_logs(
             &self,
             _query: &AuditListQuery,
-            _scoped_user_id: Option<i64>,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<(Vec<AuditListItem>, i64), RepositoryError> {
             let mut calls = self.query_calls.lock().expect("lock query calls");
             *calls += 1;
@@ -316,7 +326,7 @@ mod tests {
         fn query_audit_analytics(
             &self,
             _query: &AuditListQuery,
-            _scoped_user_id: Option<i64>,
+            _scope: crate::db::AuditConsoleScope,
         ) -> Result<AuditAnalyticsResponse, RepositoryError> {
             Ok(AuditAnalyticsResponse {
                 summary: AuditAnalyticsSummary {
@@ -334,7 +344,7 @@ mod tests {
         fn get_audit_log_by_request_id(
             &self,
             _request_id: &str,
-            _scoped_user_id: Option<i64>,
+            _viewer_user_id: i64,
         ) -> Result<AuditRecord, RepositoryError> {
             Err(RepositoryError::NotFound("audit log not found".into()))
         }
@@ -407,8 +417,37 @@ mod tests {
             _quota_monthly_tokens: Option<i64>,
             _model_allowlist: Option<&str>,
             _ip_allowlist: Option<&str>,
+            _team_id: Option<i64>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
+        }
+        fn list_api_keys_for_team(
+            &self,
+            _team_id: i64,
+        ) -> Result<Vec<crate::services::repository::ApiKeySummary>, RepositoryError> {
+            Ok(Vec::new())
+        }
+        fn get_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+        ) -> Result<crate::services::repository::ApiKeySummary, RepositoryError> {
+            Err(RepositoryError::NotFound("api key not found".into()))
+        }
+        fn update_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+            _patch: &crate::db::ApiKeyPatchDb,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn revoke_api_key_for_console(
+            &self,
+            _viewer_user_id: i64,
+            _key_id: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
         }
         fn update_api_key_for_user(
             &self,
@@ -444,6 +483,7 @@ mod tests {
             rows: vec![AuditListItem {
                 request_id: "r1".into(),
                 user_id: Some(1),
+                team_id: None,
                 token_id: Some(2),
                 channel_id: None,
                 model: Some("gpt-test".into()),
@@ -470,7 +510,11 @@ mod tests {
             format: Some("json".into()),
         };
         let resp = service
-            .export_audit_logs(1, &req, temp_dir.to_string_lossy().as_ref())
+            .export_audit_logs(
+                crate::db::AuditConsoleScope::Personal(1),
+                &req,
+                temp_dir.to_string_lossy().as_ref(),
+            )
             .expect("export logs");
         assert_eq!(resp.status, "success");
         let id = resp

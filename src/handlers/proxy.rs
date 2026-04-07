@@ -52,6 +52,7 @@ pub async fn chat_completions(
     let auth_row = state.auth_service.get_api_key_auth(api_key)?;
     let token_id = auth_row.id;
     let user_id = auth_row.user_id;
+    let key_team_id = auth_row.team_id;
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -142,6 +143,7 @@ pub async fn chat_completions(
                     finish_reason: None,
                     metadata: None,
                     created_at: crate::audit::now_unix_secs(),
+                    team_id: key_team_id,
                 },
             )
             .await;
@@ -191,6 +193,7 @@ pub async fn chat_completions(
                 finish_reason: None,
                 metadata: Some(serde_json::json!({ "stream": true })),
                 created_at: crate::audit::now_unix_secs(),
+                team_id: key_team_id,
             },
         )
         .await;
@@ -346,6 +349,7 @@ pub async fn chat_completions(
                 finish_reason: usage.4,
                 metadata: Some(serde_json::json!({ "stream": false })),
                 created_at: crate::audit::now_unix_secs(),
+                team_id: key_team_id,
             },
         )
         .await;
