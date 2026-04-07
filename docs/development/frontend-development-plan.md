@@ -1,12 +1,12 @@
 # ModelGate 前端开发计划
 
-**版本:** 1.2  
+**版本:** 1.3  
 **制定日期:** 2026年4月1日  
-**更新说明:** 按 Feature 拆分任务并增加状态字段；注册能力提前至鉴权阶段  
+**更新说明（1.3）:** 与 [实现状态](../implementation-status.md) 对齐日志中心、API 密钥状态；**控制台渠道管理**从前端里程碑中暂缓（后端当前为单上游，侧栏已移除入口）；补充 [统计分析页方案](../design/interaction/analytics.md) 与 [开发计划索引](plan-index.md)  
 **项目周期:** 8周  
 **适用范围:** ModelGate 管理控制台（React + Vite + shadcn/ui + TailwindCSS）
 
-> **进度对照：** 页面级落地情况见 [实现状态](../implementation-status.md) 与 [导航设计（当前实现）](../design/interaction/navigation.md)。
+> **进度对照：** 页面级落地情况以 [实现状态](../implementation-status.md) 为准；导航项与路由以 `frontend/src/routes/index.tsx`、`app-layout.tsx` 为准。多份计划文档的阅读顺序见 [开发计划索引](plan-index.md)。
 
 ---
 
@@ -14,14 +14,16 @@
 
 ### 1.1 目标
 
-基于现有 `docs/architecture/frontend-architecture.md`，在 8 周内交付可用于内测的前端管理控制台，覆盖以下核心能力：
+基于 `docs/architecture/frontend-architecture.md`，在 8 周内交付可用于内测的前端管理控制台，覆盖以下核心能力：
 
 - 注册、登录与基础权限控制
-- 仪表盘数据展示
+- 仪表盘数据展示（先占位 / Mock，再接入真实统计）
 - 日志中心（查询、详情、导出）
-- API 密钥管理（创建、查看、复制、吊销）
-- 用户管理（基础增查）
-- 渠道管理（基础增改查、测试）
+- API 密钥管理（列表、详情、创建、编辑字段、吊销/禁用）
+- 用户管理（基础增查）— 占位页待实现
+- **统计分析初版**（全局筛选、趋势、模型分布等，见 [统计分析页方案](../design/interaction/analytics.md)）
+
+**暂缓（与当前仓库后端能力一致）：** **控制台「渠道管理」整页**。后端为多路由渠道、动态配置就绪后，再单独立项恢复前端与联调；产品长期规格仍见 `docs/product/features.md`。
 
 ### 1.2 范围边界
 
@@ -38,6 +40,7 @@
 - 高级 BI 看板定制
 - 复杂 RBAC 权限策略编辑器
 - 移动端 App
+- **多渠道配置控制台**（待后端里程碑）
 
 ---
 
@@ -46,17 +49,17 @@
 | 阶段 | 周期 | 目标 | 里程碑产出 |
 |------|------|------|-----------|
 | Phase 1 | Week 1-2 | 工程骨架与基础设施 | 可运行前端骨架、路由、鉴权（含注册）、CI 检查 |
-| Phase 2 | Week 3-4 | 核心业务页面第一批 | 仪表盘、日志中心、API 密钥管理可联调 |
-| Phase 3 | Week 5-6 | 核心业务页面第二批 | 用户管理、渠道管理、统计分析初版 |
+| Phase 2 | Week 3-4 | 核心业务页面第一批 | **日志中心、API 密钥** 可联调；仪表盘可接统计或保持 Mock |
+| Phase 3 | Week 5-6 | 核心业务页面第二批 | **用户管理**；**统计分析 P0**；控制台通用能力（可选） |
 | Phase 4 | Week 7-8 | 稳定性与上线准备 | 测试补齐、性能优化、灰度上线 |
 
-**排期说明：** 自助注册（第三节 3.2）目标在 **Week 2 内交付**；进入 Week 3 后优先完成注册与登录的联调收口，再集中铺开仪表盘与日志列表，避免并行过多阻塞首条业务闭环。
+**排期说明：** 日志与密钥已先于原 Week 序列表部分落地（见第三节状态）；后续优先 **仪表盘真实数据**、**统计分析接口联调**、**用户管理占位 → 实装**。
 
 ---
 
 ## 三、按 Feature 的开发计划（含状态）
 
-**状态取值（维护时更新本列即可）**
+**状态取值（合并 PR 或发版后更新本列）**
 
 | 状态 | 含义 |
 |------|------|
@@ -64,6 +67,7 @@
 | 进行中 | 已开工，尚未验收 |
 | 已完成 | 已满足对应 Feature 的验收标准 |
 | 阻塞 | 依赖外部（如 API、设计）不可动 |
+| 暂缓 | 产品/架构上推迟，暂不安排前端工时 |
 
 时间列与第二节阶段对应，便于对照排期。
 
@@ -92,48 +96,49 @@
 | 接入 401 统一处理（自动跳转登录） | Week 2 | 已完成 |
 | 实现主题切换（light/dark/system） | Week 2 | 已完成 |
 | 实现全局错误边界与基础空状态/骨架屏 | Week 2 | 已完成 |
-| 注册页（公开路由）与表单校验：用户名、密码、邀请码（非空，有效值由服务端配置，见 [register.md](../design/interaction/register.md)） | Week 2 | 已完成 |
-| 对接注册 API（请求体含 `invite_code`，服务端与 `auth.invite_code` / `AUTH_INVITE_CODE` 比对）；成功后跳转 `/login`（与 [register.md](../design/interaction/register.md) 一致） | Week 2 | 已完成 |
+| 注册页（公开路由）与表单校验：用户名、密码、邀请码（见 [register.md](../design/interaction/register.md)） | Week 2 | 已完成 |
+| 对接注册 API（`invite_code` 与 `auth.invite_code` / `AUTH_INVITE_CODE` 比对）；成功后跳转 `/login` | Week 2 | 已完成 |
 | 登录页入口：注册链接；已登录访问 `/register` 重定向 `/`；登录对接 `/api/v1/auth/login` | Week 2 | 已完成 |
 
-**验收标准：** 未登录访问受保护路由自动跳转；登录后可访问核心页面框架；主题切换持久化生效。**注册：** 按 `docs/design/interaction/register.md` 与 `docs/product/features.md` 3.1；邀请码前后端均校验；错误提示与重复注册等边界与接口契约一致；与「管理端创建用户」（见用户管理 Feature）职责划分清晰。
+**验收标准：** 未登录访问受保护路由自动跳转；登录后可访问核心页面框架；主题切换持久化生效。**注册：** 按 `docs/design/interaction/register.md` 与 `docs/product/features.md` 3.1；邀请码前后端均校验；错误提示与边界与接口契约一致；与「管理端创建用户」（见用户管理 Feature）职责划分清晰。
 
 ### 3.3 Feature：仪表盘（Dashboard）
 
 | 任务 | 计划周期 | 状态 |
 |------|----------|------|
-| 实现仪表盘概览卡片 | Week 3 | 未开始 |
-| 实现用量趋势图（按日/周/月切换） | Week 3 | 未开始 |
+| 实现仪表盘概览卡片（当前为静态占位，需接 API） | Week 3 | 进行中 |
+| 实现用量趋势图（按日/周/月或时间桶切换） | Week 3 | 未开始 |
 
-**验收标准：** 关键指标与趋势可通过 API 正确展示；加载与空状态符合规范。
+**验收标准：** 关键指标与趋势可通过 API 正确展示；加载与空状态符合规范。  
+**依赖：** 与统计分析共用或独立的 overview 类接口（见第五节）。
 
 ### 3.4 Feature：日志中心（Log Center）
 
-**交互规格：** [日志中心 UI/交互规格](../design/interaction/log-center.md)（列表含 **应用（App）**、**输入/输出 Tokens 分列**、**Finish 原因**、高级筛选与窄屏合并规则；详情摘要与导出字段与规格一致。）
+**交互规格：** [日志中心 UI/交互规格](../design/interaction/log-center.md)。
 
-**实现进展（2026-04）：** 后端已迁移 `app_id`、`finish_reason` 列及列表筛选 query；代理在非流式 Chat 完成时解析 `finish_reason`，并读取 `X-App-Id`；前端已提供 `/logs` 列表、详情与 CSV 导出（Unix 秒时间范围 + URL Query）；高级 token 区间筛选可在列表页补表单项对接。
+**实现进展（2026-04）：** 列表与详情、CSV 导出、`URLSearchParams` 同步筛选（时间、关键词、模型、`app_id`、`finish_reason`、`status_code`、`token_id` 等）、表格含应用与 Token 列等均已在 `frontend/src/features/logs/` 落地；后端已支持 `app_id`、`finish_reason` 等列表筛选。
 
 | 任务 | 计划周期 | 状态 |
 |------|----------|------|
-| 完成日志列表页（筛选、分页、排序、**URL Query 同步**） | Week 3 | 未开始 |
-| 列表表格：**应用**、**prompt / completion**（及可选 **合计**）、**`finish_reason`** 等列与列设置（P1） | Week 3 | 未开始 |
-| **高级筛选**（含 `finish_reason`、token 区间等，以后端 query 为准） | Week 3–4 | 未开始 |
-| 完成日志详情页（请求/响应 Tab、摘要区字段与规格对齐） | Week 3 | 未开始 |
-| 建立日志相关 Query Hooks（筛选类型与 OpenAPI 一致） | Week 3 | 未开始 |
-| 实现日志导出弹窗（**含 `prompt_tokens` / `completion_tokens` / `finish_reason` 等可选列**）与导出状态轮询 | Week 4 | 未开始 |
-| 实现导出文件下载流程 | Week 4 | 未开始 |
+| 完成日志列表页（筛选、分页、排序、**URL Query 同步**） | Week 3 | 已完成 |
+| 列表表格：**应用**、**prompt / completion / total**、**`finish_reason`** 等列 | Week 3 | 已完成 |
+| **高级筛选**（prompt/completion **token 区间**等多选/区间，以后端 query 为准；规格见 log-center） | Week 3–4 | 未开始 |
+| 完成日志详情页（请求/响应 Tab、摘要区字段与规格对齐） | Week 3 | 已完成 |
+| 建立日志相关 Query Hooks（筛选类型与 OpenAPI 一致） | Week 3 | 已完成 |
+| 实现日志导出（可选导出列与接口一致）与下载流程 | Week 4 | 已完成 |
+| 列设置、筛选模板等（P1） | — | 未开始 |
 
-**验收标准：** 可通过 API 展示日志列表与详情；筛选条件支持 URL 同步（可分享链接）；日志导出完整可用（创建 → 轮询 → 下载）；**与交互规格第十一节验收要点一致**（含：无后端字段时对应列/筛选项隐藏；Finish 原因以文本为主）。
+**验收标准：** 可通过 API 展示日志列表与详情；筛选条件支持 URL 同步（可分享链接）；导出可用；**与交互规格验收要点一致**（无后端字段时对应列/筛选项隐藏）。
 
 ### 3.5 Feature：API 密钥管理（API Key Management）
 
 | 任务 | 计划周期 | 状态 |
 |------|----------|------|
-| 实现 API 密钥列表页（状态、配额、过期时间） | Week 4 | 未开始 |
-| 实现创建 API 密钥弹窗与复制 Key | Week 4 | 未开始 |
-| 实现吊销 API 密钥流程（二次确认） | Week 4 | 未开始 |
+| 实现 API 密钥列表与详情页 | Week 4 | 已完成 |
+| 实现创建密钥、展示/复制、吊销或禁用流程 | Week 4 | 已完成 |
+| 名称/描述等编辑与后端 `PATCH` 对齐 | Week 4 | 已完成 |
 
-**验收标准：** API 密钥创建与吊销链路可用；敏感信息展示与复制交互安全、清晰。
+**验收标准：** 创建与吊销/禁用链路可用；敏感信息展示与复制交互安全、清晰；与 [开发 API](api.md) `/api/v1/me/api-keys` 一致。
 
 ### 3.6 Feature：用户管理（User Management）
 
@@ -143,27 +148,35 @@
 | 实现管理端创建用户/编辑用户弹窗（非公开自助注册，与 3.2 注册区分） | Week 5 | 未开始 |
 | 表单校验（React Hook Form + Zod）与管理端用户表单对齐 | Week 5 | 未开始 |
 
-**验收标准：** 用户模块可完成列表与增改核心流程；表单错误提示与交互符合设计规范。
+**验收标准：** 用户模块可完成列表与增改核心流程；表单错误提示与交互符合设计规范。  
+**依赖：** 后端用户列表/更新/删除等管理接口（第五节）。
 
-### 3.7 Feature：渠道管理（Channel Management）
+### 3.7 Feature：渠道管理（Channel Management）— **暂缓**
 
-| 任务 | 计划周期 | 状态 |
-|------|----------|------|
-| 实现渠道列表页（状态、优先级、权重） | Week 5 | 未开始 |
-| 实现渠道创建页/弹窗（基础字段） | Week 5 | 未开始 |
-| 渠道表单校验（React Hook Form + Zod，与用户模块规范对齐） | Week 5 | 未开始 |
-| 实现渠道测试连通性功能 | Week 6 | 未开始 |
-| 实现渠道启用/禁用切换 | Week 6 | 未开始 |
+| 说明 |
+|------|
+| 控制台 **不再提供** `/channels` 路由与侧栏入口（与当前单上游 `upstream.base_url` 实现一致，见 [实现状态](../implementation-status.md)）。 |
+| 下列任务 **不纳入本 8 周必达范围**；待后端多渠道 API 与产品重新立项后，新开里程碑跟踪。 |
 
-**验收标准：** 渠道可完成增改查与测试；测试结果可视化展示；启用/禁用状态与列表一致。
+** backlog（供将来引用）**
+
+| 任务 | 备注 |
+|------|------|
+| 渠道列表、创建/编辑、测试连通性、启用/禁用 | 依赖 `GET/POST/PUT/DELETE` 等渠道 API |
 
 ### 3.8 Feature：统计分析（Analytics）
 
+**交互与分期：** [统计分析页方案](../design/interaction/analytics.md)。
+
 | 任务 | 计划周期 | 状态 |
 |------|----------|------|
-| 实现统计分析页初版（模型分布、成本分布） | Week 6 | 未开始 |
+| 替换 `/analytics` 占位：页头、全局筛选（时间、模型等） | Week 6 | 未开始 |
+| KPI 摘要区 + **请求量/Token 趋势图**（时间桶由接口约定） | Week 6 | 未开始 |
+| **按模型**分布图（及空态、加载、错误） | Week 6 | 未开始 |
+| 图表依赖 **路由懒加载**；权限与路由守卫与产品定案一致（方案 §3） | Week 6 | 未开始 |
+| P1：**按 API 密钥/应用**分布、跳转日志中心带 query、导出 | Week 6+ | 未开始 |
 
-**验收标准：** 统计图表可按时间范围刷新；与后端统计接口契约一致。
+**验收标准：** 与方案文档 **§九 P0 验收清单** 一致；并与后端统计聚合接口契约一致（第五节）。
 
 ### 3.9 Feature：控制台通用能力（Shell）
 
@@ -180,8 +193,8 @@
 |------|----------|------|
 | 补齐核心 hooks/store 单元测试 | Week 7 | 未开始 |
 | 补齐关键组件交互测试 | Week 7 | 未开始 |
-| 编写 E2E（注册、登录、日志查询、API 密钥创建），方案见 [e2e-testing-plan.md](e2e-testing-plan.md)；Playwright + 上游 Mock + CI 已落地，API 密钥用例待页面就绪 | Week 7 | 进行中 |
-| 性能优化（路由懒加载、表格虚拟滚动） | Week 7 | 未开始 |
+| E2E（注册、登录、日志、API 密钥等），见 [e2e-testing-plan.md](e2e-testing-plan.md)；Playwright + CI | Week 7 | 进行中 |
+| 性能优化（路由懒加载、表格虚拟滚动） | Week 7 | 进行中 |
 | 可访问性检查（键盘导航、aria、对比度） | Week 7 | 未开始 |
 
 **验收标准：** 测试通过率 100%；关键路径具备 E2E 保护；首屏性能达到约定阈值。
@@ -205,12 +218,12 @@
 | 工程基础与规范 | Phase 1 |
 | 鉴权与路由 | Phase 1 |
 | 仪表盘 | Phase 2 |
-| 日志中心 | Phase 2 → Phase 2 末 |
+| 日志中心 | Phase 2（剩余：高级 token 区间等） |
 | API 密钥管理 | Phase 2 |
 | 用户管理 | Phase 3 |
-| 渠道管理 | Phase 3 |
 | 统计分析 | Phase 3 |
 | 控制台通用能力 | Phase 3 |
+| 渠道管理（控制台） | **暂缓**（见 3.7） |
 | 质量、性能与可访问性 | Phase 4 |
 | 发布与运维 | Phase 4 |
 
@@ -222,11 +235,11 @@
 |------|----|----|----|
 | 鉴权与路由 | 注册、登录、登出、路由守卫 | 记住跳转前 URL | 第三方登录 |
 | 仪表盘 | 概览卡片、趋势图 | 排行榜、告警卡片 | 自定义看板 |
-| 日志中心 | 列表、详情、导出 | 高级筛选模板 | 日志批注与协作 |
+| 日志中心 | 列表、详情、导出 | 高级筛选（token 区间等）、筛选模板 | 日志批注与协作 |
 | API 密钥管理 | 列表、创建、吊销、复制 | 标签与分组 | 批量操作策略 |
 | 用户管理 | 列表、创建 | 角色编辑 | 组织树管理 |
-| 渠道管理 | 列表、创建、编辑、测试 | 灰度策略 | 智能调度配置面板 |
-| 统计分析 | 基础图表 | 报表导出 | BI 深度分析 |
+| 渠道管理（控制台） | **暂缓** | 列表、创建、编辑、测试（后端就绪后） | 灰度策略、智能调度 |
+| 统计分析 | 基础图表（见 analytics 方案 P0） | 报表导出、跳转日志 | BI 深度分析 |
 
 ---
 
@@ -234,23 +247,21 @@
 
 ### 5.1 已有可用 API（当前可联调）
 
+以 [开发 API](api.md) 为准，下列已与控制台常见路径相关：
+
 - `GET /healthz`
-- `POST /users`
-- `POST /users/{username}/keys`
-- `GET /api/v1/logs/request`
-- `GET /api/v1/logs/request/{request_id}`
-- `POST /api/v1/logs/export`
-- `GET /api/v1/logs/export/{export_id}`
-- `GET /api/v1/logs/export/{export_id}/download`
+- `POST /api/v1/auth/register`、`POST /api/v1/auth/login`（其他 auth 路由以 [api.md](api.md) / `src/routes.rs` 为准）
+- `GET/POST /api/v1/me/api-keys`、`GET/PATCH` 单条、`POST .../revoke`
+- `GET /api/v1/logs/request`、`GET /api/v1/logs/request/{request_id}`
+- `POST /api/v1/logs/export`、`GET .../export/{export_id}`、`GET .../download`
+- `POST /users`、`POST /users/{username}/keys`（管理/内测；无鉴权，慎用）
 
 ### 5.2 待后端补齐 API（前端关键阻塞）
 
-- **日志列表/详情/导出（与 UI 规格对齐）：** 列表与详情响应需包含 **`app_id`（或产品约定的应用标识字段）**、**`finish_reason`**（由网关从 Chat/Completion 等 JSON 响应解析，不适用则为空）；`GET /api/v1/logs/request` 的 query 需支持对应筛选（如应用、`finish_reason` 多选、prompt/completion token 区间等，**以 OpenAPI 为准**）。若短期仅落 `metadata`，列表接口仍需返回扁平字段供表格直显。详见 [审计日志开发实现](audit-log-implementation.md)（数据模型、查询与 Handler）与 [日志中心 UI/交互规格](../design/interaction/log-center.md)。
-- 认证：`/api/v1/auth/register`（body：`username`、`password`、`invite_code`；`invite_code` 须与配置 `auth.invite_code` 或环境变量 `AUTH_INVITE_CODE` 一致）、`/api/v1/auth/login`、`/api/v1/auth/me`、`/api/v1/auth/logout`
-- 用户列表/更新/删除
-- API 密钥列表/更新/删除
-- 渠道列表/创建/更新/删除/测试
-- 统计分析接口（overview/usage/models）
+- **日志：** `finish_reason` / `app_id` / token 区间筛选等 **若仍有缺口** 以 OpenAPI 与 [审计日志实现](audit-log-implementation.md) 为准（列表已部分支持，见 3.4）。
+- **用户管理：** 用户列表/更新/删除（管理端，需与 RBAC 设计一致）。
+- **仪表盘 / 统计分析：** overview、usage 时间序列、按模型聚合等（与 [统计分析页方案](../design/interaction/analytics.md) §8 一致）。
+- **渠道：** 列表/创建/更新/删除/测试 — **与暂缓的 3.7 同步**，非当前前端里程碑。
 
 ### 5.3 联调策略
 
@@ -320,13 +331,21 @@
 
 ---
 
-## 十、立即可执行事项（本周）
+## 十、近期优先事项（滚动更新）
 
-1. 确认 API 契约（**注册**、登录、用户列表、API 密钥列表、渠道列表、统计接口）；阻塞项在第三节对应任务上标为「阻塞」并注明依赖。
-2. ~~创建前端项目骨架并提交首个可运行版本~~（工程基础 Feature 已完成，按需迭代即可）
-3. ~~完成 Layout + 路由 + Auth Store~~（鉴权与路由 Feature 已完成）
-4. 优先推进 **鉴权与路由** 中的注册任务（Week 2 行），再并行 **仪表盘**、**日志中心**；将第三节表格中条目状态改为「进行中 / 已完成」；日志可先 Mock 后联调。
-5. 建立每周里程碑看板（To Do / In Progress / Done），与第三节「状态」列保持同步。
+1. **仪表盘：** 接入真实统计或明确与「统计分析」接口复用方式；去掉长期 Mock。
+2. **统计分析：** 对接聚合接口，落实 [analytics.md](../design/interaction/analytics.md) P0 区块与验收清单。
+3. **日志中心：** 补齐 **token 区间** 等高级筛选项（与后端 query 一致）。
+4. **用户管理：** 待管理端用户 API 就绪后，替换 `/users` 占位页。
+5. 维护本节与第三节「状态」列、[实现状态](../implementation-status.md) **每周同步**一次。
+
+---
+
+## 十一、相关文档
+
+- [开发计划索引](plan-index.md) — 与 `development-plan.md`、本文、实现状态的关系  
+- [实现状态](../implementation-status.md)  
+- [统计分析页方案](../design/interaction/analytics.md) · [日志中心规格](../design/interaction/log-center.md)  
 
 ---
 

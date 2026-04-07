@@ -818,6 +818,139 @@ fn build_audit_where_clause(
     (where_sql, args)
 }
 
+fn audit_analytics_bucket_seconds(range_start: i64, range_end: i64) -> i64 {
+    let span = range_end.saturating_sub(range_start).max(1);
+    if span <= 2 * 86400 {
+        3600
+    } else if span <= 90 * 86400 {
+        86400
+    } else {
+        7 * 86400
+    }
+}
+
+const ANALYTICS_MAX_RANGE_SECS: i64 = 366 * 86400;
+
+pub fn query_audit_analytics(
+    conn: &Connection,
+    filter: &AuditListQuery,
+    scoped_user_id: Option<i64>,
+) -> rusqlite::Result<crate::audit::AuditAnalyticsResponse> {
+    use crate::audit::{
+        AuditAnalyticsModelSlice, AuditAnalyticsResponse, AuditAnalyticsSummary,
+        AuditAnalyticsTimeBucket,
+    };
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let mut eff_end = filter.end_time.unwrap_or(now);
+    let mut eff_start = filter.start_time.unwrap_or(eff_end - 7 * 86400);
+    if eff_end < eff_start {
+        std::mem::swap(&mut eff_start, &mut eff_end);
+    }
+    if eff_end - eff_start > ANALYTICS_MAX_RANGE_SECS {
+        eff_start = eff_end - ANALYTICS_MAX_RANGE_SECS;
+    }
+
+    let mut base = filter.clone();
+    base.start_time = Some(eff_start);
+    base.end_time = Some(eff_end);
+    base.limit = None;
+    base.offset = None;
+
+    let bucket_sec = audit_analytics_bucket_seconds(eff_start, eff_end);
+    let (where_sql, where_args) = build_audit_where_clause(&base, scoped_user_id);
+
+    let summary_sql = format!(
+        "SELECT COUNT(1),
+                COALESCE(SUM(CASE WHEN status_code IS NOT NULL AND status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(cost), 0.0),
+                AVG(CAST(latency_ms AS REAL))
+         FROM audit_logs {where_sql}"
+    );
+
+    let (total_requests, success_requests, total_tokens, total_cost, avg_latency_ms) = conn.query_row(
+        &summary_sql,
+        params_from_iter(where_args.iter()),
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, Option<f64>>(4)?,
+            ))
+        },
+    )?;
+
+    let series_sql = format!(
+        "SELECT (created_at / ?) * ? AS bucket_start,
+                COUNT(1) AS c,
+                COALESCE(SUM(total_tokens), 0) AS t
+         FROM audit_logs {where_sql}
+         GROUP BY bucket_start
+         ORDER BY bucket_start ASC"
+    );
+
+    let mut series_bind: Vec<Value> = Vec::new();
+    series_bind.push(Value::Integer(bucket_sec));
+    series_bind.push(Value::Integer(bucket_sec));
+    series_bind.extend(where_args.iter().cloned());
+
+    let mut stmt = conn.prepare(&series_sql)?;
+    let series_rows = stmt.query_map(params_from_iter(series_bind.iter()), |row| {
+        Ok(AuditAnalyticsTimeBucket {
+            bucket_start: row.get(0)?,
+            request_count: row.get(1)?,
+            total_tokens: row.get(2)?,
+        })
+    })?;
+    let mut series = Vec::new();
+    for r in series_rows {
+        series.push(r?);
+    }
+
+    let model_sql = format!(
+        "SELECT CASE WHEN model IS NULL OR model = '' THEN '(unknown)' ELSE model END AS m,
+                COUNT(1) AS c,
+                COALESCE(SUM(total_tokens), 0) AS t
+         FROM audit_logs {where_sql}
+         GROUP BY CASE WHEN model IS NULL OR model = '' THEN '(unknown)' ELSE model END
+         ORDER BY c DESC
+         LIMIT 30"
+    );
+    let mut m_stmt = conn.prepare(&model_sql)?;
+    let model_rows = m_stmt.query_map(params_from_iter(where_args.iter()), |row| {
+        Ok(AuditAnalyticsModelSlice {
+            model: row.get(0)?,
+            request_count: row.get(1)?,
+            total_tokens: row.get(2)?,
+        })
+    })?;
+    let mut by_model = Vec::new();
+    for r in model_rows {
+        by_model.push(r?);
+    }
+
+    Ok(AuditAnalyticsResponse {
+        summary: AuditAnalyticsSummary {
+            total_requests,
+            success_requests,
+            total_tokens,
+            total_cost,
+            avg_latency_ms,
+        },
+        bucket_seconds: bucket_sec,
+        series,
+        by_model,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -870,5 +1003,88 @@ mod tests {
         run_migrations(&conn).expect("migration");
 
         assert!(find_user_id(&conn, "nobody").is_err());
+    }
+
+    #[test]
+    fn query_audit_analytics_sums_requests_and_tokens() {
+        use crate::audit::{AuditListQuery, AuditRecord};
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 10_000_000_i64;
+        insert_audit_logs(
+            &mut conn,
+            &[
+                AuditRecord {
+                    request_id: "q1".into(),
+                    user_id: Some(7),
+                    token_id: Some(1),
+                    channel_id: None,
+                    model: Some("m-a".into()),
+                    request_type: Some("chat".into()),
+                    request_body_path: None,
+                    response_body_path: None,
+                    status_code: Some(200),
+                    error_message: None,
+                    prompt_tokens: Some(1),
+                    completion_tokens: Some(4),
+                    total_tokens: Some(5),
+                    cost: Some(0.02),
+                    latency_ms: Some(50),
+                    app_id: None,
+                    finish_reason: None,
+                    metadata: None,
+                    created_at: t0,
+                },
+                AuditRecord {
+                    request_id: "q2".into(),
+                    user_id: Some(7),
+                    token_id: Some(1),
+                    channel_id: None,
+                    model: Some("m-b".into()),
+                    request_type: Some("chat".into()),
+                    request_body_path: None,
+                    response_body_path: None,
+                    status_code: Some(500),
+                    error_message: None,
+                    prompt_tokens: Some(1),
+                    completion_tokens: Some(9),
+                    total_tokens: Some(10),
+                    cost: None,
+                    latency_ms: Some(200),
+                    app_id: None,
+                    finish_reason: None,
+                    metadata: None,
+                    created_at: t0 + 4000,
+                },
+            ],
+        )
+        .expect("insert audit");
+
+        let filter = AuditListQuery {
+            start_time: Some(t0 - 10),
+            end_time: Some(t0 + 10_000),
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: None,
+            offset: None,
+        };
+
+        let resp = query_audit_analytics(&conn, &filter, Some(7)).expect("analytics");
+        assert_eq!(resp.summary.total_requests, 2);
+        assert_eq!(resp.summary.success_requests, 1);
+        assert_eq!(resp.summary.total_tokens, 15);
+        assert!((resp.summary.total_cost - 0.02).abs() < 1e-9);
+        assert_eq!(resp.by_model.len(), 2);
     }
 }

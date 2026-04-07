@@ -2,7 +2,9 @@ use rusqlite::ErrorCode;
 use serde::Serialize;
 use tracing::error;
 
-use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
+use crate::audit::{
+    AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord,
+};
 use crate::db;
 
 use super::error::RepositoryError;
@@ -101,6 +103,11 @@ pub trait Repository: Send + Sync {
         query: &AuditListQuery,
         scoped_user_id: Option<i64>,
     ) -> Result<(Vec<AuditListItem>, i64), RepositoryError>;
+    fn query_audit_analytics(
+        &self,
+        query: &AuditListQuery,
+        scoped_user_id: Option<i64>,
+    ) -> Result<AuditAnalyticsResponse, RepositoryError>;
     fn get_audit_log_by_request_id(
         &self,
         request_id: &str,
@@ -258,6 +265,21 @@ impl Repository for SqliteRepository {
             .map_err(|_| RepositoryError::PoolUnavailable)?;
         db::query_audit_logs(&conn, query, scoped_user_id)
             .map_err(|_| RepositoryError::Internal("Failed to query audit logs".into()))
+    }
+
+    fn query_audit_analytics(
+        &self,
+        query: &AuditListQuery,
+        scoped_user_id: Option<i64>,
+    ) -> Result<AuditAnalyticsResponse, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::query_audit_analytics(&conn, query, scoped_user_id).map_err(|e| {
+            error!(error = %e, "query_audit_analytics");
+            RepositoryError::Internal("Failed to query analytics".into())
+        })
     }
 
     fn get_audit_log_by_request_id(

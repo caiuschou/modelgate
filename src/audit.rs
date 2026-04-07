@@ -60,7 +60,7 @@ pub enum AuditMessage {
     StreamCompletion(AuditStreamCompletionUpdate),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct AuditListQuery {
     pub start_time: Option<i64>,
     pub end_time: Option<i64>,
@@ -108,6 +108,47 @@ pub struct AuditListResponse {
     pub total: i64,
     pub limit: u32,
     pub offset: u32,
+}
+
+/// Query string for `GET /api/v1/analytics` (console session).
+#[derive(Debug, Deserialize)]
+pub struct AuditAnalyticsParams {
+    pub start_time: Option<i64>,
+    pub end_time: Option<i64>,
+    pub model: Option<String>,
+    pub token_id: Option<i64>,
+    pub app_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditAnalyticsSummary {
+    pub total_requests: i64,
+    pub success_requests: i64,
+    pub total_tokens: i64,
+    pub total_cost: f64,
+    pub avg_latency_ms: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditAnalyticsTimeBucket {
+    pub bucket_start: i64,
+    pub request_count: i64,
+    pub total_tokens: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditAnalyticsModelSlice {
+    pub model: String,
+    pub request_count: i64,
+    pub total_tokens: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditAnalyticsResponse {
+    pub summary: AuditAnalyticsSummary,
+    pub bucket_seconds: i64,
+    pub series: Vec<AuditAnalyticsTimeBucket>,
+    pub by_model: Vec<AuditAnalyticsModelSlice>,
 }
 
 #[derive(Debug, Serialize)]

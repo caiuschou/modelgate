@@ -2,7 +2,8 @@ use actix_web::{http::header, web, HttpRequest, HttpResponse};
 use serde::Deserialize;
 
 use crate::audit::{
-    AuditListQuery, AuditListResponse, ExportRequest, ExportResponse, ExportStatusResponse,
+    AuditAnalyticsParams, AuditListQuery, AuditListResponse, ExportRequest, ExportResponse,
+    ExportStatusResponse,
 };
 use crate::{errors::ApiError, session_auth, AppState};
 
@@ -12,6 +13,37 @@ fn auth_scope(
 ) -> Result<(Option<i64>, i64), ApiError> {
     let s = session_auth::resolve_console_session(req, state)?;
     Ok((s.api_key_id, s.user_id))
+}
+
+pub async fn get_audit_analytics(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    query: web::Query<AuditAnalyticsParams>,
+) -> Result<HttpResponse, ApiError> {
+    let (_, user_id) = auth_scope(&req, &state)?;
+    let p = query.into_inner();
+    let list_query = AuditListQuery {
+        start_time: p.start_time,
+        end_time: p.end_time,
+        user_id: None,
+        token_id: p.token_id,
+        channel_id: None,
+        model: p.model,
+        status_code: None,
+        keyword: None,
+        app_id: p.app_id,
+        finish_reason: None,
+        min_prompt_tokens: None,
+        max_prompt_tokens: None,
+        min_completion_tokens: None,
+        max_completion_tokens: None,
+        limit: None,
+        offset: None,
+    };
+    let resp = state
+        .audit_service
+        .get_audit_analytics(&list_query, user_id)?;
+    Ok(HttpResponse::Ok().json(resp))
 }
 
 pub async fn list_audit_logs(
@@ -284,6 +316,33 @@ mod tests {
                 bytes: b"csv,data\n1,2\n".to_vec(),
                 content_type: "text/csv; charset=utf-8".into(),
                 file_name: "exp_1.csv".into(),
+            })
+        }
+
+        fn get_audit_analytics(
+            &self,
+            _query: &AuditListQuery,
+            _user_id: i64,
+        ) -> Result<crate::audit::AuditAnalyticsResponse, ServiceError> {
+            Ok(crate::audit::AuditAnalyticsResponse {
+                summary: crate::audit::AuditAnalyticsSummary {
+                    total_requests: 1,
+                    success_requests: 1,
+                    total_tokens: 30,
+                    total_cost: 0.01,
+                    avg_latency_ms: Some(100.0),
+                },
+                bucket_seconds: 3600,
+                series: vec![crate::audit::AuditAnalyticsTimeBucket {
+                    bucket_start: 0,
+                    request_count: 1,
+                    total_tokens: 30,
+                }],
+                by_model: vec![crate::audit::AuditAnalyticsModelSlice {
+                    model: "gpt-test".into(),
+                    request_count: 1,
+                    total_tokens: 30,
+                }],
             })
         }
     }

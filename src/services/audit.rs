@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::{fs, path::Path};
 
 use crate::audit::{
-    now_unix_millis, AuditListItem, AuditListQuery, AuditRecord, ExportRequest, ExportResponse,
-    ExportStatusResponse,
+    now_unix_millis, AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord,
+    ExportRequest, ExportResponse, ExportStatusResponse,
 };
 
 use super::error::ServiceError;
@@ -32,6 +32,11 @@ pub trait AuditService: Send + Sync {
         export_id: &str,
         export_dir: &str,
     ) -> Result<ExportFileData, ServiceError>;
+    fn get_audit_analytics(
+        &self,
+        query: &AuditListQuery,
+        user_id: i64,
+    ) -> Result<AuditAnalyticsResponse, ServiceError>;
 }
 
 pub struct DefaultAuditService {
@@ -186,6 +191,16 @@ impl AuditService for DefaultAuditService {
             file_name,
         })
     }
+
+    fn get_audit_analytics(
+        &self,
+        query: &AuditListQuery,
+        user_id: i64,
+    ) -> Result<AuditAnalyticsResponse, ServiceError> {
+        self.repo
+            .query_audit_analytics(query, Some(user_id))
+            .map_err(ServiceError::from)
+    }
 }
 
 fn find_export_file(export_dir: &str, export_id: &str) -> Option<std::path::PathBuf> {
@@ -254,6 +269,10 @@ fn build_csv_content(rows: &[AuditListItem]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audit::{
+        AuditAnalyticsModelSlice, AuditAnalyticsResponse, AuditAnalyticsSummary,
+        AuditAnalyticsTimeBucket,
+    };
     use crate::services::error::RepositoryError;
     use std::sync::Mutex;
 
@@ -293,6 +312,24 @@ mod tests {
             } else {
                 Ok((Vec::new(), self.rows.len() as i64))
             }
+        }
+        fn query_audit_analytics(
+            &self,
+            _query: &AuditListQuery,
+            _scoped_user_id: Option<i64>,
+        ) -> Result<AuditAnalyticsResponse, RepositoryError> {
+            Ok(AuditAnalyticsResponse {
+                summary: AuditAnalyticsSummary {
+                    total_requests: 0,
+                    success_requests: 0,
+                    total_tokens: 0,
+                    total_cost: 0.0,
+                    avg_latency_ms: None,
+                },
+                bucket_seconds: 3600,
+                series: Vec::<AuditAnalyticsTimeBucket>::new(),
+                by_model: Vec::<AuditAnalyticsModelSlice>::new(),
+            })
         }
         fn get_audit_log_by_request_id(
             &self,

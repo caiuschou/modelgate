@@ -9,6 +9,8 @@
 ### 实现与交付（以代码为准）
 
 - **[实现状态](implementation-status.md)** — 已实现 / 未实现对照表（后端路由、前端页面、CI）
+- **[开发计划索引](development/plan-index.md)** — 多份计划文档以何为准、维护约定
+- **[前端开发计划](development/frontend-development-plan.md)** — 控制台 8 周节奏与 Feature 状态
 - **[服务端 API（当前实现）](development/api.md)** — `src/routes.rs` 对应接口说明
 - **[部署与运行](development/deployment.md)** — 配置、环境变量、前后端启动
 - **[更新日志](development/changelog.md)** — 版本级变更摘要
@@ -31,6 +33,7 @@
 - **[注册页交互](design/interaction/register.md)** - 简单注册（用户名、密码、邀请码由服务端配置）
 - **[导航设计](design/interaction/navigation.md)** - 全局导航、移动端导航、通知中心
 - **[日志中心 UI/交互规格](design/interaction/log-center.md)** - 请求日志列表、详情、导出与权限
+- **[统计分析页方案](design/interaction/analytics.md)** - 用量/趋势/分布、分期与日志中心联动
 - **[流式审计持久化与详情不截断展示](design/streaming-audit-persistence.md)** - 流式 SSE 落盘、两段式更新、API 与前端「不截断」策略
 - **[设计令牌](design/interaction/design-tokens.md)** - 颜色、字体、间距、组件规范
 - **[移动端设计](design/interaction/mobile.md)** - 移动端适配方案、触控交互

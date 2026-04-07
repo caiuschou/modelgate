@@ -10,6 +10,7 @@ import { ApiKeysPage } from '@/features/api-keys/pages/api-keys-page'
 import { ApiKeyDetailPage } from '@/features/api-keys/pages/api-key-detail-page'
 import { LogDetailPage } from '@/features/logs/pages/log-detail-page'
 import { LogListPage } from '@/features/logs/pages/log-list-page'
+import { AnalyticsPage } from '@/features/analytics/pages/analytics-page'
 import { useAuthStore } from '@/stores/auth-store'
 
 function AuthGuard({ children }: { children: ReactNode }) {
@@ -51,14 +52,6 @@ export const router = createBrowserRouter([
     ),
     children: [
       { index: true, element: <DashboardPage /> },
-      {
-        path: 'channels',
-        element: (
-          <AdminGuard>
-            <PlaceholderPage title="渠道管理" />
-          </AdminGuard>
-        ),
-      },
       { path: 'api-keys', element: <ApiKeysPage /> },
       { path: 'api-keys/:id', element: <ApiKeyDetailPage /> },
       {
@@ -71,7 +64,7 @@ export const router = createBrowserRouter([
       },
       { path: 'logs', element: <LogListPage /> },
       { path: 'logs/:requestId', element: <LogDetailPage /> },
-      { path: 'analytics', element: <PlaceholderPage title="统计分析" /> },
+      { path: 'analytics', element: <AnalyticsPage /> },
       {
         path: 'settings',
         element: (

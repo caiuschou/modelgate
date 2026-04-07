@@ -37,7 +37,10 @@ impl AuthService for DefaultAuthService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
+    use crate::audit::{
+        AuditAnalyticsModelSlice, AuditAnalyticsResponse, AuditAnalyticsSummary,
+        AuditAnalyticsTimeBucket, AuditListItem, AuditListQuery, AuditRecord,
+    };
     use crate::services::error::RepositoryError;
 
     struct MockRepo;
@@ -67,6 +70,24 @@ mod tests {
             _scoped_user_id: Option<i64>,
         ) -> Result<(Vec<AuditListItem>, i64), RepositoryError> {
             Ok((Vec::new(), 0))
+        }
+        fn query_audit_analytics(
+            &self,
+            _query: &AuditListQuery,
+            _scoped_user_id: Option<i64>,
+        ) -> Result<AuditAnalyticsResponse, RepositoryError> {
+            Ok(AuditAnalyticsResponse {
+                summary: AuditAnalyticsSummary {
+                    total_requests: 0,
+                    success_requests: 0,
+                    total_tokens: 0,
+                    total_cost: 0.0,
+                    avg_latency_ms: None,
+                },
+                bucket_seconds: 3600,
+                series: Vec::<AuditAnalyticsTimeBucket>::new(),
+                by_model: Vec::<AuditAnalyticsModelSlice>::new(),
+            })
         }
         fn get_audit_log_by_request_id(
             &self,

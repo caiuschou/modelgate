@@ -196,6 +196,17 @@
 
 普通用户仅能查询**本人** `user_id` 范围内的记录（由服务层过滤）。
 
+### 6.0 统计聚合（控制台）
+
+**`GET /api/v1/analytics`**
+
+| Query 参数 | 说明 |
+|------------|------|
+| `start_time` / `end_time` | Unix **秒**；均未传时默认 **近 7 天**；跨度超过 **366 天** 时按结束时间向前截断 |
+| `model` / `token_id` / `app_id` | 与列表接口一致（精确匹配） |
+
+**响应：** `summary`（`total_requests`、`success_requests`、`total_tokens`、`total_cost`、`avg_latency_ms`）、`bucket_seconds`（时间桶秒数：约 1h / 1d / 7d 视跨度而定）、`series[]`（`bucket_start`、`request_count`、`total_tokens`）、`by_model[]`（按请求数降序，最多 30 条；空模型为 `(unknown)`）。
+
 ### 6.1 列表
 
 **`GET /api/v1/logs/request`**

@@ -1,7 +1,7 @@
 # ModelGate 实现状态（文档与代码对照）
 
-**版本:** 1.0  
-**更新日期:** 2026年4月3日  
+**版本:** 1.1  
+**更新日期:** 2026年4月7日  
 
 本文档说明**当前仓库代码已落地的能力**，与 `docs/product/`、`docs/design/` 中描述的**产品目标与交互规格**区分。阅读产品文档时，请同时参考本节，避免将「规划能力」误认为已上线。
 
@@ -38,7 +38,8 @@
 | `/` 首页（仪表盘） | ✅ | 以现有页面为准 |
 | `/logs`、`/logs/:requestId` | ✅ | 日志中心 |
 | `/api-keys`、`/api-keys/:id` | ✅ | **API 密钥**列表与详情、新建（名称/描述）、禁用/吊销、轮换指引、跳转日志（`token_id` 预填） |
-| `/channels`、`/users`、`/analytics`、`/settings` | ⏳ | **占位页**（「页面建设中」）；管理员菜单项部分受 `AdminGuard` 限制 |
+| `/analytics` | ✅ | 统计页：`GET /api/v1/analytics` 聚合审计日志（时间范围、模型筛选；Recharts 趋势与分布） |
+| `/users`、`/settings` | ⏳ | **占位页**（「页面建设中」）；受 `AdminGuard` 限制 |
 
 **开发代理：** `frontend/vite.config.ts` 将 `/api`、`/healthz`、`/users` 代理到 `http://127.0.0.1:8000`。  
 **注意：** `POST /v1/chat/completions` 不在 Vite 代理中，客户端应用需直接请求网关地址（或自行配置反向代理）。
