@@ -63,6 +63,26 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             "/api/v1/me/api-keys/{key_id}/revoke",
             web::post().to(handlers::api_keys::revoke_my_api_key),
         )
+        .route(
+            "/api/v1/me/byok-profiles",
+            web::get().to(handlers::byok::list_my_byok_profiles),
+        )
+        .route(
+            "/api/v1/me/byok-profiles",
+            web::post().to(handlers::byok::create_my_byok_profile),
+        )
+        .route(
+            "/api/v1/me/byok-profiles/{id}",
+            web::get().to(handlers::byok::get_my_byok_profile),
+        )
+        .route(
+            "/api/v1/me/byok-profiles/{id}",
+            web::patch().to(handlers::byok::patch_my_byok_profile),
+        )
+        .route(
+            "/api/v1/me/byok-profiles/{id}/revoke",
+            web::post().to(handlers::byok::revoke_my_byok_profile),
+        )
         .route("/api/v1/teams", web::get().to(team::list_my_teams))
         .route("/api/v1/teams", web::post().to(team::create_team))
         .route(

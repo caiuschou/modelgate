@@ -16,6 +16,8 @@ pub struct CreateMyApiKeyInput {
     pub ip_allowlist: Option<Vec<String>>,
     /// When set, key is scoped to this team (caller must verify admin membership).
     pub team_id: Option<i64>,
+    /// Default BYOK for chat when `X-MG-Byok-Id` is absent; `None` = ModelGate `[upstream]`.
+    pub default_byok_profile_id: Option<i64>,
 }
 
 pub trait UserService: Send + Sync {
@@ -108,6 +110,13 @@ fn validate_create_input(input: &CreateMyApiKeyInput) -> Result<(), ServiceError
         if q <= 0 {
             return Err(ServiceError::BadRequest(
                 "quota_monthly_tokens must be positive when set".into(),
+            ));
+        }
+    }
+    if let Some(pid) = input.default_byok_profile_id {
+        if pid <= 0 {
+            return Err(ServiceError::BadRequest(
+                "default_byok_profile_id must be positive when set".into(),
             ));
         }
     }
@@ -224,6 +233,7 @@ impl UserService for DefaultUserService {
             model_json.as_deref(),
             ip_json.as_deref(),
             input.team_id,
+            input.default_byok_profile_id,
         )?;
         Ok((id, api_key, created_at))
     }
@@ -414,6 +424,7 @@ mod tests {
             _model_allowlist: Option<&str>,
             _ip_allowlist: Option<&str>,
             _team_id: Option<i64>,
+            _default_byok_profile_id: Option<i64>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
         }

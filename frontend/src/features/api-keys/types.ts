@@ -14,6 +14,8 @@ export interface ApiKeySummary {
   ip_allowlist: string[] | null
   status: string
   team_id?: number | null
+  /** When set, chat without `X-MG-Byok-Id` uses this BYOK; `null` = ModelGate `[upstream]`. */
+  default_byok_profile_id?: number | null
 }
 
 export interface ApiKeyListResponse {
@@ -33,4 +35,6 @@ export interface CreateMyApiKeyBody {
   quota_monthly_tokens?: number
   model_allowlist?: string[]
   ip_allowlist?: string[]
+  /** Omit or leave unset for ModelGate `[upstream]`. */
+  default_byok_profile_id?: number
 }

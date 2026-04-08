@@ -76,7 +76,7 @@
 - `prompt_tokens_details`：缓存命中、写入缓存、音频/视频 Token 等细节。
 - `completion_tokens_details`：推理 Token、图像/音频输出 Token 等细节。
 - `cost_details`：上游推理成本、输入成本、输出成本。
-- `is_byok`：是否使用 BYOK 密钥。
+- `is_byok`：是否使用 BYOK 密钥；规划能力与取值规则见 [BYOK 设计](byok-design.md)。
 
 ---
 

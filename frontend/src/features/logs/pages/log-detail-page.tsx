@@ -3,10 +3,12 @@ import { Link, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { VirtualizedLogBody } from '@/features/logs/components/virtualized-log-body'
+import { useMyByokProfiles } from '@/features/byok/hooks/use-byok-profiles'
 import {
   useAuditLogBody,
   useAuditLogDetail,
 } from '@/features/logs/hooks/use-logs'
+import type { AuditLogRecord } from '@/features/logs/types'
 
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
@@ -65,6 +67,24 @@ function parseUsageFromBody(text: string): UsageData | null {
   return null
 }
 
+/** Chat audit metadata from proxy (`chat_audit_metadata`). */
+function parseAuditUpstreamMeta(
+  metadata: AuditLogRecord['metadata'],
+): { isByok: boolean | null; profileId: number | null } {
+  if (!metadata) return { isByok: null, profileId: null }
+  const isByokRaw = metadata['is_byok']
+  const pidRaw = metadata['byok_profile_id']
+  const isByok =
+    typeof isByokRaw === 'boolean'
+      ? isByokRaw
+      : null
+  let profileId: number | null = null
+  if (typeof pidRaw === 'number' && Number.isInteger(pidRaw) && pidRaw > 0) {
+    profileId = pidRaw
+  }
+  return { isByok, profileId }
+}
+
 function formatCost(value: number): string {
   if (value === 0) return '$0'
   const abs = Math.abs(value)
@@ -105,7 +125,13 @@ function CostDetailRow(props: {
   )
 }
 
-function UsageDetailCard({ usage }: { usage: UsageData }) {
+function UsageDetailCard({
+  usage,
+  auditUpstream,
+}: {
+  usage: UsageData
+  auditUpstream: { isByok: boolean | null; profileId: number | null }
+}) {
   const { prompt_tokens, completion_tokens, total_tokens } = usage
   const promptPct =
     total_tokens > 0 ? (prompt_tokens / total_tokens) * 100 : 0
@@ -116,19 +142,22 @@ function UsageDetailCard({ usage }: { usage: UsageData }) {
   const cd = usage.completion_tokens_details
   const costD = usage.cost_details
 
+  const upstreamTag =
+    auditUpstream.isByok ?? usage.is_byok ?? null
+
   return (
     <Card className="space-y-4 p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium">用量与成本</h2>
-        {usage.is_byok != null && (
+        {upstreamTag != null && (
           <span
             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-              usage.is_byok
+              upstreamTag
                 ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
                 : 'bg-muted text-muted-foreground'
             }`}
           >
-            {usage.is_byok ? 'BYOK' : '平台密钥'}
+            {upstreamTag ? 'BYOK' : '平台上游'}
           </span>
         )}
       </div>
@@ -280,6 +309,7 @@ export function LogDetailPage() {
   const { requestId } = useParams<{ requestId: string }>()
   const decoded = requestId ? decodeURIComponent(requestId) : ''
   const { data, isLoading, isError } = useAuditLogDetail(decoded || undefined)
+  const { data: byokRes } = useMyByokProfiles()
   const responseBody = useAuditLogBody(
     decoded || undefined,
     'response',
@@ -289,6 +319,18 @@ export function LogDetailPage() {
     if (!responseBody.data) return null
     return parseUsageFromBody(responseBody.data)
   }, [responseBody.data])
+
+  const auditUpstream = useMemo(
+    () => parseAuditUpstreamMeta(data?.metadata ?? null),
+    [data?.metadata],
+  )
+
+  const byokListEntry = useMemo(() => {
+    if (auditUpstream.profileId == null) return undefined
+    const row = byokRes?.data?.find((p) => p.id === auditUpstream.profileId)
+    if (!row) return undefined
+    return { name: row.name, revoked: row.revoked }
+  }, [auditUpstream.profileId, byokRes?.data])
 
   if (!decoded) {
     return <p className="text-sm text-muted-foreground">无效的 request_id</p>
@@ -352,6 +394,36 @@ export function LogDetailPage() {
                 <dd className="mt-0.5 text-sm">{data.request_type ?? '—'}</dd>
               </div>
               <div>
+                <dt className="text-xs text-muted-foreground">调用上游</dt>
+                <dd className="mt-0.5 text-sm">
+                  {auditUpstream.isByok === true
+                    ? 'BYOK（自有上游）'
+                    : auditUpstream.isByok === false
+                      ? 'ModelGate 平台上游'
+                      : '—'}
+                </dd>
+              </div>
+              {auditUpstream.profileId != null ? (
+                <div>
+                  <dt className="text-xs text-muted-foreground">BYOK 配置</dt>
+                  <dd className="mt-0.5 text-sm">
+                    <Link
+                      to={`/byok-profiles/${auditUpstream.profileId}`}
+                      className="text-primary hover:underline"
+                    >
+                      {byokListEntry
+                        ? `「${byokListEntry.name}」(#${auditUpstream.profileId})`
+                        : `配置 #${auditUpstream.profileId}`}
+                    </Link>
+                    {byokListEntry?.revoked ? (
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        （已吊销）
+                      </span>
+                    ) : null}
+                  </dd>
+                </div>
+              ) : null}
+              <div>
                 <dt className="text-xs text-muted-foreground">用户 / 令牌</dt>
                 <dd className="mt-0.5 font-mono text-sm">
                   {data.user_id ?? '—'} / {data.token_id ?? '—'}
@@ -398,7 +470,9 @@ export function LogDetailPage() {
             )}
           </Card>
 
-          {usage && <UsageDetailCard usage={usage} />}
+          {usage && (
+            <UsageDetailCard usage={usage} auditUpstream={auditUpstream} />
+          )}
 
           <AuditBodyPanel
             title="请求体"

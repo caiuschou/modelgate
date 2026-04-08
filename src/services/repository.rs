@@ -25,6 +25,9 @@ pub struct ApiKeySummary {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<i64>,
+    /// Default BYOK profile for Chat when no `X-MG-Byok-Id`; `null` = ModelGate `[upstream]`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_byok_profile_id: Option<i64>,
 }
 
 fn mask_api_key_preview(full: &str) -> String {
@@ -89,6 +92,7 @@ fn row_to_summary(now: i64, r: db::ApiKeyRow) -> ApiKeySummary {
         ip_allowlist: parse_json_string_list(r.ip_allowlist.clone()),
         status,
         team_id: r.team_id,
+        default_byok_profile_id: r.default_byok_profile_id,
     }
 }
 
@@ -169,6 +173,7 @@ pub trait Repository: Send + Sync {
         model_allowlist: Option<&str>,
         ip_allowlist: Option<&str>,
         team_id: Option<i64>,
+        default_byok_profile_id: Option<i64>,
     ) -> Result<i64, RepositoryError>;
 
     fn list_api_keys_for_team(&self, team_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError>;
@@ -506,6 +511,7 @@ impl Repository for SqliteRepository {
         model_allowlist: Option<&str>,
         ip_allowlist: Option<&str>,
         team_id: Option<i64>,
+        default_byok_profile_id: Option<i64>,
     ) -> Result<i64, RepositoryError> {
         let conn = self
             .db_pool
@@ -523,6 +529,7 @@ impl Repository for SqliteRepository {
             model_allowlist,
             ip_allowlist,
             team_id,
+            default_byok_profile_id,
         )
         .map_err(|e| {
             error!(error = %e, "insert api key with meta");

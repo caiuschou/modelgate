@@ -88,6 +88,8 @@ export type ApiKeySummary = {
   model_allowlist: string[] | null
   ip_allowlist: string[] | null
   status: string
+  team_id?: number | null
+  default_byok_profile_id?: number | null
 }
 
 export async function listMyApiKeys(

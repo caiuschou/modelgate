@@ -9,7 +9,7 @@ import {
 } from './helpers/api'
 import { loadE2eSessionCredentials } from './load-e2e-credentials'
 
-const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
+const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173'
 const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
 
 let e2eUser: string

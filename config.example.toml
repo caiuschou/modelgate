@@ -16,6 +16,11 @@ base_url = "https://api.openai.com/v1"
 # Upstream API key is read only from this file (not UPSTREAM_API_KEY env).
 api_key = "sk-your-openai-key-here"
 
+# Optional: 32-byte master key as 64 hex chars for BYOK (encrypt user/team upstream keys at rest).
+# Env override: BYOK_MASTER_KEY. Empty = BYOK management APIs disabled; chat ignores X-MG-Byok-Id.
+# [byok]
+# master_key_hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 # Optional: rolling tracing logs (`modelgate.log.YYYY-MM-DD`). Empty = stderr only (e.g. systemd journal).
 # On SSH deploy, CD sets `../shared/logs` (relative to release = persistent logs under shared/).
 # Override with env TRACING_LOG_DIR if needed.

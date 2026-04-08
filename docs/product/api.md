@@ -98,6 +98,8 @@ curl https://api.modelgate.com/v1/chat/completions \
 }
 ```
 
+> **字段说明：** `usage.is_byok` 表示该次调用是否走用户/团队 BYOK 上游密钥；规划语义与选用方式见 [BYOK 设计](../architecture/byok-design.md)。
+
 ---
 
 ## 三、认证方式

@@ -8,7 +8,7 @@ import {
 } from './helpers/api'
 import { loadE2eSessionCredentials } from './load-e2e-credentials'
 
-const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
+const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173'
 
 test.describe('团队与工作空间', () => {
   test('侧栏可进入团队页', async ({ page }) => {

@@ -113,7 +113,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_finish_reason ON audit_logs (finish_re
   - `prompt_tokens_details`
   - `completion_tokens_details`
   - `cost_details`
-  - `is_byok`
+  - `is_byok`（规划能力与取值规则见 [BYOK 设计](../architecture/byok-design.md)）
 - **与日志中心 UI 对齐：** `app_id`、`finish_reason` 建议作为**表列**写入，便于列表筛选与索引；若过渡期仅存于 `metadata`，**列表/详情 API 仍应解析并返回扁平字段**（与前端表格、导出勾选一致）。
 
 ---

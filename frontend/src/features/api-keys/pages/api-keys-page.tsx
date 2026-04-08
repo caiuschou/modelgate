@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Modal } from '@/components/ui/modal'
 import { EmptyState } from '@/components/shared/empty-state'
 import {
   useCreateMyApiKey,
@@ -10,6 +11,8 @@ import {
   usePatchMyApiKey,
   useRevokeMyApiKey,
 } from '@/features/api-keys/hooks/use-api-keys'
+import type { CreateMyApiKeyBody } from '@/features/api-keys/types'
+import { useMyByokProfiles } from '@/features/byok/hooks/use-byok-profiles'
 import { useMyTeams } from '@/features/teams/hooks/use-teams'
 import { useTeamStore } from '@/stores/team-store'
 
@@ -43,25 +46,56 @@ export function ApiKeysPage() {
   const createMutation = useCreateMyApiKey()
   const revokeMutation = useRevokeMyApiKey()
   const patchMutation = usePatchMyApiKey()
+  const { data: byokRes, isLoading: byokLoading, isError: byokError } =
+    useMyByokProfiles()
+  const createModalDescId = useId()
   const [newKeySecret, setNewKeySecret] = useState<string | null>(null)
   const [copyHint, setCopyHint] = useState<string | null>(null)
-  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [createModalOpen, setCreateModalOpen] = useState(false)
   const [formName, setFormName] = useState('')
   const [formDesc, setFormDesc] = useState('')
+  const [formDefaultUpstream, setFormDefaultUpstream] = useState('platform')
+
+  const openCreateModal = () => {
+    setCreateModalOpen(true)
+    setFormName('')
+    setFormDesc('')
+    setFormDefaultUpstream('platform')
+    setNewKeySecret(null)
+    setCopyHint(null)
+  }
+
+  const closeCreateModal = () => {
+    setCreateModalOpen(false)
+  }
 
   const handleCreate = async () => {
     setNewKeySecret(null)
     setCopyHint(null)
     const name = formName.trim() || '未命名密钥'
+    let defaultByok: number | undefined
+    if (formDefaultUpstream !== 'platform') {
+      const pid = Number.parseInt(formDefaultUpstream, 10)
+      if (Number.isNaN(pid)) {
+        window.alert('请选择有效的默认上游')
+        return
+      }
+      defaultByok = pid
+    }
+    const body: CreateMyApiKeyBody = {
+      name,
+      ...(formDesc.trim() ? { description: formDesc.trim() } : {}),
+      ...(defaultByok !== undefined
+        ? { default_byok_profile_id: defaultByok }
+        : {}),
+    }
     try {
-      const res = await createMutation.mutateAsync({
-        name,
-        ...(formDesc.trim() ? { description: formDesc.trim() } : {}),
-      })
+      const res = await createMutation.mutateAsync(body)
       setNewKeySecret(res.api_key)
-      setShowCreateForm(false)
+      closeCreateModal()
       setFormName('')
       setFormDesc('')
+      setFormDefaultUpstream('platform')
     } catch {
       /* ky throws */
     }
@@ -130,14 +164,8 @@ export function ApiKeysPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setShowCreateForm((v) => !v)
-              setNewKeySecret(null)
-            }}
-          >
-            {showCreateForm ? '取消' : '新建密钥'}
+          <Button variant="outline" onClick={openCreateModal}>
+            新建密钥
           </Button>
         </div>
       </div>
@@ -154,9 +182,17 @@ export function ApiKeysPage() {
         。在团队上下文中新建密钥需具备 owner 或 admin 角色；权限不足时请求将失败。
       </p>
 
-      {showCreateForm ? (
-        <Card className="mt-6 space-y-3 p-4">
-          <p className="text-sm font-medium">新建 API 密钥</p>
+      <Modal
+        open={createModalOpen}
+        onClose={closeCreateModal}
+        title="新建 API 密钥"
+        descriptionId={createModalDescId}
+      >
+        <p id={createModalDescId} className="text-sm text-muted-foreground">
+          生成后完整密钥仅显示一次。可选 Chat 默认上游（与详情页一致）；请求头{' '}
+          <code className="text-xs">X-MG-Use-Platform-Upstream: 1</code> 可强制走平台。
+        </p>
+        <div className="mt-4 space-y-3">
           <label className="block text-sm">
             <span className="text-muted-foreground">名称（必填）</span>
             <Input
@@ -164,6 +200,7 @@ export function ApiKeysPage() {
               value={formName}
               onChange={(e) => setFormName(e.target.value)}
               placeholder="例如：生产-支付助手"
+              autoFocus
             />
           </label>
           <label className="block text-sm">
@@ -175,14 +212,49 @@ export function ApiKeysPage() {
               placeholder="备注用途或环境"
             />
           </label>
+          <label className="block text-sm">
+            <span className="text-muted-foreground">默认 Chat 上游</span>
+            <select
+              className="mt-1 w-full rounded border border-border bg-background px-2 py-2 text-sm"
+              value={formDefaultUpstream}
+              onChange={(e) => setFormDefaultUpstream(e.target.value)}
+              aria-label="新建密钥的默认 Chat 上游"
+              disabled={byokLoading}
+            >
+              <option value="platform">ModelGate（[upstream]）</option>
+              {(byokRes?.data ?? [])
+                .filter((p) => !p.revoked)
+                .map((p) => (
+                  <option key={p.id} value={String(p.id)}>
+                    {p.name} (#{p.id})
+                  </option>
+                ))}
+            </select>
+          </label>
+          {byokError ? (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              无法加载 BYOK 列表时，仅可选择 ModelGate；稍后在密钥详情中可绑定 BYOK。
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-6 flex flex-wrap justify-end gap-2">
           <Button
+            type="button"
+            variant="outline"
+            onClick={closeCreateModal}
+            disabled={createMutation.isPending}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
             onClick={() => void handleCreate()}
             disabled={createMutation.isPending}
           >
             {createMutation.isPending ? '创建中…' : '生成密钥'}
           </Button>
-        </Card>
-      ) : null}
+        </div>
+      </Modal>
 
       {newKeySecret ? (
         <Card className="mt-6 border-amber-600/40 bg-amber-500/5 p-4">

@@ -1,7 +1,7 @@
 # ModelGate 服务端 API（当前实现）
 
-**版本:** 1.2  
-**更新日期:** 2026年4月7日  
+**版本:** 1.5  
+**更新日期:** 2026年4月8日  
 **适用范围:** 本仓库 Rust 服务（`cargo run`）
 
 本文档描述**已实现**的 HTTP 接口。OpenAI 兼容能力的完整产品规格见 [产品 API 文档](../product/api.md)；若与本文冲突，**以本文与 `src/routes.rs` 为准**。
@@ -22,7 +22,7 @@
 {
   "error": {
     "message": "人类可读说明",
-    "type": "validation_error | authentication_error | conflict_error | not_found_error | internal_error"
+    "type": "validation_error | authentication_error | forbidden_error | conflict_error | not_found_error | rate_limit_error | service_unavailable_error | internal_error"
   }
 }
 ```
@@ -110,13 +110,14 @@
       "model_allowlist": null,
       "ip_allowlist": null,
       "status": "active",
-      "team_id": null
+      "team_id": null,
+      "default_byok_profile_id": null
     }
   ]
 }
 ```
 
-`status`：`active` | `disabled` | `expired` | `revoked`。`team_id`：团队密钥时为团队 id，个人密钥为 `null`。
+`status`：`active` | `disabled` | `expired` | `revoked`。`team_id`：团队密钥时为团队 id，个人密钥为 `null`。`default_byok_profile_id`：未设置或为 `null` 时，Chat 默认走实例 `[upstream]`；为整数时，未带 `X-MG-Byok-Id` 则走该 BYOK（须与本密钥个人/团队范围一致且未吊销）。
 
 #### 新建密钥
 
@@ -130,6 +131,7 @@
   - `expires_at`：可选，Unix 秒。  
   - `quota_monthly_tokens`：可选，正整数，按**自然月**累计 `total_tokens` 用量（仅非流式成功响应计入）。  
   - `model_allowlist` / `ip_allowlist`：可选，JSON 数组字符串；`chat/completions` 请求将校验模型名与客户端 IP（`X-Forwarded-For` 首选）。  
+  - `default_byok_profile_id`：可选，正整数；创建时即可指定 Chat 默认 BYOK（语义同 `PATCH`；须在当前个人/团队范围内可用）。不传则默认为 `null`（走 `[upstream]`）。  
 - **成功：** `201`，`{ "id", "api_key": "<完整密钥>", "created_at" }` — **完整 `api_key` 仅此次响应返回**。
 
 #### 密钥详情
@@ -148,6 +150,7 @@
   - `expires_at`：`null` 表示清除过期时间  
   - `quota_monthly_tokens`：`null` 表示取消配额  
   - `model_allowlist` / `ip_allowlist`：`null` 表示清除策略  
+  - `default_byok_profile_id`：设为 BYOK 的 `id`；`null` 表示清除（恢复默认走 `[upstream]`）。须为**正整数**且该 profile 在当前密钥的归属范围内可用。  
 - **成功：** `200`，无 JSON 体  
 - **失败：** `400`（无可更新字段或校验失败）、`404`
 
@@ -159,7 +162,23 @@
 - **失败：** `404`（非本人或不存在或已吊销）  
 - 若吊销的是当前用于 `Authorization` 的密钥，后续请求将 `401`。
 
-### 3.4 团队与成员
+### 3.4 BYOK 配置（控制台）
+
+需在 `config.toml` 中配置 **`[byok] master_key_hex`**（64 位十六进制 = 32 字节）或环境变量 **`BYOK_MASTER_KEY`**；未配置时本节全部接口返回 **`503`**，且 `POST /v1/chat/completions` 无法使用 BYOK（含 **`X-MG-Byok-Id`** 与网关 Key 上 **`default_byok_profile_id`** 的默认 BYOK）。
+
+认证与 **`X-Team-Id`** 语义与 **3.3** 一致：无团队头为**个人** BYOK；带头为**团队** BYOK（列表全员可见；**创建 / 更新 / 吊销** 团队配置须 **owner 或 admin**）。
+
+上游 `api_key` 使用 **AES-256-GCM** 加密后分栏存储（nonce + 密文）；接口**永不**返回完整明文密钥。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/me/byok-profiles` | `{ "data": [ { id, name, base_url, api_key_preview, created_at, updated_at, revoked } ] }` |
+| POST | `/api/v1/me/byok-profiles` | body：`{ "name"?, "base_url", "api_key" }` → `{ id, created_at }` |
+| GET | `/api/v1/me/byok-profiles/{id}` | 单条详情（仍无完整 `api_key`） |
+| PATCH | `/api/v1/me/byok-profiles/{id}` | body 至少一项：`name` / `base_url` / `api_key`（轮换） |
+| POST | `/api/v1/me/byok-profiles/{id}/revoke` | 吊销后不可再用于转发 |
+
+### 3.5 团队与成员
 
 均需 **`Authorization: Bearer <api_key>`**。
 
@@ -209,9 +228,16 @@
 
 - **认证：** `Authorization: Bearer <api_key>`（必填）  
 - **Body：** OpenAI Chat Completions 请求体（JSON）  
-- **行为：** 将请求转发至配置的 `upstream.base_url` 对应 Chat Completions 路径，使用服务器配置的 `upstream.api_key` 访问上游。  
+- **行为：** 默认将请求转发至配置的 `upstream.base_url`，使用 `upstream.api_key` 访问上游。  
+- **BYOK 与默认上游：** 须配置 `byok.master_key_hex`（或 `BYOK_MASTER_KEY`）；未配置时，任何需要解密 BYOK 的路径返回 **`503`**。  
+  - **解析顺序：** **`X-MG-Use-Platform-Upstream: 1`**（或 `true` / `yes`，不区分大小写）→ **强制**使用实例 `[upstream]`，忽略 Key 默认与 `X-MG-Byok-Id`。  
+  - 否则若有 **`X-MG-Byok-Id: <正整数>`**：使用该 BYOK（须与当前网关 Key 归属一致：个人 Key → 本人个人 BYOK；团队 Key → 该团队 BYOK）。非正整数或无法解析 → **`400`**。  
+  - 否则若该网关 Key 在控制台设置了 **`default_byok_profile_id`**：使用该 BYOK（同样校验归属与未吊销）。  
+  - 否则：使用实例 `[upstream]`。  
+- **吊销 BYOK：** 吊销某 profile 后，服务端会将引用该 profile 的 `api_keys.default_byok_profile_id` 清空。  
 - **流式：** 支持 `stream: true`（SSE 透传）  
 - **可选请求头：** `X-App-Id` — 写入审计日志的 `app_id`  
+- **审计 `metadata`：** 含 `is_byok`（bool）、可选 `byok_profile_id`（int），以及原有 `stream` 等字段。  
 - **可选环境变量（转发到上游）：** `OPENAI_ORGANIZATION`、`OPENAI_PROJECT`
 
 ---

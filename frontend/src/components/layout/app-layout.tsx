@@ -8,6 +8,7 @@ import { useUiStore } from '@/stores/ui-store'
 const menuItems = [
   { to: '/', label: '首页' },
   { to: '/api-keys', label: 'API 密钥' },
+  { to: '/byok-profiles', label: 'BYOK' },
   { to: '/teams', label: '团队' },
   { to: '/users', label: '用户管理' },
   { to: '/logs', label: '日志中心' },

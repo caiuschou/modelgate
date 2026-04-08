@@ -1,5 +1,6 @@
 pub mod api_keys;
 pub mod audit;
+pub mod byok;
 pub mod proxy;
 pub mod session;
 pub mod team;

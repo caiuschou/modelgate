@@ -166,6 +166,7 @@ mod tests {
             _model_allowlist: Option<&str>,
             _ip_allowlist: Option<&str>,
             _team_id: Option<i64>,
+            _default_byok_profile_id: Option<i64>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
         }

@@ -14,6 +14,7 @@
 |------|------|--------|
 | **用户 API Key（访问凭证）** | 调用 ModelGate 网关时的身份凭证，请求头 `Authorization: Bearer <key>`（勿与模型用量 **Token** 混淆） | 开发者 / 业务应用 |
 | **上游供应商 Key** | ModelGate 代表用户访问 OpenAI 兼容等服务时使用的真实密钥 | 运维在服务端 **`config.toml` 的 `[upstream].api_key`**，**不**通过控制台发给终端用户 |
+| **BYOK（用户/团队上游密钥）** | 终端用户或团队在控制台配置的自有上游 `base_url` + `api_key`，转发时由网关解密使用 | **已部分落地**（列表/详情/吊销、按请求头或 **Key 默认绑定** 选用）；规格见 [BYOK 设计](../architecture/byok-design.md)；细节以 [实现状态](../implementation-status.md)、[开发 API](../development/api.md) 为准 |
 
 本文档聚焦 **用户 API Key** 的**产品能力**：创建、分发、轮换、吊销、权限与配额、与审计的关系。上游渠道密钥属于 **渠道管理** 产品域（见 [产品概述](overview.md) 与 [功能详解 — 渠道管理](features.md#一渠道管理功能)）。
 
@@ -144,6 +145,7 @@
 
 ## 九、相关文档
 
+- **[BYOK（Bring Your Own Key）设计](../architecture/byok-design.md)**：用户/团队自带上游密钥、加密存储、网关选用与审计 `is_byok`（规划）  
 - **[API 密钥能力增强 — 产品与交互规格](api-key-capability-enhancement.md)**：命名/最后使用/禁用/轮换向导/详情页与日志跳转等分期蓝图与交互细节  
 - [功能详解 — 二、API 密钥管理功能](features.md#二api-密钥管理功能)（验收标准与指标细表）  
 - [用户控制台 — 3.3 API 密钥管理](user-console.md#33-api-密钥管理)  

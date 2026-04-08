@@ -219,6 +219,7 @@ mod tests {
                     quota_used_tokens: 0,
                     quota_period_start: None,
                     team_id: None,
+                    default_byok_profile_id: None,
                 })
             } else {
                 Err(ServiceError::Unauthorized(
@@ -486,6 +487,7 @@ mod tests {
                 base_url: "https://api.openai.com/v1".into(),
                 api_key: "test".into(),
             },
+            byok: crate::config::ByokConfig::default(),
             sqlite: crate::config::SqliteConfig {
                 path: ":memory:".into(),
             },

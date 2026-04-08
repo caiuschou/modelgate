@@ -9,6 +9,7 @@ import {
   useRevokeMyApiKey,
 } from '@/features/api-keys/hooks/use-api-keys'
 import type { ApiKeySummary } from '@/features/api-keys/types'
+import { useMyByokProfiles } from '@/features/byok/hooks/use-byok-profiles'
 
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
@@ -33,6 +34,7 @@ function policiesEditorKey(d: ApiKeySummary): string {
     d.quota_monthly_tokens ?? '',
     (d.model_allowlist ?? []).join('\0'),
     (d.ip_allowlist ?? []).join('\0'),
+    d.default_byok_profile_id ?? '',
   ].join('|')
 }
 
@@ -157,6 +159,116 @@ function ApiKeyPoliciesEditor({
         onClick={() => void handleSavePolicies()}
       >
         保存策略
+      </Button>
+    </Card>
+  )
+}
+
+function ApiKeyDefaultUpstreamSection({
+  data,
+  patchMutation,
+}: {
+  data: ApiKeySummary
+  patchMutation: ReturnType<typeof usePatchMyApiKey>
+}) {
+  const { data: byokRes, isLoading, isError } = useMyByokProfiles()
+  const currentPid = data.default_byok_profile_id
+  const initial =
+    currentPid != null ? String(currentPid) : 'platform'
+  const [selection, setSelection] = useState(initial)
+
+  const activeProfiles = (byokRes?.data ?? []).filter((p) => !p.revoked)
+  const bound =
+    currentPid != null
+      ? (byokRes?.data ?? []).find((p) => p.id === currentPid)
+      : undefined
+  const stuckId =
+    currentPid != null && !activeProfiles.some((p) => p.id === currentPid)
+      ? currentPid
+      : null
+
+  const defaultLabel =
+    currentPid == null
+      ? 'ModelGate（实例上游）'
+      : bound
+        ? bound.revoked
+          ? `BYOK「${bound.name}」（已吊销，请改选或清除）`
+          : `BYOK「${bound.name}」`
+        : `BYOK #${currentPid}（当前列表不可用）`
+
+  const handleSave = async () => {
+    if (selection === 'platform') {
+      try {
+        await patchMutation.mutateAsync({
+          id: data.id,
+          body: { default_byok_profile_id: null },
+        })
+      } catch {
+        /* */
+      }
+      return
+    }
+    const pid = Number.parseInt(selection, 10)
+    if (Number.isNaN(pid)) {
+      window.alert('请选择有效的 BYOK 配置')
+      return
+    }
+    try {
+      await patchMutation.mutateAsync({
+        id: data.id,
+        body: { default_byok_profile_id: pid },
+      })
+    } catch {
+      /* */
+    }
+  }
+
+  return (
+    <Card className="space-y-4 p-4">
+      <h2 className="text-sm font-medium">默认上游（Chat）</h2>
+      <p className="text-xs text-muted-foreground">
+        未携带 <code className="text-xs">X-MG-Byok-Id</code> 时使用的上游。可选 ModelGate
+        配置的 <code className="text-xs">[upstream]</code>，或当前空间下某一 BYOK。请求头{' '}
+        <code className="text-xs">X-MG-Use-Platform-Upstream: 1</code> 可强制走平台上游。
+      </p>
+      <div>
+        <p className="text-xs text-muted-foreground">当前已保存</p>
+        <p className="text-sm">{defaultLabel}</p>
+      </div>
+      <label className="block space-y-1.5">
+        <span className="text-sm font-medium">改选默认</span>
+        <select
+          className="w-full rounded border border-border bg-background px-2 py-2 text-sm"
+          value={selection}
+          onChange={(e) => setSelection(e.target.value)}
+          aria-label="默认 Chat 上游"
+          disabled={isLoading}
+        >
+          <option value="platform">ModelGate（[upstream]）</option>
+          {activeProfiles.map((p) => (
+            <option key={p.id} value={String(p.id)}>
+              {p.name} (#{p.id})
+            </option>
+          ))}
+          {stuckId != null ? (
+            <option value={String(stuckId)}>
+              已绑定 #{stuckId}（不可用，请尽快改选）
+            </option>
+          ) : null}
+        </select>
+      </label>
+      {isError ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          无法加载 BYOK 列表（例如未配置服务端主密钥）。仍可保存为 ModelGate；要绑定 BYOK
+          请先在本空间完成 BYOK 配置。
+        </p>
+      ) : null}
+      <Button
+        size="sm"
+        disabled={patchMutation.isPending || isLoading}
+        onClick={() => void handleSave()}
+      >
+        保存默认上游
       </Button>
     </Card>
   )
@@ -292,11 +404,18 @@ export function ApiKeyDetailPage() {
       </Card>
 
       {!data.revoked && data.status !== 'expired' ? (
-        <ApiKeyPoliciesEditor
-          key={policiesEditorKey(data)}
-          data={data}
-          patchMutation={patchMutation}
-        />
+        <>
+          <ApiKeyDefaultUpstreamSection
+            key={`def-up-${data.id}-${data.default_byok_profile_id ?? 'platform'}`}
+            data={data}
+            patchMutation={patchMutation}
+          />
+          <ApiKeyPoliciesEditor
+            key={policiesEditorKey(data)}
+            data={data}
+            patchMutation={patchMutation}
+          />
+        </>
       ) : null}
 
       <div className="flex flex-wrap gap-2">

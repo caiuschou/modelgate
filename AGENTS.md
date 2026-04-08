@@ -15,7 +15,7 @@ Operational notes for contributors and coding agents.
 ## Local development (summary)
 
 - Backend: from repo root, run `cargo run` (use your own `config.toml`; see `config.example.toml`).
-- Frontend: `cd frontend && npm install && npm run dev` (default dev server: `http://127.0.0.1:3000` unless overridden).
+- Frontend: `cd frontend && npm install && npm run dev` (default dev server: `http://127.0.0.1:5173` unless overridden).
 
 ## Testing
 
@@ -36,7 +36,7 @@ Use the smallest test layer that still guards the change.
 
 - `frontend/playwright.config.ts` starts:
   - the Rust app via `node ../e2e/run-modelgate-stack.mjs` (uses `e2e/config.toml`, mock upstream, SQLite at `e2e/modelgate-e2e.db`);
-  - the Vite dev server on port 3000.
+  - the Vite dev server on port 5173.
 - `frontend/e2e/global-setup.ts` registers a test user, logs in, and writes `frontend/playwright/.auth/user.json`. Defaults match `e2e/config.toml` (`invite_code` `e2e-invite-code`). Override with `E2E_INVITE_CODE`, `E2E_USERNAME`, `E2E_PASSWORD`, or `PLAYWRIGHT_BASE_URL` if needed.
 - UI mode (debugging): `cd frontend && npm run test:e2e:ui`.
 

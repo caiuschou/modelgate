@@ -64,7 +64,7 @@
 | completion_tokens_details.reasoning_tokens | int | 推理/思考Token |
 | completion_tokens_details.image_tokens | int | 图像生成Token |
 | completion_tokens_details.audio_tokens | int | 音频输出Token |
-| is_byok | bool | 是否使用 BYOK 密钥 |
+| is_byok | bool | 是否使用 BYOK 密钥；语义与路由规则见 [BYOK 设计](../architecture/byok-design.md) |
 
 ### 2.5 成本详情（扩展）
 

@@ -8,7 +8,7 @@ import {
 } from './helpers/api'
 import { loadE2eSessionCredentials } from './load-e2e-credentials'
 
-const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:3000'
+const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173'
 const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
 
 /** 与侧栏用例一致：先加载 `/` 再客户端跳转，避免直链 `/api-keys` 时 persist 未恢复 */

@@ -31,4 +31,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 ipnetwork = "0.20"
 jsonwebtoken = "9"
 async-stream = "0.3"
+aes-gcm = "0.10"
 

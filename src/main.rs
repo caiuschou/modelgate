@@ -1,6 +1,7 @@
 pub mod api_key_policy;
 pub mod audit;
 pub mod auth;
+pub mod byok;
 pub mod config;
 pub mod db;
 pub mod errors;
@@ -212,6 +213,7 @@ mod tests {
                 base_url: "https://api.openai.com/v1".into(),
                 api_key: "test".into(),
             },
+            byok: crate::config::ByokConfig::default(),
             sqlite: SqliteConfig {
                 path: ":memory:".into(),
             },

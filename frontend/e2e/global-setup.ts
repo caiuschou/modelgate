@@ -24,7 +24,7 @@ function resolveBaseURL(config: FullConfig): string {
   if (typeof fromEnv === 'string' && fromEnv.length > 0) {
     return fromEnv
   }
-  return 'http://127.0.0.1:3000'
+  return 'http://127.0.0.1:5173'
 }
 
 export default async function globalSetup(config: FullConfig) {

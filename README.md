@@ -62,7 +62,7 @@ npm ci
 npm run dev
 ```
 
-浏览器访问 `http://127.0.0.1:3000`。开发环境下 Vite 将 `/api`、`/healthz`、`/users` 代理到 `http://127.0.0.1:8000`。
+浏览器访问 `http://127.0.0.1:5173`。开发环境下 Vite 将 `/api`、`/healthz`、`/users` 代理到 `http://127.0.0.1:8000`。
 
 ---
 

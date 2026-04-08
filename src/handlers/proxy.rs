@@ -8,7 +8,10 @@ use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
-use crate::{api_key_policy, auth, errors::ApiError, upstream, AppState};
+use crate::{
+    api_key_policy, auth, byok, byok::ByokResolveError, db::ApiKeyAuthRow, errors::ApiError,
+    upstream, AppState,
+};
 
 static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -85,6 +88,8 @@ pub async fn chat_completions(
         .user_service
         .touch_api_key_last_used(token_id, now)
         .map_err(ApiError::from)?;
+
+    let resolved = resolve_chat_upstream(&req, &state, &auth_row)?;
     debug!(
         %request_id,
         user_id,
@@ -92,9 +97,10 @@ pub async fn chat_completions(
         model = model.as_deref(),
         stream = is_stream,
         ?app_id,
+        is_byok = resolved.is_byok,
         "chat completions proxy request accepted"
     );
-    let upstream_url = upstream::build_chat_completions_url(&state.cfg.upstream.base_url);
+    let upstream_url = upstream::build_chat_completions_url(&resolved.base_url);
     let request_body_path =
         crate::audit::save_body_to_file(&state.audit_config, &request_id, "request", &body).ok();
 
@@ -104,7 +110,7 @@ pub async fn chat_completions(
         .headers(UPSTREAM_HEADERS.clone())
         .header(
             reqwest_header::AUTHORIZATION,
-            format!("Bearer {}", state.cfg.upstream.api_key),
+            format!("Bearer {}", resolved.api_key),
         )
         .body(body.clone());
 
@@ -141,7 +147,12 @@ pub async fn chat_completions(
                     latency_ms: Some(start.elapsed().as_millis() as i64),
                     app_id: app_id.clone(),
                     finish_reason: None,
-                    metadata: None,
+                    metadata: Some(chat_audit_metadata(
+                        is_stream,
+                        resolved.is_byok,
+                        resolved.byok_profile_id,
+                        None,
+                    )),
                     created_at: crate::audit::now_unix_secs(),
                     team_id: key_team_id,
                 },
@@ -191,7 +202,12 @@ pub async fn chat_completions(
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 app_id: app_id.clone(),
                 finish_reason: None,
-                metadata: Some(serde_json::json!({ "stream": true })),
+                metadata: Some(chat_audit_metadata(
+                    true,
+                    resolved.is_byok,
+                    resolved.byok_profile_id,
+                    None,
+                )),
                 created_at: crate::audit::now_unix_secs(),
                 team_id: key_team_id,
             },
@@ -210,6 +226,8 @@ pub async fn chat_completions(
         );
         let st = state.clone();
         let status_ok = (200..300).contains(&status_i64);
+        let stream_is_byok = resolved.is_byok;
+        let stream_byok_id = resolved.byok_profile_id;
         let stream = stream! {
             let mut file_pair = match crate::audit::create_stream_response_body_file(
                 &st.audit_config,
@@ -265,6 +283,8 @@ pub async fn chat_completions(
                                     stream_completed: false,
                                     stream_aborted: true,
                                     error_message: Some("Upstream stream read failed".into()),
+                                    is_byok: stream_is_byok,
+                                    byok_profile_id: stream_byok_id,
                                 },
                             )
                             .await;
@@ -290,6 +310,8 @@ pub async fn chat_completions(
                         stream_completed: true,
                         stream_aborted: false,
                         error_message: None,
+                        is_byok: stream_is_byok,
+                        byok_profile_id: stream_byok_id,
                     },
                 )
                 .await;
@@ -347,7 +369,12 @@ pub async fn chat_completions(
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 app_id: app_id.clone(),
                 finish_reason: usage.4,
-                metadata: Some(serde_json::json!({ "stream": false })),
+                metadata: Some(chat_audit_metadata(
+                    false,
+                    resolved.is_byok,
+                    resolved.byok_profile_id,
+                    None,
+                )),
                 created_at: crate::audit::now_unix_secs(),
                 team_id: key_team_id,
             },
@@ -464,6 +491,8 @@ struct StreamAuditCompletionJob {
     stream_completed: bool,
     stream_aborted: bool,
     error_message: Option<String>,
+    is_byok: bool,
+    byok_profile_id: Option<i64>,
 }
 
 /// OpenAI-style chat completion JSON: `usage` + `choices[0].finish_reason`.
@@ -523,13 +552,14 @@ async fn enqueue_stream_audit_completion(
         stream_completed,
         stream_aborted,
         error_message,
+        is_byok,
+        byok_profile_id,
     } = job;
-    let metadata = serde_json::json!({
-        "stream": true,
-        "stream_completed": stream_completed,
-        "stream_aborted": stream_aborted,
-        "response_body_format": "text/event-stream",
-    });
+    let mut stream_extra = serde_json::Map::new();
+    stream_extra.insert("stream_completed".into(), stream_completed.into());
+    stream_extra.insert("stream_aborted".into(), stream_aborted.into());
+    stream_extra.insert("response_body_format".into(), "text/event-stream".into());
+    let metadata = chat_audit_metadata(true, is_byok, byok_profile_id, Some(stream_extra));
     let update = crate::audit::AuditStreamCompletionUpdate {
         request_id,
         response_body_path,
@@ -549,4 +579,119 @@ async fn enqueue_stream_audit_completion(
     {
         error!(error = %err, "failed to enqueue stream audit completion");
     }
+}
+
+#[derive(Debug)]
+struct ResolvedUpstream {
+    base_url: String,
+    api_key: String,
+    is_byok: bool,
+    byok_profile_id: Option<i64>,
+}
+
+fn parse_use_platform_upstream(req: &HttpRequest) -> bool {
+    let Some(raw) = req.headers().get("x-mg-use-platform-upstream") else {
+        return false;
+    };
+    let s = raw.to_str().unwrap_or("").trim().to_ascii_lowercase();
+    matches!(s.as_str(), "1" | "true" | "yes")
+}
+
+fn parse_x_byok_profile_id(req: &HttpRequest) -> Result<Option<i64>, ApiError> {
+    let Some(raw) = req.headers().get("x-mg-byok-id") else {
+        return Ok(None);
+    };
+    let s = raw
+        .to_str()
+        .map_err(|_| ApiError::BadRequest("invalid X-MG-Byok-Id header".into()))?
+        .trim();
+    if s.is_empty() {
+        return Ok(None);
+    }
+    let v = s
+        .parse::<i64>()
+        .map_err(|_| ApiError::BadRequest("invalid X-MG-Byok-Id".into()))?;
+    if v <= 0 {
+        return Err(ApiError::BadRequest(
+            "X-MG-Byok-Id must be a positive profile id".into(),
+        ));
+    }
+    Ok(Some(v))
+}
+
+fn resolve_chat_upstream(
+    req: &HttpRequest,
+    state: &web::Data<AppState>,
+    auth_row: &ApiKeyAuthRow,
+) -> Result<ResolvedUpstream, ApiError> {
+    let user_id = auth_row.user_id;
+    let api_key_team_id = auth_row.team_id;
+
+    if parse_use_platform_upstream(req) {
+        return Ok(ResolvedUpstream {
+            base_url: state.cfg.upstream.base_url.clone(),
+            api_key: state.cfg.upstream.api_key.clone(),
+            is_byok: false,
+            byok_profile_id: None,
+        });
+    }
+
+    let explicit = parse_x_byok_profile_id(req)?;
+    let profile_id = explicit.or(auth_row.default_byok_profile_id);
+
+    let Some(pid) = profile_id else {
+        return Ok(ResolvedUpstream {
+            base_url: state.cfg.upstream.base_url.clone(),
+            api_key: state.cfg.upstream.api_key.clone(),
+            is_byok: false,
+            byok_profile_id: None,
+        });
+    };
+
+    if pid <= 0 {
+        return Err(ApiError::BadRequest("invalid default BYOK profile id".into()));
+    }
+
+    let master = state
+        .cfg
+        .byok
+        .master_key_32()
+        .map_err(ApiError::ServiceUnavailable)?;
+    let conn = state
+        .db
+        .get()
+        .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
+    match byok::resolve_byok_for_gateway(&conn, pid, user_id, api_key_team_id, &master) {
+        Ok(r) => Ok(ResolvedUpstream {
+            base_url: r.base_url,
+            api_key: r.api_key,
+            is_byok: true,
+            byok_profile_id: Some(r.profile_id),
+        }),
+        Err(ByokResolveError::NotFound) => Err(ApiError::NotFound("BYOK profile not found".into())),
+        Err(ByokResolveError::Decrypt) => Err(ApiError::InternalError(
+            "failed to decrypt BYOK credentials".into(),
+        )),
+        Err(ByokResolveError::Db(e)) => Err(ApiError::InternalError(format!("database error: {e}"))),
+    }
+}
+
+fn chat_audit_metadata(
+    stream: bool,
+    is_byok: bool,
+    byok_profile_id: Option<i64>,
+    stream_extras: Option<serde_json::Map<String, serde_json::Value>>,
+) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    m.insert("stream".to_string(), stream.into());
+    m.insert("is_byok".to_string(), is_byok.into());
+    if let Some(id) = byok_profile_id {
+        m.insert("byok_profile_id".to_string(), id.into());
+    }
+    if let Some(extra) = stream_extras {
+        for (k, v) in extra {
+            m.insert(k, v);
+        }
+    }
+    serde_json::Value::Object(m)
 }

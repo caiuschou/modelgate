@@ -92,7 +92,7 @@ npm ci
 npm run dev
 ```
 
-默认 Vite：`http://127.0.0.1:3000`。  
+默认 Vite：`http://127.0.0.1:5173`。  
 开发环境下，`/api`、`/healthz`、`/users` 会代理到 `http://127.0.0.1:8000`（见 `vite.config.ts`）。
 
 生产构建：

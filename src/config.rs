@@ -4,6 +4,8 @@ use serde::Deserialize;
 pub struct AppConfig {
     pub server: ServerConfig,
     pub upstream: UpstreamConfig,
+    #[serde(default)]
+    pub byok: ByokConfig,
     pub sqlite: SqliteConfig,
     pub audit: crate::audit::AuditConfig,
     /// Where to write rolling `tracing` logs (empty = stderr only).
@@ -41,6 +43,33 @@ pub struct UpstreamConfig {
     pub api_key: String,
 }
 
+/// BYOK at-rest encryption. Empty `master_key_hex` disables BYOK management and `X-MG-Byok-Id`.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ByokConfig {
+    /// 64 hex characters (32 bytes). Override with env `BYOK_MASTER_KEY`.
+    #[serde(default)]
+    pub master_key_hex: String,
+}
+
+impl ByokConfig {
+    pub fn master_key_32(&self) -> Result<[u8; 32], String> {
+        let s = self.master_key_hex.trim();
+        if s.is_empty() {
+            return Err("BYOK master key is not configured".into());
+        }
+        let raw = hex::decode(s).map_err(|e| format!("invalid byok.master_key_hex: {e}"))?;
+        if raw.len() != 32 {
+            return Err(format!(
+                "byok.master_key_hex must be 32 bytes hex-encoded (64 hex chars); got {} bytes",
+                raw.len()
+            ));
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&raw);
+        Ok(out)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct SqliteConfig {
     pub path: String,
@@ -55,6 +84,7 @@ fn config_builder(
         .set_default("server.port", 8000)?
         .set_default("upstream.base_url", "https://api.openai.com/v1")?
         .set_default("upstream.api_key", "")?
+        .set_default("byok.master_key_hex", "")?
         .set_default("sqlite.path", "modelgate.db")?
         .set_default("audit.log_dir", "./audit_logs")?
         .set_default("audit.retention_days", 90)?
@@ -106,6 +136,12 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
     }
 
     let mut cfg: AppConfig = config.try_deserialize()?;
+    if let Ok(h) = std::env::var("BYOK_MASTER_KEY") {
+        let t = h.trim();
+        if !t.is_empty() {
+            cfg.byok.master_key_hex = h;
+        }
+    }
     if cfg.auth.jwt_secret.trim().is_empty() {
         cfg.auth.jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
             let h = crate::secrets::secret_sha256_hex(&cfg.upstream.api_key);

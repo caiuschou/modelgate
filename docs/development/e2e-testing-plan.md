@@ -46,7 +46,7 @@
 | 考量 | 说明 |
 |------|------|
 | 稳定性 | 自动等待、网络/路由拦截、trace 与视频便于排障 |
-| 与 Vite 协作 | `webServer` 启动 dev server；`playwright.config.ts` 默认为本机**随机端口**（网关 / Vite / Mock 各一），并写入 `process.env`（`E2E_BACKEND_URL`、`PLAYWRIGHT_BASE_URL` 等），避免与本机已占用 8000/3000 冲突；也可用 `E2E_BACKEND_PORT`、`E2E_FRONTEND_PORT`、`E2E_MOCK_PORT` 固定端口 |
+| 与 Vite 协作 | `webServer` 启动 dev server；`playwright.config.ts` 默认为本机**随机端口**（网关 / Vite / Mock 各一），并写入 `process.env`（`E2E_BACKEND_URL`、`PLAYWRIGHT_BASE_URL` 等），避免与本机已占用 8000/5173 等冲突；也可用 `E2E_BACKEND_PORT`、`E2E_FRONTEND_PORT`、`E2E_MOCK_PORT` 固定端口 |
 | CI | 官方 GitHub Actions 镜像、浏览器缓存成熟 |
 | 团队 | TypeScript 一等公民，与前端栈一致 |
 
@@ -86,7 +86,7 @@
 
 1. 启动 **上游 Mock**（监听 `18080` 或约定端口）。  
 2. 在持有上述 `config.toml` 的目录启动 **Rust**（监听 `8000`，并完成迁移）。  
-3. 启动 **Vite**（`3000`）与 **Playwright**。
+3. 启动 **Vite**（`5173`）与 **Playwright**。
 
 CI 中同样保持该顺序；可将 Mock 实现为小型 Node/Go/Rust 常驻服务，或使用 Wiremock 等工具挂载相同路径。
 
@@ -95,9 +95,9 @@ CI 中同样保持该顺序；可将 Mock 实现为小型 Node/Go/Rust 常驻服
 当前 `vite.config.ts` 将 `/api`、`/healthz` 等代理到 `http://127.0.0.1:8000`。在 **3.1** 已满足的前提下：
 
 1. **Rust**：监听 `8000`（或统一改端口后同步改 Vite proxy）。  
-2. **Vite**：由 Playwright `webServer` 启动 `npm run dev`（`3000`），或手动启动后运行 `npx playwright test`。
+2. **Vite**：由 Playwright `webServer` 启动 `npm run dev`（随机端口或 `--port`），或手动启动后运行 `npx playwright test`。
 
-Playwright 配置中 `baseURL` 设为 `http://127.0.0.1:3000`，**不**强制设置 `VITE_API_BASE_URL`，以便走同源代理（与生产「静态站 + 同域 API」形态接近）。
+手动跑 E2E 且自带 Vite 时，`PLAYWRIGHT_BASE_URL` 默认与本地 dev 一致为 `http://127.0.0.1:5173`；由 Playwright 拉起的服务器则使用随机端口。**不**强制设置 `VITE_API_BASE_URL`，以便走同源代理（与生产「静态站 + 同域 API」形态接近）。
 
 **不建议**用 Playwright `page.route` 拦截「浏览器 → OpenRouter」来替代本方案：浏览器不直连 OpenRouter，流量经 **Rust 服务端** 发出；Mock 必须对 **Rust 进程** 可见。若仅 Mock 管理后台调用的 `/api/v1/...`，仍无法替代上游 Mock。
 

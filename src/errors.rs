@@ -10,6 +10,8 @@ pub enum ApiError {
     Conflict(String),
     NotFound(String),
     TooManyRequests(String),
+    /// HTTP 503 — e.g. optional subsystem not configured.
+    ServiceUnavailable(String),
     InternalError(String),
 }
 
@@ -22,6 +24,7 @@ impl ApiError {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
+            ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
             ApiError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -34,6 +37,7 @@ impl ApiError {
             ApiError::Conflict(_) => "conflict_error",
             ApiError::NotFound(_) => "not_found_error",
             ApiError::TooManyRequests(_) => "rate_limit_error",
+            ApiError::ServiceUnavailable(_) => "service_unavailable_error",
             ApiError::InternalError(_) => "internal_error",
         }
     }
@@ -46,6 +50,7 @@ impl ApiError {
             | ApiError::Conflict(message)
             | ApiError::NotFound(message)
             | ApiError::TooManyRequests(message)
+            | ApiError::ServiceUnavailable(message)
             | ApiError::InternalError(message) => message,
         }
     }
@@ -132,6 +137,11 @@ mod tests {
                 ApiError::TooManyRequests("r".into()),
                 "rate_limit_error",
                 StatusCode::TOO_MANY_REQUESTS,
+            ),
+            (
+                ApiError::ServiceUnavailable("s".into()),
+                "service_unavailable_error",
+                StatusCode::SERVICE_UNAVAILABLE,
             ),
             (
                 ApiError::InternalError("i".into()),

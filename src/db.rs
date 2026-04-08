@@ -4,7 +4,7 @@ use rusqlite::{params, params_from_iter, types::Value, Connection};
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 8] = [
+const MIGRATIONS: [(&str, &str); 10] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -36,6 +36,14 @@ const MIGRATIONS: [(&str, &str); 8] = [
     (
         "0008_team_scope_api_audit.sql",
         include_str!("../migrations/0008_team_scope_api_audit.sql"),
+    ),
+    (
+        "0009_byok_profiles.sql",
+        include_str!("../migrations/0009_byok_profiles.sql"),
+    ),
+    (
+        "0010_api_keys_default_byok.sql",
+        include_str!("../migrations/0010_api_keys_default_byok.sql"),
     ),
 ];
 
@@ -176,6 +184,8 @@ pub struct ApiKeyRow {
     pub ip_allowlist: Option<String>,
     /// `None` = personal (non-team) key.
     pub team_id: Option<i64>,
+    /// Default BYOK profile for Chat proxy when no `X-MG-Byok-Id` (see routing docs).
+    pub default_byok_profile_id: Option<i64>,
 }
 
 fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
@@ -196,6 +206,7 @@ fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
         model_allowlist: row.get(13)?,
         ip_allowlist: row.get(14)?,
         team_id: row.get(15)?,
+        default_byok_profile_id: row.get(16)?,
     })
 }
 
@@ -203,7 +214,7 @@ fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
 pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
          FROM api_keys WHERE user_id = ?1 AND team_id IS NULL ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![user_id], map_api_key_row)?;
@@ -214,7 +225,7 @@ pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Resu
 pub fn list_api_keys_for_team(conn: &Connection, team_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
          FROM api_keys WHERE team_id = ?1 ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![team_id], map_api_key_row)?;
@@ -228,7 +239,7 @@ pub fn get_api_key_row_for_user(
 ) -> rusqlite::Result<ApiKeyRow> {
     conn.query_row(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
          FROM api_keys WHERE id = ?1 AND user_id = ?2 AND team_id IS NULL",
         params![key_id, user_id],
         map_api_key_row,
@@ -238,7 +249,7 @@ pub fn get_api_key_row_for_user(
 pub fn get_api_key_row_by_id(conn: &Connection, key_id: i64) -> rusqlite::Result<ApiKeyRow> {
     conn.query_row(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
          FROM api_keys WHERE id = ?1",
         params![key_id],
         map_api_key_row,
@@ -258,6 +269,7 @@ pub fn insert_api_key_with_meta(
     model_allowlist: Option<&str>,
     ip_allowlist: Option<&str>,
     team_id: Option<i64>,
+    default_byok_profile_id: Option<i64>,
 ) -> rusqlite::Result<i64> {
     let period = quota_monthly_tokens
         .filter(|&q| q > 0)
@@ -266,8 +278,8 @@ pub fn insert_api_key_with_meta(
     let preview = crate::secrets::api_key_preview_short(api_key);
     conn.execute(
         "INSERT INTO api_keys (user_id, api_key, api_key_hash, key_preview, created_at, name, description, expires_at,
-            quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start, team_id)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start, team_id, default_byok_profile_id)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![
             user_id,
             hash,
@@ -281,6 +293,7 @@ pub fn insert_api_key_with_meta(
             ip_allowlist,
             period,
             team_id,
+            default_byok_profile_id,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -295,6 +308,7 @@ pub struct ApiKeyPatchDb {
     pub quota_monthly_tokens: Option<Option<i64>>,
     pub model_allowlist: Option<Option<String>>,
     pub ip_allowlist: Option<Option<String>>,
+    pub default_byok_profile_id: Option<Option<i64>>,
 }
 
 pub fn update_api_key_for_user(
@@ -366,6 +380,18 @@ pub fn update_api_key_for_user(
             )?,
             None => conn.execute(
                 "UPDATE api_keys SET ip_allowlist = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    if let Some(ref d) = patch.default_byok_profile_id {
+        total += match d {
+            Some(pid) => conn.execute(
+                "UPDATE api_keys SET default_byok_profile_id = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+                params![*pid, key_id, user_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET default_byok_profile_id = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
                 params![key_id, user_id],
             )?,
         };
@@ -529,6 +555,18 @@ fn update_api_key_by_id(
             )?,
             None => conn.execute(
                 "UPDATE api_keys SET ip_allowlist = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    if let Some(ref d) = patch.default_byok_profile_id {
+        total += match d {
+            Some(pid) => conn.execute(
+                "UPDATE api_keys SET default_byok_profile_id = ?1 WHERE id = ?2 AND revoked = 0",
+                params![*pid, key_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET default_byok_profile_id = NULL WHERE id = ?1 AND revoked = 0",
                 params![key_id],
             )?,
         };
@@ -943,6 +981,7 @@ pub struct ApiKeyAuthRow {
     pub quota_used_tokens: i64,
     pub quota_period_start: Option<i64>,
     pub team_id: Option<i64>,
+    pub default_byok_profile_id: Option<i64>,
 }
 
 pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Result<ApiKeyAuthRow> {
@@ -953,7 +992,7 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
     let hash = crate::secrets::api_key_sha256_hex(api_key);
     conn.query_row(
         "SELECT id, user_id, model_allowlist, ip_allowlist, quota_monthly_tokens,
-                quota_used_tokens, quota_period_start, team_id
+                quota_used_tokens, quota_period_start, team_id, default_byok_profile_id
          FROM api_keys WHERE (api_key_hash = ?1 OR api_key = ?2) AND revoked = 0 AND disabled = 0
          AND (expires_at IS NULL OR expires_at > ?3)",
         params![hash, api_key, now],
@@ -967,6 +1006,7 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
                 quota_used_tokens: row.get(5)?,
                 quota_period_start: row.get(6)?,
                 team_id: row.get(7)?,
+                default_byok_profile_id: row.get(8)?,
             })
         },
     )

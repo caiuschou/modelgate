@@ -9,6 +9,8 @@ import { RegisterPage } from '@/features/auth/pages/register-page'
 import { NotFoundPage } from '@/features/common/pages/not-found-page'
 import { ApiKeysPage } from '@/features/api-keys/pages/api-keys-page'
 import { ApiKeyDetailPage } from '@/features/api-keys/pages/api-key-detail-page'
+import { ByokProfilesPage } from '@/features/byok/pages/byok-profiles-page'
+import { ByokProfileDetailPage } from '@/features/byok/pages/byok-profile-detail-page'
 import { LogDetailPage } from '@/features/logs/pages/log-detail-page'
 import { LogListPage } from '@/features/logs/pages/log-list-page'
 import { AnalyticsPage } from '@/features/analytics/pages/analytics-page'
@@ -83,6 +85,8 @@ export const router = createBrowserRouter([
       { path: 'invite', element: <AcceptInvitePage /> },
       { path: 'api-keys', element: <ApiKeysPage /> },
       { path: 'api-keys/:id', element: <ApiKeyDetailPage /> },
+      { path: 'byok-profiles', element: <ByokProfilesPage /> },
+      { path: 'byok-profiles/:id', element: <ByokProfileDetailPage /> },
       {
         path: 'users',
         element: (

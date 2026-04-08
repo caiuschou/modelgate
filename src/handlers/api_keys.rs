@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::ApiKeyPatchDb;
 use crate::services::user::CreateMyApiKeyInput;
-use crate::{db, errors::ApiError, session_auth, AppState};
+use crate::{byok, db, errors::ApiError, session_auth, AppState};
 
 fn auth_user_id(req: &HttpRequest, state: &web::Data<AppState>) -> Result<i64, ApiError> {
     Ok(session_auth::resolve_console_session(req, state)?.user_id)
@@ -50,6 +50,8 @@ pub struct CreateMyApiKeyBody {
     pub model_allowlist: Option<Vec<String>>,
     #[serde(default)]
     pub ip_allowlist: Option<Vec<String>>,
+    #[serde(default)]
+    pub default_byok_profile_id: Option<i64>,
 }
 
 impl Default for CreateMyApiKeyBody {
@@ -61,6 +63,7 @@ impl Default for CreateMyApiKeyBody {
             quota_monthly_tokens: None,
             model_allowlist: None,
             ip_allowlist: None,
+            default_byok_profile_id: None,
         }
     }
 }
@@ -100,6 +103,24 @@ pub async fn create_my_api_key(
             serde_json::from_slice(&bytes)
                 .map_err(|e| ApiError::BadRequest(format!("invalid JSON: {e}")))?
         };
+    if let Some(pid) = b.default_byok_profile_id {
+        if pid <= 0 {
+            return Err(ApiError::BadRequest(
+                "default_byok_profile_id must be positive".into(),
+            ));
+        }
+        let conn = state
+            .db
+            .get()
+            .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
+        let ok = byok::profile_bindable_for_gateway_key(&conn, pid, user_id, team_id)
+            .map_err(|e| ApiError::InternalError(format!("database error: {e}")))?;
+        if !ok {
+            return Err(ApiError::BadRequest(
+                "BYOK profile not found or not in this key's scope".into(),
+            ));
+        }
+    }
     let input = CreateMyApiKeyInput {
         name: b.name,
         description: b.description,
@@ -108,6 +129,7 @@ pub async fn create_my_api_key(
         model_allowlist: b.model_allowlist,
         ip_allowlist: b.ip_allowlist,
         team_id,
+        default_byok_profile_id: b.default_byok_profile_id,
     };
     let (id, api_key, created_at) = state
         .user_service
@@ -153,6 +175,9 @@ pub struct PatchMyApiKeyBody {
     pub model_allowlist: Option<Option<Vec<String>>>,
     #[serde(default)]
     pub ip_allowlist: Option<Option<Vec<String>>>,
+    /// `null` clears default BYOK (use ModelGate `[upstream]`). Omit = no change.
+    #[serde(default)]
+    pub default_byok_profile_id: Option<Option<i64>>,
 }
 
 fn patch_db_has_changes(p: &ApiKeyPatchDb) -> bool {
@@ -163,6 +188,7 @@ fn patch_db_has_changes(p: &ApiKeyPatchDb) -> bool {
         || p.quota_monthly_tokens.is_some()
         || p.model_allowlist.is_some()
         || p.ip_allowlist.is_some()
+        || p.default_byok_profile_id.is_some()
 }
 
 pub async fn patch_my_api_key(
@@ -206,6 +232,29 @@ pub async fn patch_my_api_key(
     if let Some(ip) = b.ip_allowlist {
         patch.ip_allowlist =
             Some(ip.map(|v| serde_json::to_string(&v).unwrap_or_else(|_| "[]".to_string())));
+    }
+    if let Some(opt) = b.default_byok_profile_id {
+        if let Some(pid) = opt {
+            if pid <= 0 {
+                return Err(ApiError::BadRequest(
+                    "default_byok_profile_id must be positive".into(),
+                ));
+            }
+            let conn = state
+                .db
+                .get()
+                .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
+            let row = crate::db::get_api_key_row_for_console(&conn, user_id, key_id)
+                .map_err(|_| ApiError::NotFound("API key not found".into()))?;
+            let ok = crate::byok::profile_bindable_for_gateway_key(&conn, pid, row.user_id, row.team_id)
+                .map_err(|e| ApiError::InternalError(format!("database error: {e}")))?;
+            if !ok {
+                return Err(ApiError::BadRequest(
+                    "BYOK profile not found or not in this key's scope".into(),
+                ));
+            }
+        }
+        patch.default_byok_profile_id = Some(opt);
     }
     if !patch_db_has_changes(&patch) {
         return Err(ApiError::BadRequest("no fields to update".into()));

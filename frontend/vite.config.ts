@@ -11,7 +11,7 @@ const apiProxyTarget =
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
-    port: 3000,
+    port: 5173,
     proxy: {
       // 必须用 `/api/` 前缀，否则 `/api-keys` 等控制台路由会被误代理到后端
       '/api/': {
