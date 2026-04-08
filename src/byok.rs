@@ -308,8 +308,14 @@ pub fn revoke_byok_profile(
     }
 }
 
-type ByokGatewayRow =
-    (String, Vec<u8>, Vec<u8>, Option<i64>, Option<i64>, Option<i64>);
+type ByokGatewayRow = (
+    String,
+    Vec<u8>,
+    Vec<u8>,
+    Option<i64>,
+    Option<i64>,
+    Option<i64>,
+);
 
 /// Whether a non-revoked profile may be set as `api_keys.default_byok_profile_id` for this key scope.
 pub fn profile_bindable_for_gateway_key(

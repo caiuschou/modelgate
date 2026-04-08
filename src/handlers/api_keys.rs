@@ -246,8 +246,9 @@ pub async fn patch_my_api_key(
                 .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
             let row = crate::db::get_api_key_row_for_console(&conn, user_id, key_id)
                 .map_err(|_| ApiError::NotFound("API key not found".into()))?;
-            let ok = crate::byok::profile_bindable_for_gateway_key(&conn, pid, row.user_id, row.team_id)
-                .map_err(|e| ApiError::InternalError(format!("database error: {e}")))?;
+            let ok =
+                crate::byok::profile_bindable_for_gateway_key(&conn, pid, row.user_id, row.team_id)
+                    .map_err(|e| ApiError::InternalError(format!("database error: {e}")))?;
             if !ok {
                 return Err(ApiError::BadRequest(
                     "BYOK profile not found or not in this key's scope".into(),

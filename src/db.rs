@@ -1,6 +1,6 @@
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{params, params_from_iter, types::Value, Connection};
+use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
@@ -912,6 +912,30 @@ pub fn get_user_login_credentials(
         Some(row) => Ok(Some(row?)),
         None => Ok(None),
     }
+}
+
+/// Returns `None` if the user row is missing; otherwise the nullable `password_hash` column.
+pub fn get_user_password_hash_by_id(
+    conn: &Connection,
+    user_id: i64,
+) -> rusqlite::Result<Option<Option<String>>> {
+    conn.query_row(
+        "SELECT password_hash FROM users WHERE id = ?1",
+        params![user_id],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .optional()
+}
+
+pub fn set_user_password_hash(
+    conn: &Connection,
+    user_id: i64,
+    password_hash: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+        params![password_hash, user_id],
+    )
 }
 
 pub fn insert_user_with_password(

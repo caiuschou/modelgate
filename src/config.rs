@@ -139,7 +139,7 @@ pub fn load_config_from_dir<P: AsRef<Path>>(dir: P) -> Result<AppConfig, config:
     if let Ok(h) = std::env::var("BYOK_MASTER_KEY") {
         let t = h.trim();
         if !t.is_empty() {
-            cfg.byok.master_key_hex = h;
+            cfg.byok.master_key_hex = t.to_string();
         }
     }
     if cfg.auth.jwt_secret.trim().is_empty() {

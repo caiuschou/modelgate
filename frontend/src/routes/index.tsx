@@ -98,6 +98,7 @@ export const router = createBrowserRouter([
       { path: 'logs', element: <LogListPage /> },
       { path: 'logs/:requestId', element: <LogDetailPage /> },
       { path: 'analytics', element: <AnalyticsPage /> },
+      { path: 'account/password', element: <Navigate to="/" replace /> },
       {
         path: 'settings',
         element: (

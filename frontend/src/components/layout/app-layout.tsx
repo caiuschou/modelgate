@@ -8,6 +8,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { cn } from '@/lib/utils'
+import { ChangePasswordModal } from '@/features/auth/components/change-password-modal'
 import { useMyTeams } from '@/features/teams/hooks/use-teams'
 import { useAuthStore } from '@/stores/auth-store'
 import { useTeamStore } from '@/stores/team-store'
@@ -43,6 +44,8 @@ export function AppLayout() {
   const theme = useUiStore((state) => state.theme)
   const setTheme = useUiStore((state) => state.setTheme)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const teams = teamsRes?.data ?? []
   const currentSpaceLabel =
     currentTeamId == null
@@ -51,6 +54,7 @@ export function AppLayout() {
         `团队 #${currentTeamId}`)
 
   const handleLogout = () => {
+    setUserMenuOpen(false)
     logout()
     navigate('/login')
   }
@@ -155,10 +159,57 @@ export function AppLayout() {
               </Button>
             ))}
           </div>
-          <span className="text-muted-foreground">{user?.username ?? 'guest'}</span>
-          <Button variant="outline" size="sm" onClick={handleLogout}>
-            退出
-          </Button>
+          <Popover open={userMenuOpen} onOpenChange={setUserMenuOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto max-w-[200px] gap-1.5 px-2 py-1.5 font-medium text-muted-foreground hover:text-foreground"
+                aria-label={`账号菜单：${user?.username ?? 'guest'}`}
+                aria-expanded={userMenuOpen}
+              >
+                <span className="min-w-0 flex-1 truncate text-left text-sm">
+                  {user?.username ?? 'guest'}
+                </span>
+                <ChevronDown
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-48 p-1" sideOffset={6}>
+              <div className="flex flex-col gap-0.5" role="menu" aria-label="账号">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={cn(
+                    'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
+                    'hover:bg-accent hover:text-accent-foreground',
+                    'focus-visible:ring-2 focus-visible:ring-ring/50',
+                  )}
+                  onClick={() => {
+                    setUserMenuOpen(false)
+                    setChangePasswordOpen(true)
+                  }}
+                >
+                  修改密码
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={cn(
+                    'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
+                    'hover:bg-accent hover:text-accent-foreground',
+                    'focus-visible:ring-2 focus-visible:ring-ring/50',
+                  )}
+                  onClick={handleLogout}
+                >
+                  退出
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </header>
 
@@ -194,6 +245,11 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+
+      <ChangePasswordModal
+        open={changePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
+      />
     </div>
   )
 }

@@ -272,8 +272,7 @@ pub async fn revoke_my_byok_profile(
     if n == 0 {
         return Err(ApiError::NotFound("BYOK profile not found".into()));
     }
-    byok::clear_default_byok_refs_for_profile(&conn, id).map_err(|e| {
-        ApiError::InternalError(format!("database error: {e}"))
-    })?;
+    byok::clear_default_byok_refs_for_profile(&conn, id)
+        .map_err(|e| ApiError::InternalError(format!("database error: {e}")))?;
     Ok(HttpResponse::Ok().json(serde_json::json!({ "ok": true })))
 }

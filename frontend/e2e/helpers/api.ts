@@ -18,6 +18,21 @@ export async function loginApiKey(
   return body.token
 }
 
+export async function changeMyPassword(
+  consoleBaseUrl: string,
+  sessionToken: string,
+  body: { new_password: string },
+): Promise<Response> {
+  return fetch(`${consoleBaseUrl}/api/v1/me/password`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${sessionToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+}
+
 /** Chat completions require `sk-or-v1-*`; create a disposable gateway key using a session JWT. */
 export async function getGatewayApiKeyForSession(
   consoleBaseUrl: string,

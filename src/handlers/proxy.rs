@@ -649,7 +649,9 @@ fn resolve_chat_upstream(
     };
 
     if pid <= 0 {
-        return Err(ApiError::BadRequest("invalid default BYOK profile id".into()));
+        return Err(ApiError::BadRequest(
+            "invalid default BYOK profile id".into(),
+        ));
     }
 
     let master = state
@@ -672,7 +674,9 @@ fn resolve_chat_upstream(
         Err(ByokResolveError::Decrypt) => Err(ApiError::InternalError(
             "failed to decrypt BYOK credentials".into(),
         )),
-        Err(ByokResolveError::Db(e)) => Err(ApiError::InternalError(format!("database error: {e}"))),
+        Err(ByokResolveError::Db(e)) => {
+            Err(ApiError::InternalError(format!("database error: {e}")))
+        }
     }
 }
 

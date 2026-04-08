@@ -392,6 +392,14 @@ mod tests {
             Ok(None)
         }
 
+        fn change_my_password(
+            &self,
+            _user_id: i64,
+            _new_password: &str,
+        ) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
         fn get_first_api_key_for_user(
             &self,
             _user_id: i64,

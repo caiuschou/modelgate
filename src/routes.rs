@@ -1,11 +1,15 @@
 use actix_web::web;
 
-use crate::handlers::{self, audit, proxy, session, team, user};
+use crate::handlers::{self, audit, password, proxy, session, team, user};
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(handlers::health))
         .route("/api/v1/auth/register", web::post().to(session::register))
         .route("/api/v1/auth/login", web::post().to(session::login))
+        .route(
+            "/api/v1/me/password",
+            web::post().to(password::change_my_password),
+        )
         .route("/users", web::post().to(user::create_user))
         .route(
             "/users/{username}/keys",

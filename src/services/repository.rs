@@ -144,6 +144,17 @@ pub trait Repository: Send + Sync {
         username: &str,
     ) -> Result<Option<(i64, Option<String>)>, RepositoryError>;
 
+    fn get_user_password_hash_by_id(
+        &self,
+        user_id: i64,
+    ) -> Result<Option<Option<String>>, RepositoryError>;
+
+    fn set_user_password_hash(
+        &self,
+        user_id: i64,
+        password_hash: &str,
+    ) -> Result<(), RepositoryError>;
+
     fn get_first_api_key_for_user(&self, user_id: i64) -> Result<Option<String>, RepositoryError>;
 
     fn create_api_key_for_user_id(
@@ -436,6 +447,37 @@ impl Repository for SqliteRepository {
             .map_err(|_| RepositoryError::PoolUnavailable)?;
         db::get_user_login_credentials(&conn, username)
             .map_err(|_| RepositoryError::Internal("Failed to load user".into()))
+    }
+
+    fn get_user_password_hash_by_id(
+        &self,
+        user_id: i64,
+    ) -> Result<Option<Option<String>>, RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::get_user_password_hash_by_id(&conn, user_id)
+            .map_err(|_| RepositoryError::Internal("Failed to load user".into()))
+    }
+
+    fn set_user_password_hash(
+        &self,
+        user_id: i64,
+        password_hash: &str,
+    ) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        let n = db::set_user_password_hash(&conn, user_id, password_hash).map_err(|err| {
+            error!(error = %err, "failed to update password hash");
+            RepositoryError::Internal("Failed to update password".into())
+        })?;
+        if n == 0 {
+            return Err(RepositoryError::NotFound("user not found".into()));
+        }
+        Ok(())
     }
 
     fn get_first_api_key_for_user(&self, user_id: i64) -> Result<Option<String>, RepositoryError> {

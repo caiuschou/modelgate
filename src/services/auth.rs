@@ -127,6 +127,19 @@ mod tests {
         ) -> Result<Option<(i64, Option<String>)>, RepositoryError> {
             Ok(None)
         }
+        fn get_user_password_hash_by_id(
+            &self,
+            _user_id: i64,
+        ) -> Result<Option<Option<String>>, RepositoryError> {
+            Ok(None)
+        }
+        fn set_user_password_hash(
+            &self,
+            _user_id: i64,
+            _password_hash: &str,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
         fn get_first_api_key_for_user(
             &self,
             _user_id: i64,

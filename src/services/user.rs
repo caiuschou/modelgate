@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use bcrypt::{hash, DEFAULT_COST};
+
 use super::error::RepositoryError;
 use super::error::ServiceError;
 use super::repository::{ApiKeySummary, Repository};
@@ -44,6 +46,7 @@ pub trait UserService: Send + Sync {
         &self,
         username: &str,
     ) -> Result<Option<(i64, Option<String>)>, ServiceError>;
+    fn change_my_password(&self, user_id: i64, new_password: &str) -> Result<(), ServiceError>;
     fn get_first_api_key_for_user(&self, user_id: i64) -> Result<Option<String>, ServiceError>;
     fn create_api_key_for_user_id(
         &self,
@@ -164,6 +167,19 @@ impl UserService for DefaultUserService {
     ) -> Result<Option<(i64, Option<String>)>, ServiceError> {
         self.repo
             .get_user_login_credentials(username)
+            .map_err(ServiceError::from)
+    }
+
+    fn change_my_password(&self, user_id: i64, new_password: &str) -> Result<(), ServiceError> {
+        if new_password.len() < 8 {
+            return Err(ServiceError::BadRequest(
+                "password must be at least 8 characters".into(),
+            ));
+        }
+        let new_hash = hash(new_password, DEFAULT_COST)
+            .map_err(|_| ServiceError::Internal("password hashing failed".into()))?;
+        self.repo
+            .set_user_password_hash(user_id, &new_hash)
             .map_err(ServiceError::from)
     }
 
@@ -385,6 +401,19 @@ mod tests {
         ) -> Result<Option<(i64, Option<String>)>, RepositoryError> {
             Ok(None)
         }
+        fn get_user_password_hash_by_id(
+            &self,
+            _user_id: i64,
+        ) -> Result<Option<Option<String>>, RepositoryError> {
+            Ok(None)
+        }
+        fn set_user_password_hash(
+            &self,
+            _user_id: i64,
+            _password_hash: &str,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
         fn get_first_api_key_for_user(
             &self,
             _user_id: i64,
@@ -493,5 +522,73 @@ mod tests {
             ServiceError::Conflict(msg) => assert!(msg.contains("already exists")),
             _ => panic!("unexpected error variant"),
         }
+    }
+}
+
+#[cfg(test)]
+mod change_password_tests {
+    use std::sync::Arc;
+
+    use super::{DefaultUserService, Repository, UserService};
+    use crate::db;
+    use crate::services::error::ServiceError;
+    use crate::services::repository::SqliteRepository;
+    use r2d2_sqlite::SqliteConnectionManager;
+
+    fn build_service() -> DefaultUserService {
+        let manager = SqliteConnectionManager::memory();
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("pool");
+        {
+            let conn = pool.get().expect("conn");
+            db::run_migrations(&conn).expect("migrations");
+        }
+        let repo: Arc<dyn Repository> = Arc::new(SqliteRepository::new(pool));
+        DefaultUserService::new(repo)
+    }
+
+    #[test]
+    fn change_password_updates_hash() {
+        let svc = build_service();
+        let hash = bcrypt::hash("Oldpass1", bcrypt::DEFAULT_COST).expect("hash");
+        svc.register_user_with_password_and_api_key("pwuser", &hash, "sk-pw-1", 1)
+            .expect("register");
+        let (uid, _) = svc
+            .get_user_login_credentials("pwuser")
+            .expect("creds")
+            .expect("user");
+        svc.change_my_password(uid, "Newpass2")
+            .expect("change password");
+        let (_, stored) = svc
+            .get_user_login_credentials("pwuser")
+            .expect("creds")
+            .expect("user");
+        let h = stored.expect("hash");
+        assert!(bcrypt::verify("Newpass2", &h).expect("verify"));
+        svc.change_my_password(uid, "Thirdpass9")
+            .expect("second change");
+        let (_, h2) = svc
+            .get_user_login_credentials("pwuser")
+            .expect("creds")
+            .expect("user");
+        assert!(bcrypt::verify("Thirdpass9", h2.as_ref().unwrap()).expect("verify2"));
+    }
+
+    #[test]
+    fn change_password_rejects_short_new_password() {
+        let svc = build_service();
+        let hash = bcrypt::hash("Oldpass1", bcrypt::DEFAULT_COST).expect("hash");
+        svc.register_user_with_password_and_api_key("shortpw", &hash, "sk-pw-2", 1)
+            .expect("register");
+        let (uid, _) = svc
+            .get_user_login_credentials("shortpw")
+            .expect("creds")
+            .expect("user");
+        let err = svc
+            .change_my_password(uid, "short")
+            .expect_err("too short");
+        assert!(matches!(err, ServiceError::BadRequest(_)));
     }
 }

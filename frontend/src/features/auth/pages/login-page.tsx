@@ -22,6 +22,7 @@ export function LoginPage() {
   const login = useAuthStore((state) => state.login)
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const passwordChangedBanner = searchParams.get('password_changed') === '1'
 
   useEffect(() => {
     const prefill = searchParams.get('username')
@@ -89,6 +90,11 @@ export function LoginPage() {
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+            {passwordChangedBanner ? (
+              <p className="text-sm text-muted-foreground" role="status">
+                密码已更新，请使用新密码登录。
+              </p>
+            ) : null}
             {formError ? (
               <p className="text-sm text-destructive" role="alert">
                 {formError}

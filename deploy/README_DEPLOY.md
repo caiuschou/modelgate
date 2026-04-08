@@ -51,9 +51,33 @@ sudo tee /etc/modelgate/modelgate.env >/dev/null <<'EOF'
 # OPENAI_ORGANIZATION=...
 # OPENAI_PROJECT=...
 # RUST_LOG=info
+# BYOK：64 位十六进制（32 字节），与 config 中 [byok] master_key_hex 二选一；勿提交到仓库
+# BYOK_MASTER_KEY=................................................................
 EOF
 sudo chmod 600 /etc/modelgate/modelgate.env
 ```
+
+### 启用 BYOK（控制台「BYOK」与加密存储）
+
+未配置主密钥时，BYOK 相关接口会返回 **503**。任选一种方式配置后 **`sudo systemctl restart modelgate`**（或你的 `SERVICE_NAME`）：
+
+1. **推荐：环境变量**（与 `deploy/modelgate.service` 的 `EnvironmentFile` 一致）  
+   在服务器生成密钥并写入 `/etc/modelgate/modelgate.env`（单行、无引号、无多余空格）：
+
+   ```bash
+   openssl rand -hex 32
+   sudo nano /etc/modelgate/modelgate.env   # 添加一行 BYOK_MASTER_KEY=<上面 64 位 hex>
+   sudo systemctl restart modelgate
+   ```
+
+2. **或：`shared/config.toml`**（与 CD 使用的配置路径一致）增加：
+
+   ```toml
+   [byok]
+   master_key_hex = "<64 位十六进制>"
+   ```
+
+**注意：** 主密钥一旦用于加密 BYOK 上游密钥后请勿随意更换，否则已存密文将无法解密。轮换需另行迁移数据（当前版本未提供自动迁移）。
 
 部署后确保 **`${DEPLOY_ROOT}/shared/logs`** 存在且 **`modelgate`** 用户可写（CD 工作流会 `mkdir` 并 `chown`）。tracing 日志文件名为 `modelgate.log.YYYY-MM-DD`。
 
