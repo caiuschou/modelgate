@@ -12,7 +12,7 @@ const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173'
 
 test.describe('团队与工作空间', () => {
   test('侧栏可进入团队页', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
     await page.getByRole('link', { name: '团队' }).click()
     await expect(page).toHaveURL(/\/teams$/)
@@ -33,7 +33,7 @@ test.describe('团队与工作空间', () => {
     })
     expect(Array.isArray(inTeam)).toBeTruthy()
 
-    await page.goto('/')
+    await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
     await page.getByRole('button', { name: '切换工作空间' }).click()
     await page.getByRole('option', { name: team.name }).click()

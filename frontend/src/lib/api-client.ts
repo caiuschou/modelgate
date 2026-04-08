@@ -74,7 +74,7 @@ export const apiClient = ky.create({
           return
         }
         const path = window.location.pathname
-        if (path === '/login' || path === '/register') {
+        if (path === '/login' || path === '/register' || path === '/models') {
           return
         }
         useAuthStore.getState().logout()

@@ -586,9 +586,7 @@ mod change_password_tests {
             .get_user_login_credentials("shortpw")
             .expect("creds")
             .expect("user");
-        let err = svc
-            .change_my_password(uid, "short")
-            .expect_err("too short");
+        let err = svc.change_my_password(uid, "short").expect_err("too short");
         assert!(matches!(err, ServiceError::BadRequest(_)));
     }
 }

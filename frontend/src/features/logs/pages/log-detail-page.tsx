@@ -67,6 +67,63 @@ function parseUsageFromBody(text: string): UsageData | null {
   return null
 }
 
+/** Strip bulky header maps from the raw metadata JSON block (shown separately above). */
+function metadataWithoutHeaders(
+  metadata: AuditLogRecord['metadata'],
+): Record<string, unknown> | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return null
+  }
+  const m = { ...(metadata as Record<string, unknown>) }
+  delete m.request_headers
+  delete m.response_headers
+  return Object.keys(m).length > 0 ? m : null
+}
+
+function parseHeadersFromMetadata(raw: unknown): Record<string, string> | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === 'string') out[k] = v
+    else if (v != null && typeof v !== 'object') out[k] = String(v)
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+function AuditHeadersPanel({
+  title,
+  headers,
+}: {
+  title: string
+  headers: Record<string, string> | null
+}) {
+  const entries = headers
+    ? Object.entries(headers).sort(([a], [b]) => a.localeCompare(b))
+    : []
+
+  return (
+    <Card className="p-4">
+      <h2 className="text-sm font-medium">{title}</h2>
+      <p className="mt-1 text-xs text-muted-foreground">
+        敏感头（如 Authorization、Cookie）在审计记录中为{' '}
+        <span className="font-mono">[REDACTED]</span>。
+      </p>
+      {entries.length === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">无记录</p>
+      ) : (
+        <dl className="mt-3 max-h-64 space-y-2 overflow-y-auto rounded-md border border-border/60 bg-muted/20 p-3">
+          {entries.map(([name, value]) => (
+            <div key={name}>
+              <dt className="font-mono text-xs text-muted-foreground">{name}</dt>
+              <dd className="mt-0.5 break-all font-mono text-xs">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </Card>
+  )
+}
+
 /** Chat audit metadata from proxy (`chat_audit_metadata`). */
 function parseAuditUpstreamMeta(
   metadata: AuditLogRecord['metadata'],
@@ -325,6 +382,19 @@ export function LogDetailPage() {
     [data?.metadata],
   )
 
+  const requestHeaders = useMemo(
+    () => parseHeadersFromMetadata(data?.metadata?.request_headers),
+    [data?.metadata],
+  )
+  const responseHeaders = useMemo(
+    () => parseHeadersFromMetadata(data?.metadata?.response_headers),
+    [data?.metadata],
+  )
+  const metadataRest = useMemo(
+    () => metadataWithoutHeaders(data?.metadata ?? null),
+    [data?.metadata],
+  )
+
   const byokListEntry = useMemo(() => {
     if (auditUpstream.profileId == null) return undefined
     const row = byokRes?.data?.find((p) => p.id === auditUpstream.profileId)
@@ -470,6 +540,11 @@ export function LogDetailPage() {
             )}
           </Card>
 
+          <div className="grid gap-4 lg:grid-cols-2">
+            <AuditHeadersPanel title="请求头" headers={requestHeaders} />
+            <AuditHeadersPanel title="响应头（上游）" headers={responseHeaders} />
+          </div>
+
           {usage && (
             <UsageDetailCard usage={usage} auditUpstream={auditUpstream} />
           )}
@@ -502,11 +577,11 @@ export function LogDetailPage() {
             }
           />
 
-          {data.metadata && Object.keys(data.metadata).length > 0 && (
+          {metadataRest && Object.keys(metadataRest).length > 0 && (
             <Card className="p-4">
               <h2 className="text-sm font-medium">metadata</h2>
               <pre className="mt-2 max-h-64 overflow-auto rounded bg-muted/50 p-3 font-mono text-xs">
-                {JSON.stringify(data.metadata, null, 2)}
+                {JSON.stringify(metadataRest, null, 2)}
               </pre>
             </Card>
           )}

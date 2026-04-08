@@ -20,7 +20,7 @@ test('login shows dashboard', async ({ page }) => {
   await expect(page.getByLabel('用户名')).toHaveValue(username)
   await expect(page.getByLabel('密码')).toHaveValue(password)
   await Promise.all([
-    page.waitForURL((url) => url.pathname === '/', { timeout: 20_000 }),
+    page.waitForURL((url) => url.pathname === '/dashboard', { timeout: 20_000 }),
     page.getByRole('button', { name: '登录' }).click(),
   ])
   await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()

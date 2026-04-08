@@ -11,9 +11,9 @@ import { loadE2eSessionCredentials } from './load-e2e-credentials'
 const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173'
 const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
 
-/** 与侧栏用例一致：先加载 `/` 再客户端跳转，避免直链 `/api-keys` 时 persist 未恢复 */
+/** 与侧栏用例一致：先加载仪表盘再客户端跳转，避免直链 `/api-keys` 时 persist 未恢复 */
 async function gotoApiKeys(page: Page) {
-  await page.goto('/')
+  await page.goto('/dashboard')
   await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
   await page.locator('aside a[href="/api-keys"]').click()
   await expect(page).toHaveURL(/\/api-keys$/)
@@ -40,7 +40,7 @@ test.describe('API 密钥页（已登录）', () => {
   })
 
   test('侧栏可进入且展示标题与主操作', async ({ page }) => {
-    await page.goto('/')
+    await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
     await page.locator('aside a[href="/api-keys"]').click()
     await expect(page).toHaveURL(/\/api-keys$/)

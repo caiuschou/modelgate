@@ -1,16 +1,28 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/shared/empty-state'
+import { LogDateField } from '@/features/logs/components/log-date-field'
 import {
   downloadExportFile,
   useAuditLogList,
   useExportAuditLogs,
 } from '@/features/logs/hooks/use-logs'
+import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 20
+
+/** Ensures the refresh icon spins long enough to perceive on fast LAN responses. */
+const REFRESH_SPIN_MIN_MS = 280
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
 
 function unixNow(): number {
   return Math.floor(Date.now() / 1000)
@@ -33,14 +45,23 @@ function statusBadgeClass(code: number | null): string {
   return 'bg-muted text-muted-foreground'
 }
 
+function parseUnixSearchParam(raw: string | null, fallback: number): number {
+  if (raw === null || raw === '') return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : fallback
+}
+
 export function LogListPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const defaults = useMemo(() => defaultRange(), [])
 
   const limit = PAGE_SIZE
   const offset = Number(searchParams.get('offset') ?? '0')
-  const startTime = Number(searchParams.get('start_time') ?? String(defaults.start))
-  const endTime = Number(searchParams.get('end_time') ?? String(defaults.end))
+  const startTime = parseUnixSearchParam(
+    searchParams.get('start_time'),
+    defaults.start,
+  )
+  const endTime = parseUnixSearchParam(searchParams.get('end_time'), defaults.end)
 
   const [keyword, setKeyword] = useState(searchParams.get('keyword') ?? '')
   const [model, setModel] = useState(searchParams.get('model') ?? '')
@@ -80,8 +101,25 @@ export function LogListPage() {
     tokenId,
   ])
 
-  const { data, isLoading, isError, refetch } = useAuditLogList(listQuery)
+  const { data, isLoading, isError, refetch, isFetching } = useAuditLogList(listQuery)
   const exportMutation = useExportAuditLogs()
+
+  const refreshBusyRef = useRef(false)
+  const [manualRefreshSpin, setManualRefreshSpin] = useState(false)
+
+  const handleRefreshList = useCallback(async () => {
+    if (refreshBusyRef.current) return
+    refreshBusyRef.current = true
+    setManualRefreshSpin(true)
+    try {
+      await Promise.all([refetch(), delayMs(REFRESH_SPIN_MIN_MS)])
+    } finally {
+      refreshBusyRef.current = false
+      setManualRefreshSpin(false)
+    }
+  }, [refetch])
+
+  const listFetchSpin = isFetching || manualRefreshSpin
 
   const applyFilters = useCallback(() => {
     const next = new URLSearchParams()
@@ -152,15 +190,30 @@ export function LogListPage() {
         <div>
           <h1 className="text-2xl font-semibold">日志中心</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            请求审计日志 · 时间范围为 Unix 秒级，与 OpenAPI 一致
+            请求审计日志 · 开始/结束按本地日历日选择（当日 0:00 至 23:59:59.999，对应
+            OpenAPI 的 Unix 秒参数）
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={() => refetch()}>
-            刷新
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            aria-label="刷新"
+            title="刷新"
+            aria-busy={listFetchSpin}
+            tabIndex={listFetchSpin ? -1 : undefined}
+            className={cn(listFetchSpin && 'pointer-events-none')}
+            onClick={() => void handleRefreshList()}
+          >
+            <RefreshCw
+              className={cn(listFetchSpin && 'animate-spin')}
+              aria-hidden
+            />
           </Button>
           <Button
             type="button"
+            variant="outline"
             size="sm"
             disabled={exportMutation.isPending}
             onClick={() => void handleExport()}
@@ -172,30 +225,26 @@ export function LogListPage() {
 
       <Card className="space-y-4 p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <label className="text-sm">
-            <span className="text-muted-foreground">开始时间 (Unix 秒)</span>
-            <Input
-              className="mt-1 font-mono text-sm"
-              value={String(startTime)}
-              onChange={(e) => {
-                const next = new URLSearchParams(searchParams)
-                next.set('start_time', e.target.value)
-                setSearchParams(next)
-              }}
-            />
-          </label>
-          <label className="text-sm">
-            <span className="text-muted-foreground">结束时间 (Unix 秒)</span>
-            <Input
-              className="mt-1 font-mono text-sm"
-              value={String(endTime)}
-              onChange={(e) => {
-                const next = new URLSearchParams(searchParams)
-                next.set('end_time', e.target.value)
-                setSearchParams(next)
-              }}
-            />
-          </label>
+          <LogDateField
+            label="开始时间"
+            mode="start"
+            valueUnix={startTime}
+            onChangeUnix={(unix) => {
+              const next = new URLSearchParams(searchParams)
+              next.set('start_time', String(unix))
+              setSearchParams(next)
+            }}
+          />
+          <LogDateField
+            label="结束时间"
+            mode="end"
+            valueUnix={endTime}
+            onChangeUnix={(unix) => {
+              const next = new URLSearchParams(searchParams)
+              next.set('end_time', String(unix))
+              setSearchParams(next)
+            }}
+          />
           <label className="text-sm sm:col-span-2">
             <span className="text-muted-foreground">关键词</span>
             <Input

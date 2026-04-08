@@ -30,6 +30,10 @@ use crate::audit::{audit_writer_loop, ensure_storage_dirs, AuditConfig, AuditMes
 use crate::config::AppConfig;
 use crate::db::{create_db_pool, run_migrations, DbConn};
 
+/// Actix-web defaults to 256 KiB for `web::Bytes` / `web::Json` bodies; the chat proxy must not
+/// cap client payloads below upstream expectations.
+const MAX_HTTP_PAYLOAD_BYTES: usize = usize::MAX;
+
 #[derive(Clone)]
 pub struct AppState {
     pub cfg: AppConfig,
@@ -163,6 +167,8 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
                     }
                 }
             })
+            .app_data(web::PayloadConfig::default().limit(MAX_HTTP_PAYLOAD_BYTES))
+            .app_data(web::JsonConfig::default().limit(MAX_HTTP_PAYLOAD_BYTES))
             .app_data(web::Data::new(state))
             .configure(routes::configure_routes)
     })
@@ -190,81 +196,23 @@ mod tests {
     use crate::audit::{AuditConfig, AuditMessage};
     use crate::config::{AppConfig, ServerConfig, SqliteConfig, UpstreamConfig};
     use crate::test_utils::with_env_lock_async;
-    use actix_web::{http::StatusCode, test};
+    use actix_web::dev::ServiceRequest;
+    use actix_web::http::header::ContentType;
+    use actix_web::{http::StatusCode, test, HttpResponse};
+    use bytes::Bytes;
     use r2d2_sqlite::SqliteConnectionManager;
     use std::env;
 
-    #[actix_web::test]
-    async fn routes_register_health_route() {
-        let app = test::init_service(App::new().configure(routes::configure_routes)).await;
-        let req = test::TestRequest::get().uri("/healthz").to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
+    /// Actix-web `PayloadConfig` / `JsonConfig` default cap (256 KiB).
+    const DEFAULT_ACTIX_PAYLOAD_LIMIT: usize = 262_144;
+    /// One byte beyond the default actix payload limit (triggers 413 without an explicit raise).
+    const OVER_DEFAULT_ACTIX_BODY_LEN: usize = DEFAULT_ACTIX_PAYLOAD_LIMIT + 1;
 
-    #[actix_web::test]
-    async fn create_app_middleware_handles_health_request() {
-        let cfg = AppConfig {
-            server: ServerConfig {
-                host: "127.0.0.1".into(),
-                port: 0,
-            },
-            upstream: UpstreamConfig {
-                base_url: "https://api.openai.com/v1".into(),
-                api_key: "test".into(),
-            },
-            byok: crate::config::ByokConfig::default(),
-            sqlite: SqliteConfig {
-                path: ":memory:".into(),
-            },
-            audit: AuditConfig {
-                log_dir: "./audit_logs".into(),
-                retention_days: 90,
-                batch_size: 50,
-                flush_interval_seconds: 5,
-                export_dir: "./exports".into(),
-            },
-            logging: crate::config::LoggingConfig::default(),
-            auth: crate::config::AuthConfig {
-                invite_code: "ZW9Z".into(),
-                jwt_secret: "main-test-jwt-secret-min-32-chars!!!".into(),
-            },
-        };
-        let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .expect("failed to build http client");
-        let manager = SqliteConnectionManager::memory();
-        let db_pool = r2d2::Pool::builder()
-            .max_size(1)
-            .build(manager)
-            .expect("build sqlite pool");
-        {
-            let conn = db_pool.get().expect("get sqlite conn");
-            crate::db::run_migrations(&conn).expect("run migrations");
-        }
-        let service_container = services::build_service_container(db_pool.clone());
-        let state = AppState {
-            cfg,
-            http,
-            db: db_pool,
-            auth_service: service_container.auth,
-            audit_service: service_container.audit,
-            user_service: service_container.user,
-            audit_sender: tokio::sync::mpsc::channel::<AuditMessage>(16).0,
-            audit_config: AuditConfig {
-                log_dir: "./audit_logs".into(),
-                retention_days: 90,
-                batch_size: 50,
-                flush_interval_seconds: 5,
-                export_dir: "./exports".into(),
-            },
-        };
-
-        let app = test::init_service({
-            let cors = Cors::permissive();
+    /// Gateway-style `App` for integration tests (`with_limits` matches production payload policy).
+    macro_rules! gateway_test_app {
+        ($state:expr, with_limits) => {
             App::new()
-                .wrap(cors)
+                .wrap(Cors::permissive())
                 .wrap_fn(|req: ServiceRequest, srv| {
                     let method = req.method().clone();
                     let path = req.path().to_string();
@@ -315,10 +263,251 @@ mod tests {
                         }
                     }
                 })
-                .app_data(web::Data::new(state))
+                .app_data(web::PayloadConfig::default().limit(super::MAX_HTTP_PAYLOAD_BYTES))
+                .app_data(web::JsonConfig::default().limit(super::MAX_HTTP_PAYLOAD_BYTES))
+                .app_data(web::Data::new($state))
                 .configure(routes::configure_routes)
-        })
+        };
+        ($state:expr, no_limits) => {
+            App::new()
+                .wrap(Cors::permissive())
+                .wrap_fn(|req: ServiceRequest, srv| {
+                    let method = req.method().clone();
+                    let path = req.path().to_string();
+                    let peer = req
+                        .connection_info()
+                        .realip_remote_addr()
+                        .map(|s| s.to_string())
+                        .or_else(|| req.peer_addr().map(|p| p.to_string()))
+                        .unwrap_or_else(|| "-".to_string());
+                    let user_agent = req
+                        .headers()
+                        .get("user-agent")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("-")
+                        .to_string();
+                    let start = std::time::Instant::now();
+
+                    let fut = srv.call(req);
+                    async move {
+                        match fut.await {
+                            Ok(res) => {
+                                let status = res.status().as_u16();
+                                let elapsed_ms = start.elapsed().as_millis();
+                                info!(
+                                    method = %method,
+                                    path = %path,
+                                    status = status,
+                                    elapsed_ms = elapsed_ms,
+                                    peer = %peer,
+                                    user_agent = %user_agent,
+                                    "http access"
+                                );
+                                Ok(res)
+                            }
+                            Err(e) => {
+                                let elapsed_ms = start.elapsed().as_millis();
+                                error!(
+                                    method = %method,
+                                    path = %path,
+                                    elapsed_ms = elapsed_ms,
+                                    peer = %peer,
+                                    user_agent = %user_agent,
+                                    error = %e,
+                                    "http access error"
+                                );
+                                Err(e)
+                            }
+                        }
+                    }
+                })
+                .app_data(web::Data::new($state))
+                .configure(routes::configure_routes)
+        };
+    }
+
+    fn build_test_app_state() -> AppState {
+        let cfg = AppConfig {
+            server: ServerConfig {
+                host: "127.0.0.1".into(),
+                port: 0,
+            },
+            upstream: UpstreamConfig {
+                base_url: "https://api.openai.com/v1".into(),
+                api_key: "test".into(),
+            },
+            byok: crate::config::ByokConfig::default(),
+            sqlite: SqliteConfig {
+                path: ":memory:".into(),
+            },
+            audit: AuditConfig {
+                log_dir: "./audit_logs".into(),
+                retention_days: 90,
+                batch_size: 50,
+                flush_interval_seconds: 5,
+                export_dir: "./exports".into(),
+            },
+            logging: crate::config::LoggingConfig::default(),
+            auth: crate::config::AuthConfig {
+                invite_code: "ZW9Z".into(),
+                jwt_secret: "main-test-jwt-secret-min-32-chars!!!".into(),
+            },
+        };
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("failed to build http client");
+        let manager = SqliteConnectionManager::memory();
+        let db_pool = r2d2::Pool::builder()
+            .max_size(1)
+            .build(manager)
+            .expect("build sqlite pool");
+        {
+            let conn = db_pool.get().expect("get sqlite conn");
+            crate::db::run_migrations(&conn).expect("run migrations");
+        }
+        let service_container = services::build_service_container(db_pool.clone());
+        AppState {
+            cfg,
+            http,
+            db: db_pool,
+            auth_service: service_container.auth,
+            audit_service: service_container.audit,
+            user_service: service_container.user,
+            audit_sender: tokio::sync::mpsc::channel::<AuditMessage>(16).0,
+            audit_config: AuditConfig {
+                log_dir: "./audit_logs".into(),
+                retention_days: 90,
+                batch_size: 50,
+                flush_interval_seconds: 5,
+                export_dir: "./exports".into(),
+            },
+        }
+    }
+
+    async fn echo_bytes_len(body: web::Bytes) -> HttpResponse {
+        HttpResponse::Ok().body(body.len().to_string())
+    }
+
+    async fn echo_json_len(body: web::Json<serde_json::Value>) -> HttpResponse {
+        HttpResponse::Ok().body(body.to_string().len().to_string())
+    }
+
+    #[actix_web::test]
+    async fn routes_register_health_route() {
+        let app = test::init_service(App::new().configure(routes::configure_routes)).await;
+        let req = test::TestRequest::get().uri("/healthz").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn actix_default_bytes_extractor_rejects_body_over_256kb() {
+        let app =
+            test::init_service(App::new().route("/echo", web::post().to(echo_bytes_len))).await;
+        let req = test::TestRequest::post()
+            .uri("/echo")
+            .insert_header(ContentType::plaintext())
+            .set_payload(Bytes::from(vec![b'x'; OVER_DEFAULT_ACTIX_BODY_LEN]))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[actix_web::test]
+    async fn raised_payload_limit_accepts_bytes_over_actix_default() {
+        let app = test::init_service(
+            App::new()
+                .app_data(web::PayloadConfig::default().limit(super::MAX_HTTP_PAYLOAD_BYTES))
+                .route("/echo", web::post().to(echo_bytes_len)),
+        )
         .await;
+        let req = test::TestRequest::post()
+            .uri("/echo")
+            .insert_header(ContentType::plaintext())
+            .set_payload(Bytes::from(vec![b'y'; OVER_DEFAULT_ACTIX_BODY_LEN]))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = test::read_body(resp).await;
+        assert_eq!(
+            body.as_ref(),
+            OVER_DEFAULT_ACTIX_BODY_LEN.to_string().as_bytes()
+        );
+    }
+
+    #[actix_web::test]
+    async fn json_extractor_rejects_body_above_configured_limit() {
+        let app = test::init_service(
+            App::new()
+                .app_data(web::JsonConfig::default().limit(DEFAULT_ACTIX_PAYLOAD_LIMIT))
+                .route("/echo", web::post().to(echo_json_len)),
+        )
+        .await;
+        let pad = "p".repeat(OVER_DEFAULT_ACTIX_BODY_LEN);
+        let json = serde_json::json!({ "pad": pad });
+        let req = test::TestRequest::post()
+            .uri("/echo")
+            .insert_header(ContentType::json())
+            .set_payload(Bytes::from(json.to_string()))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[actix_web::test]
+    async fn raised_json_limit_accepts_body_over_actix_default() {
+        let app = test::init_service(
+            App::new()
+                .app_data(web::JsonConfig::default().limit(super::MAX_HTTP_PAYLOAD_BYTES))
+                .route("/echo", web::post().to(echo_json_len)),
+        )
+        .await;
+        let pad = "q".repeat(OVER_DEFAULT_ACTIX_BODY_LEN);
+        let json = serde_json::json!({ "pad": pad });
+        let req = test::TestRequest::post()
+            .uri("/echo")
+            .insert_header(ContentType::json())
+            .set_payload(Bytes::from(json.to_string()))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = test::read_body(resp).await;
+        let expected_len = json.to_string().len();
+        assert_eq!(body.as_ref(), expected_len.to_string().as_bytes());
+    }
+
+    #[actix_web::test]
+    async fn chat_completions_without_payload_override_rejects_large_body() {
+        let state = build_test_app_state();
+        let app = test::init_service(gateway_test_app!(state, no_limits)).await;
+        let req = test::TestRequest::post()
+            .uri("/v1/chat/completions")
+            .insert_header(ContentType::json())
+            .set_payload(Bytes::from(vec![b'z'; OVER_DEFAULT_ACTIX_BODY_LEN]))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[actix_web::test]
+    async fn chat_completions_accepts_large_body_with_gateway_payload_limits() {
+        let state = build_test_app_state();
+        let app = test::init_service(gateway_test_app!(state, with_limits)).await;
+        let req = test::TestRequest::post()
+            .uri("/v1/chat/completions")
+            .insert_header(ContentType::json())
+            .set_payload(Bytes::from(vec![b'z'; OVER_DEFAULT_ACTIX_BODY_LEN]))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_ne!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    async fn create_app_middleware_handles_health_request() {
+        let state = build_test_app_state();
+        let app = test::init_service(gateway_test_app!(state, with_limits)).await;
         let req = test::TestRequest::get().uri("/healthz").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);

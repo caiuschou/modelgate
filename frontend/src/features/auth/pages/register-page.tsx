@@ -17,7 +17,7 @@ export function RegisterPage() {
   const [submitting, setSubmitting] = useState(false)
 
   if (token) {
-    return <Navigate to="/" replace />
+    return <Navigate to="/dashboard" replace />
   }
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -65,6 +65,15 @@ export function RegisterPage() {
             <Link to="/login" className="ml-1 font-medium text-primary underline-offset-4 hover:underline">
               去登录
             </Link>
+          </p>
+          <p className="text-sm text-muted-foreground">
+            <Link
+              to="/models"
+              className="font-medium text-primary underline-offset-4 hover:underline"
+            >
+              浏览 OpenRouter 模型目录
+            </Link>
+            （无需登录）
           </p>
         </CardHeader>
         <CardContent>

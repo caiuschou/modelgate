@@ -72,6 +72,17 @@ test('list shows audit row after chat completion and opens detail', async ({
   await expect(
     page.locator('dt', { hasText: 'Finish 原因' }).locator('+ dd'),
   ).toHaveText('stop')
+
+  await expect(page.getByRole('heading', { name: '请求头' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: '响应头（上游）' }),
+  ).toBeVisible()
+  await expect(page.getByRole('heading', { name: '请求头' }).locator('..')).toContainText(
+    'content-type',
+  )
+  await expect(page.getByRole('heading', { name: '请求头' }).locator('..')).toContainText(
+    'x-app-id',
+  )
 })
 
 test('detail page shows request and response body from audit files', async ({

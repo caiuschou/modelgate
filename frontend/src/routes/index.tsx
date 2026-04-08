@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { Navigate, createBrowserRouter } from 'react-router-dom'
+import { Navigate, Outlet, createBrowserRouter } from 'react-router-dom'
 import { EmptyState } from '@/components/shared/empty-state'
 import { AppLayout } from '@/components/layout/app-layout'
 import { DashboardPage } from '@/features/dashboard/pages/dashboard-page'
@@ -17,6 +17,8 @@ import { AnalyticsPage } from '@/features/analytics/pages/analytics-page'
 import { TeamsPage } from '@/features/teams/pages/teams-page'
 import { TeamMembersPage } from '@/features/teams/pages/team-members-page'
 import { AcceptInvitePage } from '@/features/teams/pages/accept-invite-page'
+import { FeaturesHomeGate } from '@/features/home/pages/features-home-gate'
+import { ModelsCatalogPage } from '@/features/models/pages/models-catalog-page'
 import { useAuthStore } from '@/stores/auth-store'
 
 function AuthGuard({ children }: { children: ReactNode }) {
@@ -57,7 +59,7 @@ function AuthGuard({ children }: { children: ReactNode }) {
 function AdminGuard({ children }: { children: ReactNode }) {
   const user = useAuthStore((state) => state.user)
   if (user?.role !== 'admin') {
-    return <Navigate to="/" replace />
+    return <Navigate to="/dashboard" replace />
   }
   return <>{children}</>
 }
@@ -68,46 +70,57 @@ function PlaceholderPage({ title }: { title: string }) {
   )
 }
 
+function AuthGuardOutlet() {
+  return (
+    <AuthGuard>
+      <Outlet />
+    </AuthGuard>
+  )
+}
+
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/register', element: <RegisterPage /> },
   {
     path: '/',
-    element: (
-      <AuthGuard>
-        <AppLayout />
-      </AuthGuard>
-    ),
+    element: <AppLayout />,
     children: [
-      { index: true, element: <DashboardPage /> },
-      { path: 'teams', element: <TeamsPage /> },
-      { path: 'teams/:teamId/members', element: <TeamMembersPage /> },
-      { path: 'invite', element: <AcceptInvitePage /> },
-      { path: 'api-keys', element: <ApiKeysPage /> },
-      { path: 'api-keys/:id', element: <ApiKeyDetailPage /> },
-      { path: 'byok-profiles', element: <ByokProfilesPage /> },
-      { path: 'byok-profiles/:id', element: <ByokProfileDetailPage /> },
+      { index: true, element: <FeaturesHomeGate /> },
+      { path: 'models', element: <ModelsCatalogPage /> },
       {
-        path: 'users',
-        element: (
-          <AdminGuard>
-            <PlaceholderPage title="用户管理" />
-          </AdminGuard>
-        ),
+        element: <AuthGuardOutlet />,
+        children: [
+          { path: 'dashboard', element: <DashboardPage /> },
+          { path: 'teams', element: <TeamsPage /> },
+          { path: 'teams/:teamId/members', element: <TeamMembersPage /> },
+          { path: 'invite', element: <AcceptInvitePage /> },
+          { path: 'api-keys', element: <ApiKeysPage /> },
+          { path: 'api-keys/:id', element: <ApiKeyDetailPage /> },
+          { path: 'byok-profiles', element: <ByokProfilesPage /> },
+          { path: 'byok-profiles/:id', element: <ByokProfileDetailPage /> },
+          {
+            path: 'users',
+            element: (
+              <AdminGuard>
+                <PlaceholderPage title="用户管理" />
+              </AdminGuard>
+            ),
+          },
+          { path: 'logs', element: <LogListPage /> },
+          { path: 'logs/:requestId', element: <LogDetailPage /> },
+          { path: 'analytics', element: <AnalyticsPage /> },
+          { path: 'account/password', element: <Navigate to="/dashboard" replace /> },
+          {
+            path: 'settings',
+            element: (
+              <AdminGuard>
+                <PlaceholderPage title="系统设置" />
+              </AdminGuard>
+            ),
+          },
+          { path: '*', element: <NotFoundPage /> },
+        ],
       },
-      { path: 'logs', element: <LogListPage /> },
-      { path: 'logs/:requestId', element: <LogDetailPage /> },
-      { path: 'analytics', element: <AnalyticsPage /> },
-      { path: 'account/password', element: <Navigate to="/" replace /> },
-      {
-        path: 'settings',
-        element: (
-          <AdminGuard>
-            <PlaceholderPage title="系统设置" />
-          </AdminGuard>
-        ),
-      },
-      { path: '*', element: <NotFoundPage /> },
     ],
   },
   { path: '*', element: <NotFoundPage /> },

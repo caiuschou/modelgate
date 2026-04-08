@@ -90,6 +90,7 @@ pub async fn chat_completions(
         .map_err(ApiError::from)?;
 
     let resolved = resolve_chat_upstream(&req, &state, &auth_row)?;
+    let client_request_headers_json = actix_request_headers_json(&req);
     debug!(
         %request_id,
         user_id,
@@ -152,6 +153,8 @@ pub async fn chat_completions(
                         resolved.is_byok,
                         resolved.byok_profile_id,
                         None,
+                        client_request_headers_json.clone(),
+                        serde_json::json!({}),
                     )),
                     created_at: crate::audit::now_unix_secs(),
                     team_id: key_team_id,
@@ -161,6 +164,8 @@ pub async fn chat_completions(
             return Err(ApiError::InternalError("Upstream request failed".into()));
         }
     };
+
+    let upstream_response_headers_json = reqwest_response_headers_json(&upstream_resp);
 
     let status = ActixStatusCode::from_u16(upstream_resp.status().as_u16())
         .unwrap_or(ActixStatusCode::BAD_GATEWAY);
@@ -207,6 +212,8 @@ pub async fn chat_completions(
                     resolved.is_byok,
                     resolved.byok_profile_id,
                     None,
+                    client_request_headers_json.clone(),
+                    upstream_response_headers_json.clone(),
                 )),
                 created_at: crate::audit::now_unix_secs(),
                 team_id: key_team_id,
@@ -228,6 +235,8 @@ pub async fn chat_completions(
         let status_ok = (200..300).contains(&status_i64);
         let stream_is_byok = resolved.is_byok;
         let stream_byok_id = resolved.byok_profile_id;
+        let stream_hdr_req = client_request_headers_json.clone();
+        let stream_hdr_resp = upstream_response_headers_json.clone();
         let stream = stream! {
             let mut file_pair = match crate::audit::create_stream_response_body_file(
                 &st.audit_config,
@@ -285,6 +294,8 @@ pub async fn chat_completions(
                                     error_message: Some("Upstream stream read failed".into()),
                                     is_byok: stream_is_byok,
                                     byok_profile_id: stream_byok_id,
+                                    request_headers: stream_hdr_req.clone(),
+                                    response_headers: stream_hdr_resp.clone(),
                                 },
                             )
                             .await;
@@ -312,6 +323,8 @@ pub async fn chat_completions(
                         error_message: None,
                         is_byok: stream_is_byok,
                         byok_profile_id: stream_byok_id,
+                        request_headers: stream_hdr_req.clone(),
+                        response_headers: stream_hdr_resp.clone(),
                     },
                 )
                 .await;
@@ -374,6 +387,8 @@ pub async fn chat_completions(
                     resolved.is_byok,
                     resolved.byok_profile_id,
                     None,
+                    client_request_headers_json,
+                    upstream_response_headers_json,
                 )),
                 created_at: crate::audit::now_unix_secs(),
                 team_id: key_team_id,
@@ -493,6 +508,8 @@ struct StreamAuditCompletionJob {
     error_message: Option<String>,
     is_byok: bool,
     byok_profile_id: Option<i64>,
+    request_headers: serde_json::Value,
+    response_headers: serde_json::Value,
 }
 
 /// OpenAI-style chat completion JSON: `usage` + `choices[0].finish_reason`.
@@ -554,12 +571,21 @@ async fn enqueue_stream_audit_completion(
         error_message,
         is_byok,
         byok_profile_id,
+        request_headers,
+        response_headers,
     } = job;
     let mut stream_extra = serde_json::Map::new();
     stream_extra.insert("stream_completed".into(), stream_completed.into());
     stream_extra.insert("stream_aborted".into(), stream_aborted.into());
     stream_extra.insert("response_body_format".into(), "text/event-stream".into());
-    let metadata = chat_audit_metadata(true, is_byok, byok_profile_id, Some(stream_extra));
+    let metadata = chat_audit_metadata(
+        true,
+        is_byok,
+        byok_profile_id,
+        Some(stream_extra),
+        request_headers,
+        response_headers,
+    );
     let update = crate::audit::AuditStreamCompletionUpdate {
         request_id,
         response_body_path,
@@ -685,6 +711,8 @@ fn chat_audit_metadata(
     is_byok: bool,
     byok_profile_id: Option<i64>,
     stream_extras: Option<serde_json::Map<String, serde_json::Value>>,
+    request_headers: serde_json::Value,
+    response_headers: serde_json::Value,
 ) -> serde_json::Value {
     let mut m = serde_json::Map::new();
     m.insert("stream".to_string(), stream.into());
@@ -697,5 +725,65 @@ fn chat_audit_metadata(
             m.insert(k, v);
         }
     }
+    m.insert("request_headers".to_string(), request_headers);
+    m.insert("response_headers".to_string(), response_headers);
     serde_json::Value::Object(m)
+}
+
+/// HTTP header names whose values must not be stored in audit metadata.
+const SENSITIVE_AUDIT_HEADER_NAMES: &[&str] = &[
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "proxy-authorization",
+    "x-api-key",
+];
+
+fn redact_audit_header_value(header_name_lower: &str, value: &str) -> String {
+    if SENSITIVE_AUDIT_HEADER_NAMES.contains(&header_name_lower) {
+        return "[REDACTED]".to_string();
+    }
+    value.to_string()
+}
+
+fn merge_audit_header_line(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    key: String,
+    value: String,
+) {
+    use serde_json::Value;
+    match map.get_mut(&key) {
+        Some(Value::String(prev)) => {
+            let joined = format!("{prev}, {value}");
+            *prev = joined;
+        }
+        Some(_) => {
+            map.insert(key, Value::String(value));
+        }
+        None => {
+            map.insert(key, Value::String(value));
+        }
+    }
+}
+
+fn actix_request_headers_json(req: &HttpRequest) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (name, value) in req.headers().iter() {
+        let key = name.as_str().to_ascii_lowercase();
+        let raw = value.to_str().unwrap_or("");
+        let v = redact_audit_header_value(&key, raw);
+        merge_audit_header_line(&mut map, key, v);
+    }
+    serde_json::Value::Object(map)
+}
+
+fn reqwest_response_headers_json(resp: &reqwest::Response) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    for (name, value) in resp.headers().iter() {
+        let key = name.as_str().to_ascii_lowercase();
+        let raw = value.to_str().unwrap_or("");
+        let v = redact_audit_header_value(&key, raw);
+        merge_audit_header_line(&mut map, key, v);
+    }
+    serde_json::Value::Object(map)
 }
