@@ -35,7 +35,8 @@ test.describe('团队与工作空间', () => {
 
     await page.goto('/')
     await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
-    await page.getByLabel('工作空间').selectOption({ value: String(team.id) })
+    await page.getByRole('button', { name: '切换工作空间' }).click()
+    await page.getByRole('option', { name: team.name }).click()
     await page.getByRole('link', { name: 'API 密钥' }).click()
     await expect(page).toHaveURL(/\/api-keys$/)
     await expect(
@@ -45,7 +46,8 @@ test.describe('团队与工作空间', () => {
         .filter({ hasText: team.name }),
     ).toBeVisible()
 
-    await page.getByLabel('工作空间').selectOption({ label: '个人空间' })
+    await page.getByRole('button', { name: '切换工作空间' }).click()
+    await page.getByRole('option', { name: '个人空间' }).click()
     await expect(
       page
         .locator('p')

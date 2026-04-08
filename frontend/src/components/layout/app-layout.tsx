@@ -1,9 +1,23 @@
+import { ChevronDown, Monitor, Moon, Sun } from 'lucide-react'
+import { useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import { cn } from '@/lib/utils'
 import { useMyTeams } from '@/features/teams/hooks/use-teams'
 import { useAuthStore } from '@/stores/auth-store'
 import { useTeamStore } from '@/stores/team-store'
 import { useUiStore } from '@/stores/ui-store'
+
+const themeChoices = [
+  { value: 'light' as const, label: '浅色', Icon: Sun },
+  { value: 'dark' as const, label: '深色', Icon: Moon },
+  { value: 'system' as const, label: '跟随系统', Icon: Monitor },
+]
 
 const menuItems = [
   { to: '/', label: '首页' },
@@ -28,6 +42,13 @@ export function AppLayout() {
   const toggleSidebar = useUiStore((state) => state.toggleSidebar)
   const theme = useUiStore((state) => state.theme)
   const setTheme = useUiStore((state) => state.setTheme)
+  const [workspaceOpen, setWorkspaceOpen] = useState(false)
+  const teams = teamsRes?.data ?? []
+  const currentSpaceLabel =
+    currentTeamId == null
+      ? '个人空间'
+      : (teams.find((t) => t.id === currentTeamId)?.name ??
+        `团队 #${currentTeamId}`)
 
   const handleLogout = () => {
     logout()
@@ -44,36 +65,96 @@ export function AppLayout() {
           <span className="font-semibold">ModelGate Console</span>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <label className="flex items-center gap-2 text-muted-foreground">
-            <span className="hidden sm:inline">空间</span>
-            <select
-              aria-label="工作空间"
-              value={currentTeamId == null ? '' : String(currentTeamId)}
-              onChange={(e) => {
-                const v = e.target.value
-                setTeamContext(v === '' ? null : Number.parseInt(v, 10))
-              }}
-              className="max-w-[200px] rounded border border-border bg-background px-2 py-1 text-sm text-foreground"
-            >
-              <option value="">个人空间</option>
-              {(teamsRes?.data ?? []).map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <select
-            value={theme}
-            onChange={(event) =>
-              setTheme(event.target.value as 'light' | 'dark' | 'system')
-            }
-            className="rounded border border-border bg-background px-2 py-1 text-sm"
+          <Popover open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto max-w-[220px] gap-1.5 px-2 py-1.5 font-medium sm:max-w-[280px]"
+                aria-label="切换工作空间"
+                aria-expanded={workspaceOpen}
+              >
+                <span className="min-w-0 flex-1 truncate text-left text-sm text-foreground">
+                  {currentSpaceLabel}
+                </span>
+                <ChevronDown
+                  className="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden
+                />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-56 p-1" sideOffset={6}>
+              <div
+                role="listbox"
+                aria-label="工作空间"
+                className="flex max-h-[min(60vh,320px)] flex-col gap-0.5 overflow-y-auto"
+              >
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={currentTeamId == null}
+                  className={cn(
+                    'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
+                    'hover:bg-accent hover:text-accent-foreground',
+                    'focus-visible:ring-2 focus-visible:ring-ring/50',
+                    currentTeamId == null &&
+                      'bg-accent text-accent-foreground',
+                  )}
+                  onClick={() => {
+                    setTeamContext(null)
+                    setWorkspaceOpen(false)
+                  }}
+                >
+                  个人空间
+                </button>
+                {teams.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="option"
+                    aria-selected={currentTeamId === t.id}
+                    className={cn(
+                      'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
+                      'hover:bg-accent hover:text-accent-foreground',
+                      'focus-visible:ring-2 focus-visible:ring-ring/50',
+                      currentTeamId === t.id &&
+                        'bg-accent text-accent-foreground',
+                    )}
+                    onClick={() => {
+                      setTeamContext(t.id)
+                      setWorkspaceOpen(false)
+                    }}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+            </PopoverContent>
+          </Popover>
+          <div
+            data-slot="button-group"
+            className="flex items-center rounded-lg border border-border bg-muted/40 p-0.5"
+            role="radiogroup"
+            aria-label="主题"
           >
-            <option value="system">系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
+            {themeChoices.map(({ value, label, Icon }) => (
+              <Button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={theme === value}
+                variant={theme === value ? 'secondary' : 'ghost'}
+                size="icon-sm"
+                className="shrink-0"
+                title={label}
+                aria-label={label}
+                onClick={() => setTheme(value)}
+              >
+                <Icon className="size-4" aria-hidden />
+              </Button>
+            ))}
+          </div>
           <span className="text-muted-foreground">{user?.username ?? 'guest'}</span>
           <Button variant="outline" size="sm" onClick={handleLogout}>
             退出
