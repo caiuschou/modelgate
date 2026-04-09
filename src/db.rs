@@ -1,6 +1,7 @@
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
+use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
@@ -1727,6 +1728,8 @@ pub fn query_audit_analytics(
         audit_analytics_rollup_eligible(&base) && bucket_sec == 3600 && span_hours.is_some();
 
     let mut use_rollup = false;
+    // When rollup eligibility is checked: (audit_logs row count, rollup request_count sum).
+    let mut rollup_vs_audit: Option<(i64, i64)> = None;
     if try_rollup {
         let span = span_hours.unwrap_or(0);
         let count_sql = format!("SELECT COUNT(1) FROM audit_logs {where_sql}");
@@ -1746,6 +1749,7 @@ pub fn query_audit_analytics(
             ],
             |row| row.get(0),
         )?;
+        rollup_vs_audit = Some((audit_total, rollup_total));
         use_rollup = rollup_total > 0 && rollup_total == audit_total;
     }
 
@@ -1869,6 +1873,34 @@ pub fn query_audit_analytics(
     for r in model_rows {
         by_model.push(r?);
     }
+
+    let (series_first_bucket, series_last_bucket) = match (series.first(), series.last()) {
+        (Some(a), Some(b)) => (Some(a.bucket_start), Some(b.bucket_start)),
+        _ => (None, None),
+    };
+    let series_buckets_with_usage = series
+        .iter()
+        .filter(|b| b.request_count > 0 || b.total_cost > 0.0)
+        .count();
+    debug!(
+        target: "audit_analytics",
+        ?scope,
+        eff_start,
+        eff_end,
+        range_inclusive_secs = eff_end.saturating_sub(eff_start).saturating_add(1),
+        hour_aligned = eff_start % 3600 == 0 && (eff_end.saturating_sub(eff_start).saturating_add(1)) % 3600 == 0,
+        bucket_sec,
+        try_rollup,
+        use_rollup,
+        rollup_vs_audit = ?rollup_vs_audit,
+        series_len = series.len(),
+        series_first_bucket,
+        series_last_bucket,
+        series_buckets_with_usage,
+        total_requests,
+        total_cost = total_cost,
+        "audit analytics computed"
+    );
 
     Ok(AuditAnalyticsResponse {
         summary: AuditAnalyticsSummary {

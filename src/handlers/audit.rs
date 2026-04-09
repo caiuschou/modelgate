@@ -1,5 +1,6 @@
 use actix_web::{http::header, web, HttpRequest, HttpResponse};
 use serde::Deserialize;
+use tracing::debug;
 
 use crate::audit::{
     AuditAnalyticsParams, AuditListQuery, AuditListResponse, ExportRequest, ExportResponse,
@@ -23,6 +24,17 @@ pub async fn get_audit_analytics(
     let (_, user_id) = auth_scope(&req, &state)?;
     let scope = session_auth::audit_scope_for_request(&req, &state, user_id)?;
     let p = query.into_inner();
+    debug!(
+        target: "audit_analytics",
+        user_id,
+        ?scope,
+        start_time = p.start_time,
+        end_time = p.end_time,
+        model = p.model.as_deref(),
+        token_id = p.token_id,
+        app_id = p.app_id.as_deref(),
+        "GET /api/v1/analytics"
+    );
     let list_query = AuditListQuery {
         start_time: p.start_time,
         end_time: p.end_time,

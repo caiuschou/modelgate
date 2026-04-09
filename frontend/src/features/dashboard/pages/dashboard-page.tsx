@@ -11,17 +11,15 @@ import {
   YAxis,
 } from 'recharts'
 import { Card } from '@/components/ui/card'
+import {
+  analyticsRangeFor24HourlyBars,
+  hourBucketStarts24,
+} from '@/features/dashboard/dashboard-analytics-range'
 import { useAnalytics } from '@/features/analytics/hooks/use-analytics'
 import { formatCostUsd } from '@/lib/format-cost'
 
 function unixNow(): number {
   return Math.floor(Date.now() / 1000)
-}
-
-/** Rolling last 24h from now (`end` inclusive). Avoids excluding the current hour (a previous bug used `hourEnd - 1`). */
-function rollingLast24hRange(): { start: number; end: number } {
-  const end = unixNow()
-  return { start: end - 24 * 3600, end }
 }
 
 function formatHourLabel(ts: number): string {
@@ -31,12 +29,6 @@ function formatHourLabel(ts: number): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-/** 24 consecutive UTC hour bucket starts, newest = start of hour containing `endUnix`. */
-function hourBucketStarts24(endUnix: number): number[] {
-  const hourFloor = Math.floor(endUnix / 3600) * 3600
-  return Array.from({ length: 24 }, (_, i) => hourFloor - (23 - i) * 3600)
 }
 
 type SeriesRow = {
@@ -105,8 +97,9 @@ export function DashboardPage() {
 
   const query = useMemo(() => {
     void windowTick
-    const { start, end } = rollingLast24hRange()
-    return { start_time: start, end_time: end }
+    const end = unixNow()
+    const { start, end: endIncl } = analyticsRangeFor24HourlyBars(end)
+    return { start_time: start, end_time: endIncl }
   }, [windowTick])
 
   const { data, isLoading, isError } = useAnalytics(query)
@@ -169,7 +162,7 @@ export function DashboardPage() {
       <div>
         <h1 className="text-2xl font-semibold">仪表盘</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          近 24 小时（滚动窗口，含当前时段）消费与用量；详情见{' '}
+          近 24 个整点小时（含当前时段）消费与用量；详情见{' '}
           <Link to="/analytics" className="underline underline-offset-2">
             统计分析
           </Link>
