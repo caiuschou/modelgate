@@ -17,6 +17,7 @@ import {
 } from '@/features/dashboard/dashboard-analytics-range'
 import { useAnalytics } from '@/features/analytics/hooks/use-analytics'
 import { formatCostUsd } from '@/lib/format-cost'
+import { useTeamStore } from '@/stores/team-store'
 
 function unixNow(): number {
   return Math.floor(Date.now() / 1000)
@@ -90,6 +91,7 @@ function toTokenStackRows(rows: Array<SeriesRow & { label: string }>): TokenStac
 
 export function DashboardPage() {
   const [windowTick, setWindowTick] = useState(0)
+  const teamId = useTeamStore((s) => s.currentTeamId)
   useEffect(() => {
     const id = window.setInterval(() => setWindowTick((t) => t + 1), 60_000)
     return () => window.clearInterval(id)
@@ -99,8 +101,13 @@ export function DashboardPage() {
     void windowTick
     const end = unixNow()
     const { start, end: endIncl } = analyticsRangeFor24HourlyBars(end)
-    return { start_time: start, end_time: endIncl }
-  }, [windowTick])
+    return {
+      start_time: start,
+      end_time: endIncl,
+      // Default console is "personal" (no X-Team-Id); team-key traffic has team_id set and was invisible.
+      ...(teamId == null ? { combined: true as const } : {}),
+    }
+  }, [windowTick, teamId])
 
   const { data, isLoading, isError } = useAnalytics(query)
 

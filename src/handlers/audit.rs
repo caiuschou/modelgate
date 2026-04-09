@@ -6,6 +6,7 @@ use crate::audit::{
     AuditAnalyticsParams, AuditListQuery, AuditListResponse, ExportRequest, ExportResponse,
     ExportStatusResponse,
 };
+use crate::db::AuditConsoleScope;
 use crate::{errors::ApiError, session_auth, AppState};
 
 fn auth_scope(
@@ -22,12 +23,17 @@ pub async fn get_audit_analytics(
     query: web::Query<AuditAnalyticsParams>,
 ) -> Result<HttpResponse, ApiError> {
     let (_, user_id) = auth_scope(&req, &state)?;
-    let scope = session_auth::audit_scope_for_request(&req, &state, user_id)?;
     let p = query.into_inner();
+    let scope = if p.combined == Some(true) && session_auth::parse_x_team_id(&req).is_none() {
+        AuditConsoleScope::UserOwnedTraffic(user_id)
+    } else {
+        session_auth::audit_scope_for_request(&req, &state, user_id)?
+    };
     debug!(
         target: "audit_analytics",
         user_id,
         ?scope,
+        combined = p.combined,
         start_time = p.start_time,
         end_time = p.end_time,
         model = p.model.as_deref(),

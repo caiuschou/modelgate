@@ -5,7 +5,7 @@ import { useTeamStore } from '@/stores/team-store'
 import type { AnalyticsResponse } from '@/features/analytics/types'
 
 function toSearchParams(
-  record: Record<string, string | number | undefined | null>,
+  record: Record<string, string | number | boolean | undefined | null>,
 ): URLSearchParams {
   const p = new URLSearchParams()
   for (const [k, v] of Object.entries(record)) {
@@ -15,7 +15,9 @@ function toSearchParams(
   return p
 }
 
-export function useAnalytics(query: Record<string, string | number | undefined | null>) {
+export function useAnalytics(
+  query: Record<string, string | number | boolean | undefined | null>,
+) {
   const sessionReady = useConsoleSessionReady()
   const search = toSearchParams(query)
   const teamId = useTeamStore((s) => s.currentTeamId)

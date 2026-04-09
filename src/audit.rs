@@ -127,6 +127,9 @@ pub struct AuditAnalyticsParams {
     pub model: Option<String>,
     pub token_id: Option<i64>,
     pub app_id: Option<String>,
+    /// When true (and no `X-Team-Id`), aggregate all usage for API keys owned by the user (personal + team keys).
+    #[serde(default)]
+    pub combined: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

@@ -71,6 +71,9 @@ pub enum AuditConsoleScope {
     Personal(i64),
     /// `WHERE team_id = ?` (caller must verify membership)
     Team(i64),
+    /// All proxy traffic for API keys owned by this user (`audit_logs.user_id`), including team keys.
+    /// Used by the dashboard overview so team-key usage is visible without switching team context.
+    UserOwnedTraffic(i64),
 }
 
 pub type DbConn = Pool<SqliteConnectionManager>;
@@ -1380,6 +1383,10 @@ fn build_audit_where_clause(
             where_clauses.push("team_id = ?".to_string());
             args.push(Value::Integer(team_id));
         }
+        AuditConsoleScope::UserOwnedTraffic(user_id) => {
+            where_clauses.push("user_id = ?".to_string());
+            args.push(Value::Integer(user_id));
+        }
     }
     if let Some(token_id) = query.token_id {
         where_clauses.push("token_id = ?".to_string());
@@ -1721,11 +1728,16 @@ pub fn query_audit_analytics(
     let (rollup_scope, rollup_scope_id) = match scope {
         AuditConsoleScope::Personal(uid) => ("p", uid),
         AuditConsoleScope::Team(tid) => ("t", tid),
+        AuditConsoleScope::UserOwnedTraffic(_) => ("", 0),
     };
 
     let span_hours = audit_analytics_rollup_aligned_hours(eff_start, eff_end);
-    let try_rollup =
-        audit_analytics_rollup_eligible(&base) && bucket_sec == 3600 && span_hours.is_some();
+    let try_rollup = matches!(
+        scope,
+        AuditConsoleScope::Personal(_) | AuditConsoleScope::Team(_)
+    ) && audit_analytics_rollup_eligible(&base)
+        && bucket_sec == 3600
+        && span_hours.is_some();
 
     let mut use_rollup = false;
     // When rollup eligibility is checked: (audit_logs row count, rollup request_count sum).
@@ -2310,6 +2322,76 @@ mod tests {
         assert_eq!(bucket.completion_tokens, 50);
         assert_eq!(bucket.cached_prompt_tokens, 80);
         assert!((bucket.total_cost - 0.001).abs() < 1e-12);
+    }
+
+    #[test]
+    fn query_audit_analytics_user_owned_includes_team_key_traffic() {
+        use crate::audit::{AuditListQuery, AuditRecord};
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 20_000_000_i64;
+        let uid = create_user(&conn, "team-key-owner", t0).expect("create user");
+        let team_id = insert_team(&conn, "Team", "team-slug", uid, t0).expect("team");
+        insert_audit_logs(
+            &mut conn,
+            &[AuditRecord {
+                request_id: "team-req".into(),
+                user_id: Some(uid),
+                token_id: Some(1),
+                channel_id: None,
+                model: Some("gpt".into()),
+                request_type: Some("chat".into()),
+                request_body_path: None,
+                response_body_path: None,
+                status_code: Some(200),
+                error_message: None,
+                prompt_tokens: Some(3),
+                completion_tokens: Some(1),
+                cached_prompt_tokens: None,
+                total_tokens: Some(4),
+                cost: Some(0.07),
+                latency_ms: Some(12),
+                app_id: None,
+                finish_reason: None,
+                metadata: None,
+                created_at: t0,
+                team_id: Some(team_id),
+            }],
+        )
+        .expect("insert audit");
+
+        let filter = AuditListQuery {
+            start_time: Some(t0 - 10),
+            end_time: Some(t0 + 10_000),
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: None,
+            offset: None,
+        };
+
+        let personal = query_audit_analytics(&conn, &filter, AuditConsoleScope::Personal(uid))
+            .expect("analytics");
+        assert_eq!(
+            personal.summary.total_requests, 0,
+            "personal scope excludes team-key rows"
+        );
+
+        let combined =
+            query_audit_analytics(&conn, &filter, AuditConsoleScope::UserOwnedTraffic(uid))
+                .expect("analytics");
+        assert_eq!(combined.summary.total_requests, 1);
+        assert!((combined.summary.total_cost - 0.07).abs() < 1e-12);
     }
 
     #[test]
