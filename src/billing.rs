@@ -96,10 +96,12 @@ pub fn charge_chat_usage(
         user_id,
         charge_minor,
         now,
-        request_id,
-        model,
-        prompt_tokens,
-        completion_tokens,
+        db::BillingUsageChargeMeta {
+            request_id,
+            model,
+            prompt_tokens,
+            completion_tokens,
+        },
     ) {
         Ok(_) => {}
         Err(db::BillingChargeError::Insufficient { balance_minor }) => {

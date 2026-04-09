@@ -572,10 +572,12 @@ mod tests {
     #[actix_web::test]
     async fn billing_admin_deposit_increases_balance() {
         use actix_web::http::header::AUTHORIZATION;
-        let mut billing = BillingConfig::default();
-        billing.admin_deposit_enabled = true;
-        billing.admin_deposit_password = "admintestpwd".into();
-        billing.min_deposit_cents = 1;
+        let billing = BillingConfig {
+            admin_deposit_enabled: true,
+            admin_deposit_password: "admintestpwd".into(),
+            min_deposit_cents: 1,
+            ..Default::default()
+        };
         let state = build_test_app_state_with_billing(billing);
         let uid = {
             let conn = state.db.get().expect("db");

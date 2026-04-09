@@ -1610,16 +1610,21 @@ pub fn billing_deposit(
     Ok(after)
 }
 
+/// Request metadata for a `usage_charge` ledger row (OpenRouter-style audit fields).
+pub struct BillingUsageChargeMeta<'a> {
+    pub request_id: &'a str,
+    pub model: Option<&'a str>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+}
+
 /// Deducts `charge_minor` after a successful upstream chat call. Returns new balance, or error if insufficient funds.
 pub fn billing_charge_usage(
     conn: &Connection,
     user_id: i64,
     charge_minor: i128,
     now: i64,
-    request_id: &str,
-    model: Option<&str>,
-    prompt_tokens: Option<i64>,
-    completion_tokens: Option<i64>,
+    meta: BillingUsageChargeMeta<'_>,
 ) -> Result<i128, BillingChargeError> {
     if charge_minor <= 0 {
         return Ok(get_balance_minor(conn, user_id)?);
@@ -1643,10 +1648,10 @@ pub fn billing_charge_usage(
             now,
             crate::money::minor_to_db(neg),
             crate::money::minor_to_db(new_bal),
-            request_id,
-            model,
-            prompt_tokens,
-            completion_tokens
+            meta.request_id,
+            meta.model,
+            meta.prompt_tokens,
+            meta.completion_tokens
         ],
     )?;
     Ok(new_bal)
@@ -1878,10 +1883,12 @@ mod tests {
             user_id,
             charge,
             t + 1,
-            "req-a",
-            Some("m1"),
-            Some(1),
-            Some(2),
+            BillingUsageChargeMeta {
+                request_id: "req-a",
+                model: Some("m1"),
+                prompt_tokens: Some(1),
+                completion_tokens: Some(2),
+            },
         )
         .expect("charge");
         assert_eq!(after_use, add - charge);
@@ -1901,8 +1908,19 @@ mod tests {
         run_migrations(&conn).expect("migration");
         let t = now_secs();
         let user_id = create_user(&conn, "broke", t).expect("create user");
-        let err = billing_charge_usage(&conn, user_id, 1000, t, "req-b", None, None, None)
-            .expect_err("insufficient");
+        let err = billing_charge_usage(
+            &conn,
+            user_id,
+            1000,
+            t,
+            BillingUsageChargeMeta {
+                request_id: "req-b",
+                model: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+            },
+        )
+        .expect_err("insufficient");
         match err {
             BillingChargeError::Insufficient { balance_minor } => assert_eq!(balance_minor, 0),
             other => panic!("unexpected: {other:?}"),
@@ -1915,7 +1933,19 @@ mod tests {
         run_migrations(&conn).expect("migration");
         let t = now_secs();
         let user_id = create_user(&conn, "noop", t).expect("create user");
-        let bal = billing_charge_usage(&conn, user_id, 0, t, "req-c", None, None, None).unwrap();
+        let bal = billing_charge_usage(
+            &conn,
+            user_id,
+            0,
+            t,
+            BillingUsageChargeMeta {
+                request_id: "req-c",
+                model: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+            },
+        )
+        .unwrap();
         assert_eq!(bal, 0);
         let all = list_billing_ledger(&conn, user_id, None, 20, 0).unwrap();
         assert!(all.is_empty());
