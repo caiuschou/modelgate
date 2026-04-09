@@ -4,7 +4,7 @@ use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExten
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 10] = [
+const MIGRATIONS: [(&str, &str); 12] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -44,6 +44,14 @@ const MIGRATIONS: [(&str, &str); 10] = [
     (
         "0010_api_keys_default_byok.sql",
         include_str!("../migrations/0010_api_keys_default_byok.sql"),
+    ),
+    (
+        "0011_billing.sql",
+        include_str!("../migrations/0011_billing.sql"),
+    ),
+    (
+        "0012_billing_usd_minor_k15.sql",
+        include_str!("../migrations/0012_billing_usd_minor_k15.sql"),
     ),
 ];
 
@@ -1531,10 +1539,190 @@ pub fn query_audit_analytics(
     })
 }
 
+// --- Billing: USD as integer minor units, scale k=15 (see `crate::money`) ---
+
+#[derive(Debug)]
+pub enum BillingChargeError {
+    Insufficient { balance_minor: i128 },
+    Database(rusqlite::Error),
+}
+
+impl From<rusqlite::Error> for BillingChargeError {
+    fn from(e: rusqlite::Error) -> Self {
+        BillingChargeError::Database(e)
+    }
+}
+
+/// Ensure a `user_balances` row exists for `user_id`.
+pub fn ensure_user_balance_row(conn: &Connection, user_id: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO user_balances (user_id, balance_minor) VALUES (?1, '0')",
+        params![user_id],
+    )?;
+    Ok(())
+}
+
+pub fn get_balance_minor(conn: &Connection, user_id: i64) -> rusqlite::Result<i128> {
+    ensure_user_balance_row(conn, user_id)?;
+    let s: String = conn.query_row(
+        "SELECT balance_minor FROM user_balances WHERE user_id = ?1",
+        params![user_id],
+        |row| row.get(0),
+    )?;
+    crate::money::minor_from_db(&s).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "balance_minor not a valid i128 string",
+            )),
+        )
+    })
+}
+
+/// Adds minor units to balance and appends a `deposit` ledger row. `amount_minor` must be positive.
+pub fn billing_deposit(
+    conn: &Connection,
+    user_id: i64,
+    amount_minor: i128,
+    now: i64,
+    external_ref: Option<&str>,
+) -> rusqlite::Result<i128> {
+    ensure_user_balance_row(conn, user_id)?;
+    let cur = get_balance_minor(conn, user_id)?;
+    let after = cur.saturating_add(amount_minor);
+    conn.execute(
+        "UPDATE user_balances SET balance_minor = ?1 WHERE user_id = ?2",
+        params![crate::money::minor_to_db(after), user_id],
+    )?;
+    conn.execute(
+        "INSERT INTO billing_ledger (user_id, created_at, kind, amount_minor, balance_after_minor, external_ref)
+         VALUES (?1, ?2, 'deposit', ?3, ?4, ?5)",
+        params![
+            user_id,
+            now,
+            crate::money::minor_to_db(amount_minor),
+            crate::money::minor_to_db(after),
+            external_ref
+        ],
+    )?;
+    Ok(after)
+}
+
+/// Deducts `charge_minor` after a successful upstream chat call. Returns new balance, or error if insufficient funds.
+pub fn billing_charge_usage(
+    conn: &Connection,
+    user_id: i64,
+    charge_minor: i128,
+    now: i64,
+    request_id: &str,
+    model: Option<&str>,
+    prompt_tokens: Option<i64>,
+    completion_tokens: Option<i64>,
+) -> Result<i128, BillingChargeError> {
+    if charge_minor <= 0 {
+        return Ok(get_balance_minor(conn, user_id)?);
+    }
+    ensure_user_balance_row(conn, user_id)?;
+    let cur = get_balance_minor(conn, user_id)?;
+    if cur < charge_minor {
+        return Err(BillingChargeError::Insufficient { balance_minor: cur });
+    }
+    let new_bal = cur - charge_minor;
+    conn.execute(
+        "UPDATE user_balances SET balance_minor = ?1 WHERE user_id = ?2",
+        params![crate::money::minor_to_db(new_bal), user_id],
+    )?;
+    let neg = -charge_minor;
+    conn.execute(
+        "INSERT INTO billing_ledger (user_id, created_at, kind, amount_minor, balance_after_minor, request_id, model, prompt_tokens, completion_tokens)
+         VALUES (?1, ?2, 'usage_charge', ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            user_id,
+            now,
+            crate::money::minor_to_db(neg),
+            crate::money::minor_to_db(new_bal),
+            request_id,
+            model,
+            prompt_tokens,
+            completion_tokens
+        ],
+    )?;
+    Ok(new_bal)
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BillingLedgerRow {
+    pub id: i64,
+    pub created_at: i64,
+    pub kind: String,
+    pub amount_minor: i128,
+    pub balance_after_minor: i128,
+    pub request_id: Option<String>,
+    pub model: Option<String>,
+    pub prompt_tokens: Option<i64>,
+    pub completion_tokens: Option<i64>,
+    pub external_ref: Option<String>,
+}
+
+pub fn list_billing_ledger(
+    conn: &Connection,
+    user_id: i64,
+    kind: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> rusqlite::Result<Vec<BillingLedgerRow>> {
+    let limit = limit.clamp(1, 500);
+    let offset = offset.max(0);
+    let mut out = Vec::new();
+    if let Some(k) = kind {
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at, kind, amount_minor, balance_after_minor, request_id, model, prompt_tokens, completion_tokens, external_ref
+             FROM billing_ledger WHERE user_id = ?1 AND kind = ?2
+             ORDER BY created_at DESC LIMIT ?3 OFFSET ?4",
+        )?;
+        let rows = stmt.query_map(params![user_id, k, limit, offset], map_ledger_row)?;
+        for r in rows {
+            out.push(r?);
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at, kind, amount_minor, balance_after_minor, request_id, model, prompt_tokens, completion_tokens, external_ref
+             FROM billing_ledger WHERE user_id = ?1
+             ORDER BY created_at DESC LIMIT ?2 OFFSET ?3",
+        )?;
+        let rows = stmt.query_map(params![user_id, limit, offset], map_ledger_row)?;
+        for r in rows {
+            out.push(r?);
+        }
+    }
+    Ok(out)
+}
+
+fn map_ledger_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BillingLedgerRow> {
+    let am: String = row.get(3)?;
+    let ba: String = row.get(4)?;
+    Ok(BillingLedgerRow {
+        id: row.get(0)?,
+        created_at: row.get(1)?,
+        kind: row.get(2)?,
+        amount_minor: crate::money::minor_from_db(&am).unwrap_or(0),
+        balance_after_minor: crate::money::minor_from_db(&ba).unwrap_or(0),
+        request_id: row.get(5)?,
+        model: row.get(6)?,
+        prompt_tokens: row.get(7)?,
+        completion_tokens: row.get(8)?,
+        external_ref: row.get(9)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::Connection;
+    use rust_decimal::Decimal;
+    use std::str::FromStr;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn now_secs() -> i64 {
@@ -1669,5 +1857,67 @@ mod tests {
         assert_eq!(resp.summary.total_tokens, 15);
         assert!((resp.summary.total_cost - 0.02).abs() < 1e-9);
         assert_eq!(resp.by_model.len(), 2);
+    }
+
+    #[test]
+    fn billing_deposit_and_charge_usage_ledger() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = now_secs();
+        let user_id = create_user(&conn, "payer", t).expect("create user");
+        assert_eq!(get_balance_minor(&conn, user_id).unwrap(), 0);
+
+        let add = crate::money::usd_to_minor(rust_decimal::Decimal::ONE);
+        let after_dep = billing_deposit(&conn, user_id, add, t, Some("ext:1")).expect("deposit");
+        assert_eq!(after_dep, add);
+        assert_eq!(get_balance_minor(&conn, user_id).unwrap(), add);
+
+        let charge = crate::money::usd_to_minor(Decimal::from_str("0.1").unwrap());
+        let after_use = billing_charge_usage(
+            &conn,
+            user_id,
+            charge,
+            t + 1,
+            "req-a",
+            Some("m1"),
+            Some(1),
+            Some(2),
+        )
+        .expect("charge");
+        assert_eq!(after_use, add - charge);
+
+        let deposits = list_billing_ledger(&conn, user_id, Some("deposit"), 10, 0).unwrap();
+        assert_eq!(deposits.len(), 1);
+        assert_eq!(deposits[0].kind, "deposit");
+
+        let usage = list_billing_ledger(&conn, user_id, Some("usage_charge"), 10, 0).unwrap();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].request_id.as_deref(), Some("req-a"));
+    }
+
+    #[test]
+    fn billing_charge_insufficient_returns_error() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = now_secs();
+        let user_id = create_user(&conn, "broke", t).expect("create user");
+        let err = billing_charge_usage(&conn, user_id, 1000, t, "req-b", None, None, None)
+            .expect_err("insufficient");
+        match err {
+            BillingChargeError::Insufficient { balance_minor } => assert_eq!(balance_minor, 0),
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn billing_charge_zero_skips_ledger() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = now_secs();
+        let user_id = create_user(&conn, "noop", t).expect("create user");
+        let bal = billing_charge_usage(&conn, user_id, 0, t, "req-c", None, None, None).unwrap();
+        assert_eq!(bal, 0);
+        let all = list_billing_ledger(&conn, user_id, None, 20, 0).unwrap();
+        assert!(all.is_empty());
     }
 }

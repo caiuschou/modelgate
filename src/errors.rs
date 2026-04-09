@@ -12,6 +12,11 @@ pub enum ApiError {
     TooManyRequests(String),
     /// HTTP 503 — e.g. optional subsystem not configured.
     ServiceUnavailable(String),
+    /// HTTP 402 — prepaid balance insufficient to start a billable request.
+    InsufficientBalance {
+        message: String,
+        balance_minor: i128,
+    },
     InternalError(String),
 }
 
@@ -25,6 +30,7 @@ impl ApiError {
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
             ApiError::TooManyRequests(_) => StatusCode::TOO_MANY_REQUESTS,
             ApiError::ServiceUnavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+            ApiError::InsufficientBalance { .. } => StatusCode::PAYMENT_REQUIRED,
             ApiError::InternalError(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -38,6 +44,7 @@ impl ApiError {
             ApiError::NotFound(_) => "not_found_error",
             ApiError::TooManyRequests(_) => "rate_limit_error",
             ApiError::ServiceUnavailable(_) => "service_unavailable_error",
+            ApiError::InsufficientBalance { .. } => "insufficient_balance",
             ApiError::InternalError(_) => "internal_error",
         }
     }
@@ -52,6 +59,7 @@ impl ApiError {
             | ApiError::TooManyRequests(message)
             | ApiError::ServiceUnavailable(message)
             | ApiError::InternalError(message) => message,
+            ApiError::InsufficientBalance { message, .. } => message,
         }
     }
 }
@@ -68,12 +76,30 @@ impl ResponseError for ApiError {
     }
 
     fn error_response(&self) -> HttpResponse {
-        HttpResponse::build(self.status_code()).json(json!({
-            "error": {
-                "message": self.message(),
-                "type": self.error_type(),
+        match self {
+            ApiError::InsufficientBalance {
+                message,
+                balance_minor,
+            } => {
+                let balance_usd = crate::money::minor_to_string(*balance_minor);
+                HttpResponse::build(self.status_code()).json(json!({
+                    "error": {
+                        "message": message,
+                        "type": self.error_type(),
+                        "balance_minor": balance_minor.to_string(),
+                        "balance_usd": balance_usd,
+                        "usd_scale": crate::money::USD_MINOR_EXP,
+                        "currency": "USD",
+                    }
+                }))
             }
-        }))
+            _ => HttpResponse::build(self.status_code()).json(json!({
+                "error": {
+                    "message": self.message(),
+                    "type": self.error_type(),
+                }
+            })),
+        }
     }
 }
 
@@ -147,6 +173,14 @@ mod tests {
                 ApiError::InternalError("i".into()),
                 "internal_error",
                 StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                ApiError::InsufficientBalance {
+                    message: "b".into(),
+                    balance_minor: 0,
+                },
+                "insufficient_balance",
+                StatusCode::PAYMENT_REQUIRED,
             ),
         ];
 

@@ -1,6 +1,6 @@
 use actix_web::web;
 
-use crate::handlers::{self, audit, password, proxy, session, team, user};
+use crate::handlers::{self, audit, billing, password, proxy, session, team, user};
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(handlers::health))
@@ -66,6 +66,18 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .route(
             "/api/v1/me/api-keys/{key_id}/revoke",
             web::post().to(handlers::api_keys::revoke_my_api_key),
+        )
+        .route(
+            "/api/v1/me/billing/balance",
+            web::get().to(billing::get_my_balance),
+        )
+        .route(
+            "/api/v1/me/billing/ledger",
+            web::get().to(billing::get_my_ledger),
+        )
+        .route(
+            "/api/v1/billing/admin-deposit",
+            web::post().to(billing::post_admin_deposit),
         )
         .route(
             "/api/v1/me/byok-profiles",

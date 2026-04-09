@@ -496,6 +496,7 @@ mod tests {
                 api_key: "test".into(),
             },
             byok: crate::config::ByokConfig::default(),
+            billing: crate::config::BillingConfig::default(),
             sqlite: crate::config::SqliteConfig {
                 path: ":memory:".into(),
             },

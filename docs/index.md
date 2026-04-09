@@ -27,6 +27,7 @@
 - **[API 密钥能力增强（产品与交互规格）](product/api-key-capability-enhancement.md)** - 在现有 Key 能力上的分期增强、页面与流程级交互、API 草案与验收清单
 - **[请求审计日志（产品）](product/audit-log.md)** - 字段说明、查询/导出 API、权限
 - **[产品路线图](product/roadmap.md)** - MVP 定义、迭代计划、长期愿景
+- **[充值与 LLM 调用扣费（产品方案）](product/recharge-and-billing-solution.md)** - 预付费账户、**USD 计价**、扣费流程、控制台与错误码；交互见 [充值与计费 — UI/交互规格](design/interaction/recharge-and-billing.md)
 
 ### 设计文档
 
@@ -36,6 +37,7 @@
 - **[导航设计](design/interaction/navigation.md)** - 全局导航、移动端导航、通知中心
 - **[日志中心 UI/交互规格](design/interaction/log-center.md)** - 请求日志列表、详情、导出与权限
 - **[统计分析页方案](design/interaction/analytics.md)** - 用量/趋势/分布、分期与日志中心联动
+- **[充值与计费 — UI/交互规格](design/interaction/recharge-and-billing.md)** - 充值中心 Tab、在线充值与支付返回、消费/充值流水、USD 展示与验收清单
 - **[流式审计持久化与详情不截断展示](design/streaming-audit-persistence.md)** - 流式 SSE 落盘、两段式更新、API 与前端「不截断」策略
 - **[设计令牌](design/interaction/design-tokens.md)** - 颜色、字体、间距、组件规范
 - **[移动端设计](design/interaction/mobile.md)** - 移动端适配方案、触控交互

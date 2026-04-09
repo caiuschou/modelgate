@@ -21,3 +21,7 @@ export_dir = "./exports"
 
 [auth]
 invite_code = "e2e-invite-code"
+
+# E2E chat calls must not be blocked by zero prepaid balance.
+[billing]
+enabled = false

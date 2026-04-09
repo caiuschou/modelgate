@@ -368,6 +368,14 @@ impl Repository for SqliteRepository {
             return Err(RepositoryError::Internal("Failed to create user".into()));
         }
 
+        if let Err(err) = tx.execute(
+            "INSERT INTO user_balances (user_id, balance_minor) VALUES (?1, '0')",
+            rusqlite::params![user_id],
+        ) {
+            error!(error = %err, "failed to create user balance row");
+            return Err(RepositoryError::Internal("Failed to create user".into()));
+        }
+
         tx.commit().map_err(|err| {
             error!(error = %err, "failed to commit transaction");
             RepositoryError::Internal("Failed to create user".into())
@@ -427,6 +435,14 @@ impl Repository for SqliteRepository {
         let user_id = tx.last_insert_rowid();
         if let Err(err) = db::insert_api_key_for_user(&tx, user_id, api_key, created_at as i64) {
             error!(error = %err, "failed to create user api key");
+            return Err(RepositoryError::Internal("Failed to create user".into()));
+        }
+
+        if let Err(err) = tx.execute(
+            "INSERT INTO user_balances (user_id, balance_minor) VALUES (?1, '0')",
+            rusqlite::params![user_id],
+        ) {
+            error!(error = %err, "failed to create user balance row");
             return Err(RepositoryError::Internal("Failed to create user".into()));
         }
 

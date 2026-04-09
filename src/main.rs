@@ -1,6 +1,7 @@
 pub mod api_key_policy;
 pub mod audit;
 pub mod auth;
+pub mod billing;
 pub mod byok;
 pub mod config;
 pub mod db;
@@ -8,6 +9,7 @@ pub mod errors;
 pub mod handlers;
 pub mod jwt_session;
 pub mod logging;
+pub mod money;
 pub mod routes;
 pub mod secrets;
 pub mod services;
@@ -194,7 +196,9 @@ async fn main() -> std::io::Result<()> {
 mod tests {
     use super::*;
     use crate::audit::{AuditConfig, AuditMessage};
-    use crate::config::{AppConfig, ServerConfig, SqliteConfig, UpstreamConfig};
+    use crate::config::{AppConfig, BillingConfig, ServerConfig, SqliteConfig, UpstreamConfig};
+    use crate::db;
+    use crate::jwt_session;
     use crate::test_utils::with_env_lock_async;
     use actix_web::dev::ServiceRequest;
     use actix_web::http::header::ContentType;
@@ -326,7 +330,7 @@ mod tests {
         };
     }
 
-    fn build_test_app_state() -> AppState {
+    fn build_test_app_state_with_billing(billing: BillingConfig) -> AppState {
         let cfg = AppConfig {
             server: ServerConfig {
                 host: "127.0.0.1".into(),
@@ -337,6 +341,7 @@ mod tests {
                 api_key: "test".into(),
             },
             byok: crate::config::ByokConfig::default(),
+            billing,
             sqlite: SqliteConfig {
                 path: ":memory:".into(),
             },
@@ -383,6 +388,18 @@ mod tests {
                 export_dir: "./exports".into(),
             },
         }
+    }
+
+    fn build_test_app_state() -> AppState {
+        build_test_app_state_with_billing(BillingConfig::default())
+    }
+
+    fn unix_now_secs() -> i64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64
     }
 
     async fn echo_bytes_len(body: web::Bytes) -> HttpResponse {
@@ -511,6 +528,81 @@ mod tests {
         let req = test::TestRequest::get().uri("/healthz").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn billing_balance_ok_for_session() {
+        use actix_web::http::header::AUTHORIZATION;
+        let state = build_test_app_state();
+        let uid = {
+            let conn = state.db.get().expect("db");
+            db::create_user(&conn, "bill_user", unix_now_secs()).expect("user")
+        };
+        let token =
+            jwt_session::encode_session_jwt(&state.cfg.auth.jwt_secret, uid, "bill_user", "user")
+                .expect("jwt");
+        let app = test::init_service(gateway_test_app!(state, with_limits)).await;
+        let req = test::TestRequest::get()
+            .uri("/api/v1/me/billing/balance")
+            .insert_header((AUTHORIZATION, format!("Bearer {token}")))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(v["balance_minor"], "0");
+        assert_eq!(v["currency"], "USD");
+    }
+
+    #[actix_web::test]
+    async fn billing_admin_deposit_not_configured_returns_404() {
+        let state = build_test_app_state();
+        let app = test::init_service(gateway_test_app!(state, with_limits)).await;
+        let req = test::TestRequest::post()
+            .uri("/api/v1/billing/admin-deposit")
+            .insert_header(ContentType::json())
+            .insert_header(("Authorization", "Bearer x"))
+            .set_payload(Bytes::from(
+                r#"{"username":"any","amount_usd":100}"#.as_bytes().to_vec(),
+            ))
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[actix_web::test]
+    async fn billing_admin_deposit_increases_balance() {
+        use actix_web::http::header::AUTHORIZATION;
+        let mut billing = BillingConfig::default();
+        billing.admin_deposit_enabled = true;
+        billing.admin_deposit_password = "admintestpwd".into();
+        billing.min_deposit_cents = 1;
+        let state = build_test_app_state_with_billing(billing);
+        let uid = {
+            let conn = state.db.get().expect("db");
+            db::create_user(&conn, "fundme", unix_now_secs()).expect("user")
+        };
+        let jwt_secret = state.cfg.auth.jwt_secret.clone();
+        let app = test::init_service(gateway_test_app!(state, with_limits)).await;
+        let post = test::TestRequest::post()
+            .uri("/api/v1/billing/admin-deposit")
+            .insert_header(ContentType::json())
+            .insert_header(("Authorization", "Bearer admintestpwd"))
+            .set_payload(Bytes::from(
+                r#"{"username":"fundme","amount_usd":2.5}"#.as_bytes().to_vec(),
+            ))
+            .to_request();
+        let resp = test::call_service(&app, post).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let token =
+            jwt_session::encode_session_jwt(&jwt_secret, uid, "fundme", "user").expect("jwt");
+        let get = test::TestRequest::get()
+            .uri("/api/v1/me/billing/balance")
+            .insert_header((AUTHORIZATION, format!("Bearer {token}")))
+            .to_request();
+        let resp2 = test::call_service(&app, get).await;
+        assert_eq!(resp2.status(), StatusCode::OK);
+        let v: serde_json::Value = test::read_body_json(resp2).await;
+        assert_ne!(v["balance_minor"], "0");
     }
 
     #[actix_web::test]

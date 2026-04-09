@@ -4,13 +4,14 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use reqwest::header as reqwest_header;
+use rust_decimal::Decimal;
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, error, info, warn};
 
 use crate::{
-    api_key_policy, auth, byok, byok::ByokResolveError, db::ApiKeyAuthRow, errors::ApiError,
-    upstream, AppState,
+    api_key_policy, auth, billing, byok, byok::ByokResolveError, db::ApiKeyAuthRow,
+    errors::ApiError, upstream, AppState,
 };
 
 static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
@@ -66,6 +67,8 @@ pub async fn chat_completions(
         .user_service
         .ensure_monthly_quota(token_id, now)
         .map_err(ApiError::from)?;
+
+    billing::check_can_start_chat(&state, user_id)?;
 
     api_key_policy::check_model_allowlist(auth_row.model_allowlist.as_deref(), model.as_deref())
         .map_err(|m| ApiError::Forbidden(m.into()))?;
@@ -255,7 +258,7 @@ pub async fn chat_completions(
                 }
             };
             let mut usage_state: UsageTokensCostFinish =
-                (None, None, None, None, None);
+                (None, None, None, None, None, None);
             let mut upstream_stream = upstream_resp.bytes_stream();
             let mut buf: Vec<u8> = Vec::new();
             while let Some(item) = upstream_stream.next().await {
@@ -333,6 +336,15 @@ pub async fn chat_completions(
                 if let Some(total) = usage_state.2 {
                     let _ = st.user_service.increment_quota_tokens(token_id, total);
                 }
+                billing::charge_chat_usage(
+                    &st,
+                    user_id,
+                    &stream_request_id,
+                    model.as_deref(),
+                    usage_state.0,
+                    usage_state.1,
+                    usage_state.5,
+                );
             }
         };
 
@@ -414,6 +426,15 @@ pub async fn chat_completions(
             if let Some(total) = usage.2 {
                 let _ = state.user_service.increment_quota_tokens(token_id, total);
             }
+            billing::charge_chat_usage(
+                &state,
+                user_id,
+                &log_request_id,
+                model.as_deref(),
+                usage.0,
+                usage.1,
+                usage.5,
+            );
         }
 
         Ok(HttpResponse::build(status)
@@ -452,7 +473,7 @@ fn parse_sse_data_line_merge_usage(line: &[u8], usage: &mut UsageTokensCostFinis
 }
 
 fn merge_usage_tokens(usage: &mut UsageTokensCostFinish, chunk: &[u8]) {
-    let (p, c, t, co, fr) = parse_usage_cost_and_finish(chunk);
+    let (p, c, t, co, fr, up) = parse_usage_cost_and_finish(chunk);
     if p.is_some() {
         usage.0 = p;
     }
@@ -467,6 +488,9 @@ fn merge_usage_tokens(usage: &mut UsageTokensCostFinish, chunk: &[u8]) {
     }
     if fr.is_some() {
         usage.4 = fr;
+    }
+    if up.is_some() {
+        usage.5 = up;
     }
 }
 
@@ -496,6 +520,7 @@ type UsageTokensCostFinish = (
     Option<i64>,
     Option<f64>,
     Option<String>,
+    Option<Decimal>,
 );
 
 struct StreamAuditCompletionJob {
@@ -512,11 +537,11 @@ struct StreamAuditCompletionJob {
     response_headers: serde_json::Value,
 }
 
-/// OpenAI-style chat completion JSON: `usage` + `choices[0].finish_reason`.
+/// OpenAI-style chat completion JSON: `usage` + `choices[0].finish_reason` + upstream USD for billing.
 fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
     let value = match serde_json::from_slice::<Value>(body) {
         Ok(v) => v,
-        Err(_) => return (None, None, None, None, None),
+        Err(_) => return (None, None, None, None, None, None),
     };
 
     let usage = value.get("usage");
@@ -537,6 +562,7 @@ fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
         .and_then(|ch| ch.get("finish_reason"))
         .and_then(|v| v.as_str())
         .map(std::string::ToString::to_string);
+    let upstream_usd = crate::billing::upstream_cost_usd_from_response(&value);
 
     (
         prompt_tokens,
@@ -544,6 +570,7 @@ fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
         total_tokens,
         cost,
         finish_reason,
+        upstream_usd,
     )
 }
 

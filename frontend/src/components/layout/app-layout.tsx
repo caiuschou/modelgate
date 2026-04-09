@@ -27,6 +27,7 @@ const menuItemsRest: { to: string; label: string; guestOk: boolean }[] = [
   { to: '/teams', label: '团队', guestOk: false },
   { to: '/users', label: '用户管理', guestOk: false },
   { to: '/logs', label: '日志中心', guestOk: false },
+  { to: '/billing', label: '充值中心', guestOk: false },
   { to: '/analytics', label: '统计分析', guestOk: false },
   { to: '/settings', label: '系统设置', guestOk: false },
 ]

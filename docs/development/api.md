@@ -1,7 +1,7 @@
 # ModelGate 服务端 API（当前实现）
 
-**版本:** 1.5  
-**更新日期:** 2026年4月8日  
+**版本:** 1.6  
+**更新日期:** 2026年4月9日  
 **适用范围:** 本仓库 Rust 服务（`cargo run`）
 
 本文档描述**已实现**的 HTTP 接口。OpenAI 兼容能力的完整产品规格见 [产品 API 文档](../product/api.md)；若与本文冲突，**以本文与 `src/routes.rs` 为准**。
@@ -22,10 +22,12 @@
 {
   "error": {
     "message": "人类可读说明",
-    "type": "validation_error | authentication_error | forbidden_error | conflict_error | not_found_error | rate_limit_error | service_unavailable_error | internal_error"
+    "type": "validation_error | authentication_error | forbidden_error | conflict_error | not_found_error | rate_limit_error | service_unavailable_error | insufficient_balance | internal_error"
   }
 }
 ```
+
+`insufficient_balance`（402）时 `error` 另含 **`balance_minor`**、**`balance_usd`**、**`usd_scale`**、**`currency`**，见 **3.4**。
 
 ### 1.3 CORS
 
@@ -162,7 +164,21 @@
 - **失败：** `404`（非本人或不存在或已吊销）  
 - 若吊销的是当前用于 `Authorization` 的密钥，后续请求将 `401`。
 
-### 3.4 BYOK 配置（控制台）
+### 3.4 余额与计费（控制台）
+
+需在 `config.toml` 中配置 **`[billing]`**（见 `config.example.toml`）。当 **`billing.enabled = true`** 时：
+
+- 网关 **`POST /v1/chat/completions`** 在余额 ≤ 0 时返回 **`402 Payment Required`**，`error.type` 为 **`insufficient_balance`**；JSON 含 **`balance_minor`**（字符串整数）、**`balance_usd`**（字符串）、**`usd_scale`**（固定 **15**）、`currency: "USD"`（无浮点余额字段）。  
+- 成功上游 **2xx** 后，扣费金额取自响应 JSON：**优先 `cost_details.upstream_inference_cost`**；否则对 **`cost_details`** 内数值求和；再否则 **`cost`**。以上字段可在**根对象**或 **`usage`** 内（如 OpenRouter 流式最后一块的 `usage.cost` / `usage.cost_details`）。金额换算为 **scale k=15 的整数 minor** 后从余额扣除；若响应中无任何可解析费用，则扣费 **0** 并记日志。  
+- E2E 默认 **`billing.enabled = false`**（见 `e2e/config.toml`），避免测试用户零余额阻塞调用。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/v1/me/billing/balance` | `{ "balance_minor", "balance_usd", "usd_scale", "currency" }` |
+| GET | `/api/v1/me/billing/ledger` | 查询参数：`kind` = `deposit` \| `usage_charge`（可选）、`limit`、`offset` → 每条含 `amount_minor` / `amount_usd`、`balance_after_minor` / `balance_after_usd`（字符串）等 |
+| POST | `/api/v1/billing/admin-deposit` | 无控制台会话；**`Authorization: Bearer <billing.admin_deposit_password>`**；body：`{ "username": string, "amount_usd": number }`（目标为控制台用户名）。需 **`billing.admin_deposit_enabled = true`** 且 **`admin_deposit_password` 非空**；否则 **`404`**。密码错误 **`401`**；用户不存在 **`404`**；低于 `min_deposit_cents` 对应金额时 **`400`** |
+
+### 3.5 BYOK 配置（控制台）
 
 需在 `config.toml` 中配置 **`[byok] master_key_hex`**（64 位十六进制 = 32 字节）或环境变量 **`BYOK_MASTER_KEY`**；未配置时本节全部接口返回 **`503`**，且 `POST /v1/chat/completions` 无法使用 BYOK（含 **`X-MG-Byok-Id`** 与网关 Key 上 **`default_byok_profile_id`** 的默认 BYOK）。
 
@@ -178,7 +194,7 @@
 | PATCH | `/api/v1/me/byok-profiles/{id}` | body 至少一项：`name` / `base_url` / `api_key`（轮换） |
 | POST | `/api/v1/me/byok-profiles/{id}/revoke` | 吊销后不可再用于转发 |
 
-### 3.5 团队与成员
+### 3.6 团队与成员
 
 均需 **`Authorization: Bearer <api_key>`**。
 
@@ -236,6 +252,7 @@
   - 否则：使用实例 `[upstream]`。  
 - **吊销 BYOK：** 吊销某 profile 后，服务端会将引用该 profile 的 `api_keys.default_byok_profile_id` 清空。  
 - **流式：** 支持 `stream: true`（SSE 透传）  
+- **预付费：** 若启用 `[billing].enabled`，见 **3.4**（余额不足 **`402`**；扣费与上游 `cost` / `cost_details` 对齐）。  
 - **可选请求头：** `X-App-Id` — 写入审计日志的 `app_id`  
 - **审计 `metadata`：** 含 `is_byok`（bool）、可选 `byok_profile_id`（int），以及原有 `stream` 等字段。  
 - **可选环境变量（转发到上游）：** `OPENAI_ORGANIZATION`、`OPENAI_PROJECT`

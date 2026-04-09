@@ -19,7 +19,28 @@ import { TeamMembersPage } from '@/features/teams/pages/team-members-page'
 import { AcceptInvitePage } from '@/features/teams/pages/accept-invite-page'
 import { FeaturesHomeGate } from '@/features/home/pages/features-home-gate'
 import { ModelsCatalogPage } from '@/features/models/pages/models-catalog-page'
+import { AdminRechargePage } from '@/features/billing/pages/admin-recharge-page'
+import { BillingPage } from '@/features/billing/pages/billing-page'
 import { useAuthStore } from '@/stores/auth-store'
+
+const DEFAULT_ADMIN_RECHARGE_SEGMENT = '__mg-admin-recharge'
+
+/**
+ * Hidden admin top-up URL segment (no leading slash). Set `VITE_ADMIN_RECHARGE_PATH` for production
+ * (must match deployment URL). In dev, defaults if env is missing so the page works without `.env`.
+ */
+function adminRechargeRouteSegment(): string {
+  const raw = import.meta.env.VITE_ADMIN_RECHARGE_PATH
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    return raw.trim().replace(/^\/+/, '')
+  }
+  if (import.meta.env.DEV) {
+    return DEFAULT_ADMIN_RECHARGE_SEGMENT
+  }
+  return ''
+}
+
+const ADMIN_RECHARGE_SEGMENT = adminRechargeRouteSegment()
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const token = useAuthStore((state) => state.token)
@@ -81,6 +102,9 @@ function AuthGuardOutlet() {
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/register', element: <RegisterPage /> },
+  ...(ADMIN_RECHARGE_SEGMENT
+    ? [{ path: `/${ADMIN_RECHARGE_SEGMENT}`, element: <AdminRechargePage /> }]
+    : []),
   {
     path: '/',
     element: <AppLayout />,
@@ -109,6 +133,7 @@ export const router = createBrowserRouter([
           { path: 'logs', element: <LogListPage /> },
           { path: 'logs/:requestId', element: <LogDetailPage /> },
           { path: 'analytics', element: <AnalyticsPage /> },
+          { path: 'billing', element: <BillingPage /> },
           { path: 'account/password', element: <Navigate to="/dashboard" replace /> },
           {
             path: 'settings',

@@ -6,6 +6,9 @@ pub struct AppConfig {
     pub upstream: UpstreamConfig,
     #[serde(default)]
     pub byok: ByokConfig,
+    /// Prepaid USD balance and usage-based charges (see `docs/product/recharge-and-billing-solution.md`).
+    #[serde(default)]
+    pub billing: BillingConfig,
     pub sqlite: SqliteConfig,
     pub audit: crate::audit::AuditConfig,
     /// Where to write rolling `tracing` logs (empty = stderr only).
@@ -41,6 +44,42 @@ pub struct ServerConfig {
 pub struct UpstreamConfig {
     pub base_url: String,
     pub api_key: String,
+}
+
+/// Prepaid balance and charges from upstream-reported USD (stored as k=15 minor units; see `crate::money`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct BillingConfig {
+    /// When false, balance checks and ledger charges are skipped (e.g. E2E or self-hosted).
+    #[serde(default = "default_billing_enabled")]
+    pub enabled: bool,
+    /// Enables `POST /api/v1/billing/admin-deposit` (Bearer token + target username). Disable in production unless needed.
+    #[serde(default)]
+    pub admin_deposit_enabled: bool,
+    /// Shared secret for admin deposit; compared to `Authorization: Bearer <value>`. Empty = endpoint not available.
+    #[serde(default)]
+    pub admin_deposit_password: String,
+    /// Minimum top-up amount in USD cents (e.g. 1000 = $10.00); converted to minor units internally.
+    #[serde(default = "default_min_deposit_cents")]
+    pub min_deposit_cents: i64,
+}
+
+fn default_billing_enabled() -> bool {
+    true
+}
+
+fn default_min_deposit_cents() -> i64 {
+    1000
+}
+
+impl Default for BillingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_billing_enabled(),
+            admin_deposit_enabled: false,
+            admin_deposit_password: String::new(),
+            min_deposit_cents: default_min_deposit_cents(),
+        }
+    }
 }
 
 /// BYOK at-rest encryption. Empty `master_key_hex` disables BYOK management and `X-MG-Byok-Id`.

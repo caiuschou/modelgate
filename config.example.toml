@@ -1,32 +1,63 @@
+# ModelGate 服务端配置示例。复制为 `config.toml` 并按环境修改。
+# 说明文档：仓库根目录 `AGENTS.md`、docs/development/deployment.md
+
 [server]
+# 监听地址；生产常配反向代理前的本机或 0.0.0.0
 host = "0.0.0.0"
+# HTTP 端口；可用环境变量 MODELGATE_SERVER_PORT 覆盖
 port = 8000
 
 [auth]
-# Required for POST /api/v1/auth/register. Set to "" to disable self-service registration.
-# Override at runtime: AUTH_INVITE_CODE
+# POST /api/v1/auth/register 必填邀请码；设为空字符串 "" 则关闭自助注册
+# 运行时可覆盖：AUTH_INVITE_CODE
 invite_code = "ZW9Z"
-# Console session JWT (POST /api/v1/auth/login). Empty = derive from upstream key at startup, or set JWT_SECRET.
+# 控制台会话 JWT（POST /api/v1/auth/login）。留空则在启动时用 upstream 密钥派生，或设置 JWT_SECRET
 # jwt_secret = "your-random-secret-at-least-32-chars"
 
 [upstream]
+# 上游 OpenAI 兼容 Base URL，例如：
 # OpenAI: https://api.openai.com/v1  |  OpenRouter: https://openrouter.ai/api/v1
-# Override base_url with env UPSTREAM_BASE_URL on the server if needed.
+# 运行时可覆盖：UPSTREAM_BASE_URL
 base_url = "https://api.openai.com/v1"
-# Upstream API key is read only from this file (not UPSTREAM_API_KEY env).
+# 上游 API Key，仅从此文件读取（不使用 UPSTREAM_API_KEY 环境变量）
 api_key = "sk-your-openai-key-here"
 
-# Optional: 32-byte master key as 64 hex chars for BYOK (encrypt user/team upstream keys at rest).
-# Env override: BYOK_MASTER_KEY. Empty = BYOK management APIs disabled; chat ignores X-MG-Byok-Id.
+# 可选：BYOK 主密钥，64 个十六进制字符 = 32 字节，用于加密存储用户/团队上游 Key
+# 环境变量覆盖：BYOK_MASTER_KEY。留空 = 不提供 BYOK 管理接口；聊天侧忽略 X-MG-Byok-Id
 # [byok]
 # master_key_hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
-# Optional: rolling tracing logs (`modelgate.log.YYYY-MM-DD`). Empty = stderr only (e.g. systemd journal).
-# On SSH deploy, CD sets `../shared/logs` (relative to release = persistent logs under shared/).
-# Override with env TRACING_LOG_DIR if needed.
+# 可选：按日滚动的 tracing 日志目录（如 modelgate.log.YYYY-MM-DD）；留空则只输出到 stderr（如 systemd journal）
+# SSH 部署时常设为 `../shared/logs`（相对 release 目录，便于持久化）
+# 环境变量覆盖：TRACING_LOG_DIR
 [logging]
 tracing_log_dir = ""
 
-# SQLite defaults to `modelgate.db` in the process cwd (OK for local dev).
-# SSH deploy adds `[sqlite] path = "../shared/modelgate.db"` so the DB survives release switches.
+# SQLite 数据库文件路径；默认进程当前工作目录下的 modelgate.db（本地开发足够）
+# SSH 部署建议：`path = "../shared/modelgate.db"`，避免随发版目录切换丢失数据
+[sqlite]
+path = "modelgate.db"
 
+# 审计日志与导出目录；详见 docs/product/audit-log.md
+[audit]
+log_dir = "./audit_logs"
+retention_days = 90
+batch_size = 50
+flush_interval_seconds = 5
+export_dir = "./exports"
+
+# ---------------------------------------------------------------------------
+# 预付费余额：USD 以整数 minor 存储，scale k=15（1 USD = 10^15 minor，见 src/money.rs）
+# 成功调用后扣费金额来自上游 JSON 的 cost / cost_details（与百万 token 配置无关）
+# 产品说明：docs/product/recharge-and-billing-solution.md
+# E2E 在 e2e/config.toml 中设置 enabled = false，避免零余额阻塞自动化调用
+# ---------------------------------------------------------------------------
+[billing]
+# 是否启用：为 true 时余额≤0 会拒绝新的 POST /v1/chat/completions（402）；为 false 时不校验、不扣费
+enabled = true
+# 是否开放 POST /api/v1/billing/admin-deposit（需 Authorization: Bearer 与 admin_deposit_password 一致）
+admin_deposit_enabled = false
+# 管理充值密钥；留空则该接口不可用。生产环境请使用长随机串并限制 config 文件权限
+admin_deposit_password = ""
+# 单次充值最低金额（美分），例如 1000 = 10.00 USD；内部会换算为 k=15 minor
+min_deposit_cents = 1000
