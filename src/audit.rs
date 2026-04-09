@@ -30,6 +30,8 @@ pub struct AuditRecord {
     pub error_message: Option<String>,
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
+    #[serde(default)]
+    pub cached_prompt_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
@@ -49,6 +51,7 @@ pub struct AuditStreamCompletionUpdate {
     pub response_body_path: String,
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
+    pub cached_prompt_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub finish_reason: Option<String>,
@@ -99,6 +102,7 @@ pub struct AuditListItem {
     pub error_message: Option<String>,
     pub prompt_tokens: Option<i64>,
     pub completion_tokens: Option<i64>,
+    pub cached_prompt_tokens: Option<i64>,
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
@@ -139,6 +143,11 @@ pub struct AuditAnalyticsTimeBucket {
     pub bucket_start: i64,
     pub request_count: i64,
     pub total_tokens: i64,
+    /// Sum of `audit_logs.cost` in this bucket (USD, upstream-reported).
+    pub total_cost: f64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cached_prompt_tokens: i64,
 }
 
 #[derive(Debug, Serialize)]

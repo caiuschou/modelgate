@@ -10,6 +10,12 @@ export interface AnalyticsTimeBucket {
   bucket_start: number
   request_count: number
   total_tokens: number
+  /** Sum of audit `cost` in this bucket (USD). */
+  total_cost: number
+  prompt_tokens: number
+  completion_tokens: number
+  /** Sum of `cached_prompt_tokens` (usage.prompt_tokens_details.cached_tokens). */
+  cached_prompt_tokens: number
 }
 
 export interface AnalyticsModelSlice {

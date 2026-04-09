@@ -506,6 +506,7 @@ mod tests {
                 error_message: None,
                 prompt_tokens: Some(1),
                 completion_tokens: Some(1),
+                cached_prompt_tokens: None,
                 total_tokens: Some(2),
                 cost: Some(0.01),
                 latency_ms: Some(10),

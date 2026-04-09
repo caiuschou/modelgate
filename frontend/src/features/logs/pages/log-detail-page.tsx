@@ -9,6 +9,7 @@ import {
   useAuditLogDetail,
 } from '@/features/logs/hooks/use-logs'
 import type { AuditLogRecord } from '@/features/logs/types'
+import { formatCostUsd } from '@/lib/format-cost'
 
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
@@ -142,14 +143,6 @@ function parseAuditUpstreamMeta(
   return { isByok, profileId }
 }
 
-function formatCost(value: number): string {
-  if (value === 0) return '$0'
-  const abs = Math.abs(value)
-  if (abs >= 1) return '$' + value.toFixed(2)
-  if (abs >= 0.01) return '$' + value.toFixed(4)
-  return '$' + value.toFixed(7)
-}
-
 function TokenDetailRow({ label, value }: { label: string; value?: number }) {
   return (
     <div className="flex items-center justify-between gap-4">
@@ -176,7 +169,7 @@ function CostDetailRow(props: {
         {label}
       </span>
       <span className={`font-mono text-xs${bold ? ' font-medium' : ''}`}>
-        {value != null ? formatCost(value) : '—'}
+        {value != null ? formatCostUsd(value) : '—'}
       </span>
     </div>
   )
@@ -528,7 +521,7 @@ export function LogDetailPage() {
               <div>
                 <dt className="text-xs text-muted-foreground">成本</dt>
                 <dd className="mt-0.5 font-mono text-sm">
-                  {data.cost != null ? formatCost(data.cost) : '—'}
+                  {data.cost != null ? formatCostUsd(data.cost) : '—'}
                 </dd>
               </div>
             </dl>

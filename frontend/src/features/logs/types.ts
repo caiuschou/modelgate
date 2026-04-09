@@ -9,6 +9,7 @@ export interface AuditLogListItem {
   error_message: string | null
   prompt_tokens: number | null
   completion_tokens: number | null
+  cached_prompt_tokens: number | null
   total_tokens: number | null
   cost: number | null
   latency_ms: number | null

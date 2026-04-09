@@ -11,6 +11,7 @@ import {
   useAuditLogList,
   useExportAuditLogs,
 } from '@/features/logs/hooks/use-logs'
+import { formatCostUsd } from '@/lib/format-cost'
 import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 20
@@ -325,7 +326,7 @@ export function LogListPage() {
 
       {!isLoading && data && data.data.length > 0 && (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[960px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
             <thead className="border-b border-border bg-muted/40">
               <tr>
                 <th scope="col" className="px-3 py-2 font-medium">
@@ -351,6 +352,9 @@ export function LogListPage() {
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium text-right">
                   合计
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-right">
+                  成本 (USD)
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium">
                   finish
@@ -393,6 +397,9 @@ export function LogListPage() {
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
                     {row.total_tokens ?? '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono text-xs">
+                    {row.cost != null ? formatCostUsd(row.cost) : '—'}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs">
                     {row.finish_reason ?? '—'}

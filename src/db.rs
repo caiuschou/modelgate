@@ -4,7 +4,7 @@ use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExten
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 12] = [
+const MIGRATIONS: [(&str, &str); 14] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -52,6 +52,14 @@ const MIGRATIONS: [(&str, &str); 12] = [
     (
         "0012_billing_usd_minor_k15.sql",
         include_str!("../migrations/0012_billing_usd_minor_k15.sql"),
+    ),
+    (
+        "0013_audit_hourly_rollups.sql",
+        include_str!("../migrations/0013_audit_hourly_rollups.sql"),
+    ),
+    (
+        "0014_audit_cached_prompt_tokens.sql",
+        include_str!("../migrations/0014_audit_cached_prompt_tokens.sql"),
     ),
 ];
 
@@ -1130,10 +1138,10 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
             "INSERT OR REPLACE INTO audit_logs (
                 request_id, user_id, token_id, channel_id, model, request_type,
                 request_body_path, response_body_path, status_code, error_message,
-                prompt_tokens, completion_tokens, total_tokens, cost, latency_ms,
+                prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms,
                 app_id, finish_reason, metadata, created_at, team_id
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
             )",
         )?;
 
@@ -1152,6 +1160,7 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 record.error_message,
                 record.prompt_tokens,
                 record.completion_tokens,
+                record.cached_prompt_tokens,
                 record.total_tokens,
                 record.cost,
                 record.latency_ms,
@@ -1161,6 +1170,9 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 record.created_at,
                 record.team_id,
             ])?;
+            if let Err(e) = apply_audit_hourly_rollup_from_record(&tx, record) {
+                tracing::error!(error = %e, request_id = %record.request_id, "audit_hourly_rollup insert failed");
+            }
         }
     }
     tx.commit()
@@ -1171,22 +1183,24 @@ pub fn update_audit_log_stream_completion(
     update: &crate::audit::AuditStreamCompletionUpdate,
 ) -> rusqlite::Result<usize> {
     let metadata = update.metadata.to_string();
-    conn.execute(
+    let rows = conn.execute(
         "UPDATE audit_logs SET
             response_body_path = ?1,
             prompt_tokens = ?2,
             completion_tokens = ?3,
-            total_tokens = ?4,
-            cost = ?5,
-            finish_reason = ?6,
-            latency_ms = ?7,
-            metadata = ?8,
-            error_message = COALESCE(?9, error_message)
-         WHERE request_id = ?10",
+            cached_prompt_tokens = ?4,
+            total_tokens = ?5,
+            cost = ?6,
+            finish_reason = ?7,
+            latency_ms = ?8,
+            metadata = ?9,
+            error_message = COALESCE(?10, error_message)
+         WHERE request_id = ?11",
         params![
             update.response_body_path,
             update.prompt_tokens,
             update.completion_tokens,
+            update.cached_prompt_tokens,
             update.total_tokens,
             update.cost,
             update.finish_reason,
@@ -1195,7 +1209,40 @@ pub fn update_audit_log_stream_completion(
             update.error_message,
             update.request_id,
         ],
-    )
+    )?;
+    if rows > 0 {
+        let snapshot = conn.query_row(
+            "SELECT user_id, team_id, created_at, status_code, prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms
+             FROM audit_logs WHERE request_id = ?1",
+            params![update.request_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<i64>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<f64>>(8)?,
+                    row.get::<_, Option<i64>>(9)?,
+                ))
+            },
+        );
+        if let Ok((uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat)) = snapshot {
+            if let Err(e) = apply_audit_hourly_rollup_from_audit_row(
+                conn, uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat,
+            ) {
+                tracing::error!(
+                    error = %e,
+                    request_id = %update.request_id,
+                    "audit_hourly_rollup stream completion failed"
+                );
+            }
+        }
+    }
+    Ok(rows)
 }
 
 pub fn query_audit_logs(
@@ -1210,7 +1257,7 @@ pub fn query_audit_logs(
     let list_sql = format!(
         "SELECT
             request_id, user_id, team_id, token_id, channel_id, model, request_type,
-            status_code, error_message, prompt_tokens, completion_tokens,
+            status_code, error_message, prompt_tokens, completion_tokens, cached_prompt_tokens,
             total_tokens, cost, latency_ms, app_id, finish_reason, created_at
          FROM audit_logs
          {where_sql}
@@ -1235,12 +1282,13 @@ pub fn query_audit_logs(
             error_message: row.get(8)?,
             prompt_tokens: row.get(9)?,
             completion_tokens: row.get(10)?,
-            total_tokens: row.get(11)?,
-            cost: row.get(12)?,
-            latency_ms: row.get(13)?,
-            app_id: row.get(14)?,
-            finish_reason: row.get(15)?,
-            created_at: row.get(16)?,
+            cached_prompt_tokens: row.get(11)?,
+            total_tokens: row.get(12)?,
+            cost: row.get(13)?,
+            latency_ms: row.get(14)?,
+            app_id: row.get(15)?,
+            finish_reason: row.get(16)?,
+            created_at: row.get(17)?,
         })
     })?;
 
@@ -1275,13 +1323,13 @@ pub fn get_audit_log_by_request_id(
     let sql = "SELECT
             request_id, user_id, token_id, channel_id, model, request_type,
             request_body_path, response_body_path, status_code, error_message,
-            prompt_tokens, completion_tokens, total_tokens, cost, latency_ms,
+            prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms,
             app_id, finish_reason, metadata, created_at, team_id
          FROM audit_logs
          WHERE request_id = ?1";
 
     let record = conn.query_row(sql, params![request_id], |row| {
-        let metadata_str: Option<String> = row.get(17)?;
+        let metadata_str: Option<String> = row.get(18)?;
         let metadata = metadata_str.and_then(|raw| serde_json::from_str(&raw).ok());
         Ok(AuditRecord {
             request_id: row.get(0)?,
@@ -1296,14 +1344,15 @@ pub fn get_audit_log_by_request_id(
             error_message: row.get(9)?,
             prompt_tokens: row.get(10)?,
             completion_tokens: row.get(11)?,
-            total_tokens: row.get(12)?,
-            cost: row.get(13)?,
-            latency_ms: row.get(14)?,
-            app_id: row.get(15)?,
-            finish_reason: row.get(16)?,
+            cached_prompt_tokens: row.get(12)?,
+            total_tokens: row.get(13)?,
+            cost: row.get(14)?,
+            latency_ms: row.get(15)?,
+            app_id: row.get(16)?,
+            finish_reason: row.get(17)?,
             metadata,
-            created_at: row.get(18)?,
-            team_id: row.get(19)?,
+            created_at: row.get(19)?,
+            team_id: row.get(20)?,
         })
     })?;
 
@@ -1409,6 +1458,165 @@ fn build_audit_where_clause(
     (where_sql, args)
 }
 
+/// True when analytics can use `audit_hourly_rollups` (no extra filters beyond time + scope).
+fn audit_analytics_rollup_eligible(query: &AuditListQuery) -> bool {
+    query.keyword.is_none()
+        && query.model.is_none()
+        && query.channel_id.is_none()
+        && query.status_code.is_none()
+        && query.token_id.is_none()
+        && query.app_id.is_none()
+        && query.finish_reason.is_none()
+        && query.min_prompt_tokens.is_none()
+        && query.max_prompt_tokens.is_none()
+        && query.min_completion_tokens.is_none()
+        && query.max_completion_tokens.is_none()
+}
+
+/// Inclusive `[eff_start, eff_end]` spans whole hours: `eff_start` aligned to hour and length is a multiple of 3600s.
+fn audit_analytics_rollup_aligned_hours(eff_start: i64, eff_end: i64) -> Option<i64> {
+    if eff_start % 3600 != 0 {
+        return None;
+    }
+    let span = eff_end.saturating_sub(eff_start).saturating_add(1);
+    if span <= 0 || span % 3600 != 0 {
+        return None;
+    }
+    Some(span)
+}
+
+fn audit_record_rollup_scope(record: &AuditRecord) -> Option<(&'static str, i64)> {
+    match record.team_id {
+        Some(tid) => Some(("t", tid)),
+        None => record.user_id.map(|u| ("p", u)),
+    }
+}
+
+fn hour_bucket_start(created_at: i64) -> i64 {
+    (created_at / 3600) * 3600
+}
+
+/// Skip rollup on initial insert for streaming chat (finalized via `update_audit_log_stream_completion`).
+fn audit_record_skip_rollup_on_insert(record: &AuditRecord) -> bool {
+    record
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("stream"))
+        .and_then(|v| v.as_bool())
+        == Some(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn upsert_audit_hourly_rollup_increment(
+    conn: &Connection,
+    bucket_start: i64,
+    scope: &str,
+    scope_id: i64,
+    request_count: i64,
+    success_count: i64,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    cached_prompt_tokens: i64,
+    total_tokens: i64,
+    cost_sum: f64,
+    latency_ms: i64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO audit_hourly_rollups (
+            bucket_start, scope, scope_id, request_count, success_count,
+            prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost_sum, latency_ms_sum
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(bucket_start, scope, scope_id) DO UPDATE SET
+            request_count = audit_hourly_rollups.request_count + excluded.request_count,
+            success_count = audit_hourly_rollups.success_count + excluded.success_count,
+            prompt_tokens = audit_hourly_rollups.prompt_tokens + excluded.prompt_tokens,
+            completion_tokens = audit_hourly_rollups.completion_tokens + excluded.completion_tokens,
+            cached_prompt_tokens = audit_hourly_rollups.cached_prompt_tokens + excluded.cached_prompt_tokens,
+            total_tokens = audit_hourly_rollups.total_tokens + excluded.total_tokens,
+            cost_sum = audit_hourly_rollups.cost_sum + excluded.cost_sum,
+            latency_ms_sum = audit_hourly_rollups.latency_ms_sum + excluded.latency_ms_sum",
+        params![
+            bucket_start,
+            scope,
+            scope_id,
+            request_count,
+            success_count,
+            prompt_tokens,
+            completion_tokens,
+            cached_prompt_tokens,
+            total_tokens,
+            cost_sum,
+            latency_ms,
+        ],
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_audit_hourly_rollup_from_audit_row(
+    conn: &Connection,
+    user_id: Option<i64>,
+    team_id: Option<i64>,
+    created_at: i64,
+    status_code: Option<i64>,
+    prompt_tokens: Option<i64>,
+    completion_tokens: Option<i64>,
+    cached_prompt_tokens: Option<i64>,
+    total_tokens: Option<i64>,
+    cost: Option<f64>,
+    latency_ms: Option<i64>,
+) -> rusqlite::Result<()> {
+    let (scope, scope_id) = match team_id {
+        Some(tid) => ("t", tid),
+        None => {
+            let Some(uid) = user_id else {
+                return Ok(());
+            };
+            ("p", uid)
+        }
+    };
+    let bucket = hour_bucket_start(created_at);
+    let success = if let Some(sc) = status_code {
+        i64::from((200..300).contains(&sc))
+    } else {
+        0
+    };
+    let pt = prompt_tokens.unwrap_or(0);
+    let ct = completion_tokens.unwrap_or(0);
+    let cp = cached_prompt_tokens.unwrap_or(0).min(pt);
+    let tt = total_tokens.unwrap_or(0);
+    let cost_sum = cost.unwrap_or(0.0);
+    let lat = latency_ms.unwrap_or(0);
+    upsert_audit_hourly_rollup_increment(
+        conn, bucket, scope, scope_id, 1, success, pt, ct, cp, tt, cost_sum, lat,
+    )
+}
+
+fn apply_audit_hourly_rollup_from_record(
+    conn: &Connection,
+    record: &AuditRecord,
+) -> rusqlite::Result<()> {
+    if audit_record_skip_rollup_on_insert(record) {
+        return Ok(());
+    }
+    if audit_record_rollup_scope(record).is_none() {
+        return Ok(());
+    }
+    apply_audit_hourly_rollup_from_audit_row(
+        conn,
+        record.user_id,
+        record.team_id,
+        record.created_at,
+        record.status_code,
+        record.prompt_tokens,
+        record.completion_tokens,
+        record.cached_prompt_tokens,
+        record.total_tokens,
+        record.cost,
+        record.latency_ms,
+    )
+}
+
 fn audit_analytics_bucket_seconds(range_start: i64, range_end: i64) -> i64 {
     let span = range_end.saturating_sub(range_start).max(1);
     if span <= 2 * 86400 {
@@ -1421,6 +1629,59 @@ fn audit_analytics_bucket_seconds(range_start: i64, range_end: i64) -> i64 {
 }
 
 const ANALYTICS_MAX_RANGE_SECS: i64 = 366 * 86400;
+
+fn audit_analytics_series_from_rollup(
+    conn: &Connection,
+    scope: &str,
+    scope_id: i64,
+    eff_start: i64,
+    span_secs: i64,
+) -> rusqlite::Result<Vec<crate::audit::AuditAnalyticsTimeBucket>> {
+    use crate::audit::AuditAnalyticsTimeBucket;
+    use std::collections::HashMap;
+
+    let end_excl = eff_start.saturating_add(span_secs);
+    let mut stmt = conn.prepare(
+        "SELECT bucket_start, request_count, total_tokens, cost_sum,
+                prompt_tokens, completion_tokens, cached_prompt_tokens
+         FROM audit_hourly_rollups
+         WHERE scope = ?1 AND scope_id = ?2 AND bucket_start >= ?3 AND bucket_start < ?4
+         ORDER BY bucket_start ASC",
+    )?;
+    let rows = stmt.query_map(params![scope, scope_id, eff_start, end_excl], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, i64>(2)?,
+            row.get::<_, f64>(3)?,
+            row.get::<_, i64>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, i64>(6)?,
+        ))
+    })?;
+    let mut by_bucket: HashMap<i64, (i64, i64, f64, i64, i64, i64)> = HashMap::new();
+    for r in rows {
+        let (bs, rc, tt, cs, pt, ct, cpt) = r?;
+        by_bucket.insert(bs, (rc, tt, cs, pt, ct, cpt));
+    }
+    let mut series = Vec::new();
+    let mut cur = eff_start;
+    while cur < end_excl {
+        let (rc, tt, cs, pt, ct, cpt) =
+            by_bucket.get(&cur).copied().unwrap_or((0, 0, 0.0, 0, 0, 0));
+        series.push(AuditAnalyticsTimeBucket {
+            bucket_start: cur,
+            request_count: rc,
+            total_tokens: tt,
+            total_cost: cs,
+            prompt_tokens: pt,
+            completion_tokens: ct,
+            cached_prompt_tokens: cpt,
+        });
+        cur = cur.saturating_add(3600);
+    }
+    Ok(series)
+}
 
 pub fn query_audit_analytics(
     conn: &Connection,
@@ -1456,52 +1717,136 @@ pub fn query_audit_analytics(
     let bucket_sec = audit_analytics_bucket_seconds(eff_start, eff_end);
     let (where_sql, where_args) = build_audit_where_clause(&base, scope);
 
-    let summary_sql = format!(
-        "SELECT COUNT(1),
-                COALESCE(SUM(CASE WHEN status_code IS NOT NULL AND status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(total_tokens), 0),
-                COALESCE(SUM(cost), 0.0),
-                AVG(CAST(latency_ms AS REAL))
-         FROM audit_logs {where_sql}"
-    );
+    let (rollup_scope, rollup_scope_id) = match scope {
+        AuditConsoleScope::Personal(uid) => ("p", uid),
+        AuditConsoleScope::Team(tid) => ("t", tid),
+    };
 
-    let (total_requests, success_requests, total_tokens, total_cost, avg_latency_ms) = conn
-        .query_row(&summary_sql, params_from_iter(where_args.iter()), |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, f64>(3)?,
-                row.get::<_, Option<f64>>(4)?,
-            ))
-        })?;
+    let span_hours = audit_analytics_rollup_aligned_hours(eff_start, eff_end);
+    let try_rollup =
+        audit_analytics_rollup_eligible(&base) && bucket_sec == 3600 && span_hours.is_some();
 
-    let series_sql = format!(
-        "SELECT (created_at / ?) * ? AS bucket_start,
-                COUNT(1) AS c,
-                COALESCE(SUM(total_tokens), 0) AS t
-         FROM audit_logs {where_sql}
-         GROUP BY bucket_start
-         ORDER BY bucket_start ASC"
-    );
-
-    let mut series_bind: Vec<Value> = Vec::new();
-    series_bind.push(Value::Integer(bucket_sec));
-    series_bind.push(Value::Integer(bucket_sec));
-    series_bind.extend(where_args.iter().cloned());
-
-    let mut stmt = conn.prepare(&series_sql)?;
-    let series_rows = stmt.query_map(params_from_iter(series_bind.iter()), |row| {
-        Ok(AuditAnalyticsTimeBucket {
-            bucket_start: row.get(0)?,
-            request_count: row.get(1)?,
-            total_tokens: row.get(2)?,
-        })
-    })?;
-    let mut series = Vec::new();
-    for r in series_rows {
-        series.push(r?);
+    let mut use_rollup = false;
+    if try_rollup {
+        let span = span_hours.unwrap_or(0);
+        let count_sql = format!("SELECT COUNT(1) FROM audit_logs {where_sql}");
+        let audit_total: i64 =
+            conn.query_row(&count_sql, params_from_iter(where_args.iter()), |row| {
+                row.get(0)
+            })?;
+        let rollup_sql = "SELECT COALESCE(SUM(request_count), 0) FROM audit_hourly_rollups
+             WHERE scope = ?1 AND scope_id = ?2 AND bucket_start >= ?3 AND bucket_start < ?4";
+        let rollup_total: i64 = conn.query_row(
+            rollup_sql,
+            params![
+                rollup_scope,
+                rollup_scope_id,
+                eff_start,
+                eff_start.saturating_add(span)
+            ],
+            |row| row.get(0),
+        )?;
+        use_rollup = rollup_total > 0 && rollup_total == audit_total;
     }
+
+    let (total_requests, success_requests, total_tokens, total_cost, avg_latency_ms, series) =
+        if use_rollup {
+            let span = span_hours.unwrap_or(0);
+            let end_excl = eff_start.saturating_add(span);
+            let summary_rollup = "SELECT COALESCE(SUM(request_count), 0),
+                    COALESCE(SUM(success_count), 0),
+                    COALESCE(SUM(total_tokens), 0),
+                    COALESCE(SUM(cost_sum), 0.0),
+                    CASE WHEN SUM(request_count) > 0
+                        THEN CAST(SUM(latency_ms_sum) AS REAL) / SUM(request_count)
+                        ELSE NULL END
+             FROM audit_hourly_rollups
+             WHERE scope = ?1 AND scope_id = ?2 AND bucket_start >= ?3 AND bucket_start < ?4";
+            let s = conn.query_row(
+                summary_rollup,
+                params![rollup_scope, rollup_scope_id, eff_start, end_excl],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, f64>(3)?,
+                        row.get::<_, Option<f64>>(4)?,
+                    ))
+                },
+            )?;
+            let ser = audit_analytics_series_from_rollup(
+                conn,
+                rollup_scope,
+                rollup_scope_id,
+                eff_start,
+                span,
+            )?;
+            (s.0, s.1, s.2, s.3, s.4, ser)
+        } else {
+            let summary_sql = format!(
+            "SELECT COUNT(1),
+                    COALESCE(SUM(CASE WHEN status_code IS NOT NULL AND status_code >= 200 AND status_code < 300 THEN 1 ELSE 0 END), 0),
+                    COALESCE(SUM(total_tokens), 0),
+                    COALESCE(SUM(cost), 0.0),
+                    AVG(CAST(latency_ms AS REAL))
+             FROM audit_logs {where_sql}"
+        );
+
+            let (total_requests, success_requests, total_tokens, total_cost, avg_latency_ms) = conn
+                .query_row(&summary_sql, params_from_iter(where_args.iter()), |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, f64>(3)?,
+                        row.get::<_, Option<f64>>(4)?,
+                    ))
+                })?;
+
+            let series_sql = format!(
+                "SELECT (created_at / ?) * ? AS bucket_start,
+                    COUNT(1) AS c,
+                    COALESCE(SUM(total_tokens), 0) AS t,
+                    COALESCE(SUM(cost), 0.0) AS cost_sum,
+                    COALESCE(SUM(prompt_tokens), 0) AS pt,
+                    COALESCE(SUM(completion_tokens), 0) AS ct,
+                    COALESCE(SUM(COALESCE(cached_prompt_tokens, 0)), 0) AS cpt
+             FROM audit_logs {where_sql}
+             GROUP BY bucket_start
+             ORDER BY bucket_start ASC"
+            );
+
+            let mut series_bind: Vec<Value> = Vec::new();
+            series_bind.push(Value::Integer(bucket_sec));
+            series_bind.push(Value::Integer(bucket_sec));
+            series_bind.extend(where_args.iter().cloned());
+
+            let mut stmt = conn.prepare(&series_sql)?;
+            let series_rows = stmt.query_map(params_from_iter(series_bind.iter()), |row| {
+                Ok(AuditAnalyticsTimeBucket {
+                    bucket_start: row.get(0)?,
+                    request_count: row.get(1)?,
+                    total_tokens: row.get(2)?,
+                    total_cost: row.get(3)?,
+                    prompt_tokens: row.get(4)?,
+                    completion_tokens: row.get(5)?,
+                    cached_prompt_tokens: row.get(6)?,
+                })
+            })?;
+            let mut series = Vec::new();
+            for r in series_rows {
+                series.push(r?);
+            }
+            (
+                total_requests,
+                success_requests,
+                total_tokens,
+                total_cost,
+                avg_latency_ms,
+                series,
+            )
+        };
 
     let model_sql = format!(
         "SELECT CASE WHEN model IS NULL OR model = '' THEN '(unknown)' ELSE model END AS m,
@@ -1801,6 +2146,7 @@ mod tests {
                     error_message: None,
                     prompt_tokens: Some(1),
                     completion_tokens: Some(4),
+                    cached_prompt_tokens: None,
                     total_tokens: Some(5),
                     cost: Some(0.02),
                     latency_ms: Some(50),
@@ -1823,6 +2169,7 @@ mod tests {
                     error_message: None,
                     prompt_tokens: Some(1),
                     completion_tokens: Some(9),
+                    cached_prompt_tokens: None,
                     total_tokens: Some(10),
                     cost: None,
                     latency_ms: Some(200),
@@ -1862,6 +2209,75 @@ mod tests {
         assert_eq!(resp.summary.total_tokens, 15);
         assert!((resp.summary.total_cost - 0.02).abs() < 1e-9);
         assert_eq!(resp.by_model.len(), 2);
+        let series_cost: f64 = resp.series.iter().map(|b| b.total_cost).sum();
+        assert!((series_cost - 0.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn query_audit_analytics_series_includes_prompt_cached_breakdown() {
+        use crate::audit::{AuditListQuery, AuditRecord};
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 10_000_000_i64;
+        insert_audit_logs(
+            &mut conn,
+            &[AuditRecord {
+                request_id: "cached1".into(),
+                user_id: Some(7),
+                token_id: Some(1),
+                channel_id: None,
+                model: Some("m".into()),
+                request_type: Some("chat".into()),
+                request_body_path: None,
+                response_body_path: None,
+                status_code: Some(200),
+                error_message: None,
+                prompt_tokens: Some(100),
+                completion_tokens: Some(50),
+                cached_prompt_tokens: Some(80),
+                total_tokens: Some(150),
+                cost: Some(0.001),
+                latency_ms: Some(10),
+                app_id: None,
+                finish_reason: None,
+                metadata: None,
+                created_at: t0,
+                team_id: None,
+            }],
+        )
+        .expect("insert audit");
+
+        let filter = AuditListQuery {
+            start_time: Some(t0 - 10),
+            end_time: Some(t0 + 10_000),
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: None,
+            offset: None,
+        };
+
+        let resp = query_audit_analytics(&conn, &filter, AuditConsoleScope::Personal(7))
+            .expect("analytics");
+        let bucket = resp
+            .series
+            .iter()
+            .find(|b| b.bucket_start == (t0 / 3600) * 3600)
+            .expect("hour bucket");
+        assert_eq!(bucket.prompt_tokens, 100);
+        assert_eq!(bucket.completion_tokens, 50);
+        assert_eq!(bucket.cached_prompt_tokens, 80);
+        assert!((bucket.total_cost - 0.001).abs() < 1e-12);
     }
 
     #[test]

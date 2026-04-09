@@ -70,6 +70,7 @@ pub fn check_can_start_chat(state: &AppState, user_id: i64, is_byok: bool) -> Re
 
 /// Records usage charge after a successful upstream response from upstream-reported USD.
 /// Skips when `is_byok` — no platform charge for BYOK traffic.
+#[allow(clippy::too_many_arguments)] // thin wrapper over DB charge + tracing
 pub fn charge_chat_usage(
     state: &AppState,
     user_id: i64,

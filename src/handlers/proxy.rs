@@ -4,6 +4,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use once_cell::sync::Lazy;
 use reqwest::header as reqwest_header;
+use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
@@ -145,6 +146,7 @@ pub async fn chat_completions(
                     error_message: Some("Upstream request failed".to_string()),
                     prompt_tokens: None,
                     completion_tokens: None,
+                    cached_prompt_tokens: None,
                     total_tokens: None,
                     cost: None,
                     latency_ms: Some(start.elapsed().as_millis() as i64),
@@ -204,6 +206,7 @@ pub async fn chat_completions(
                 error_message: None,
                 prompt_tokens: None,
                 completion_tokens: None,
+                cached_prompt_tokens: None,
                 total_tokens: None,
                 cost: None,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
@@ -257,7 +260,7 @@ pub async fn chat_completions(
                 }
             };
             let mut usage_state: UsageTokensCostFinish =
-                (None, None, None, None, None, None);
+                (None, None, None, None, None, None, None);
             let mut upstream_stream = upstream_resp.bytes_stream();
             let mut buf: Vec<u8> = Vec::new();
             while let Some(item) = upstream_stream.next().await {
@@ -389,6 +392,7 @@ pub async fn chat_completions(
                 },
                 prompt_tokens: usage.0,
                 completion_tokens: usage.1,
+                cached_prompt_tokens: usage.6,
                 total_tokens: usage.2,
                 cost: usage.3,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
@@ -474,7 +478,7 @@ fn parse_sse_data_line_merge_usage(line: &[u8], usage: &mut UsageTokensCostFinis
 }
 
 fn merge_usage_tokens(usage: &mut UsageTokensCostFinish, chunk: &[u8]) {
-    let (p, c, t, co, fr, up) = parse_usage_cost_and_finish(chunk);
+    let (p, c, t, co, fr, up, cp) = parse_usage_cost_and_finish(chunk);
     if p.is_some() {
         usage.0 = p;
     }
@@ -492,6 +496,9 @@ fn merge_usage_tokens(usage: &mut UsageTokensCostFinish, chunk: &[u8]) {
     }
     if up.is_some() {
         usage.5 = up;
+    }
+    if cp.is_some() {
+        usage.6 = cp;
     }
 }
 
@@ -522,6 +529,7 @@ type UsageTokensCostFinish = (
     Option<f64>,
     Option<String>,
     Option<Decimal>,
+    Option<i64>,
 );
 
 struct StreamAuditCompletionJob {
@@ -542,7 +550,7 @@ struct StreamAuditCompletionJob {
 fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
     let value = match serde_json::from_slice::<Value>(body) {
         Ok(v) => v,
-        Err(_) => return (None, None, None, None, None, None),
+        Err(_) => return (None, None, None, None, None, None, None),
     };
 
     let usage = value.get("usage");
@@ -555,7 +563,16 @@ fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
     let total_tokens = usage
         .and_then(|u| u.get("total_tokens"))
         .and_then(|v| v.as_i64());
-    let cost = value.get("cost").and_then(|v| v.as_f64());
+    let cached_prompt_tokens = usage
+        .and_then(|u| u.get("prompt_tokens_details"))
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_i64());
+    let upstream_usd = crate::billing::upstream_cost_usd_from_response(&value);
+    // Audit `cost`: top-level `cost` OR same USD as billing (`cost_details` / nested `usage`).
+    let cost = value
+        .get("cost")
+        .and_then(|v| v.as_f64())
+        .or_else(|| upstream_usd.as_ref().and_then(ToPrimitive::to_f64));
     let finish_reason = value
         .get("choices")
         .and_then(|c| c.as_array())
@@ -563,7 +580,6 @@ fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
         .and_then(|ch| ch.get("finish_reason"))
         .and_then(|v| v.as_str())
         .map(std::string::ToString::to_string);
-    let upstream_usd = crate::billing::upstream_cost_usd_from_response(&value);
 
     (
         prompt_tokens,
@@ -572,6 +588,7 @@ fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
         cost,
         finish_reason,
         upstream_usd,
+        cached_prompt_tokens,
     )
 }
 
@@ -619,6 +636,7 @@ async fn enqueue_stream_audit_completion(
         response_body_path,
         prompt_tokens: usage.0,
         completion_tokens: usage.1,
+        cached_prompt_tokens: usage.6,
         total_tokens: usage.2,
         cost: usage.3,
         finish_reason: usage.4,
@@ -814,4 +832,77 @@ fn reqwest_response_headers_json(resp: &reqwest::Response) -> serde_json::Value 
         merge_audit_header_line(&mut map, key, v);
     }
     serde_json::Value::Object(map)
+}
+
+#[cfg(test)]
+mod parse_usage_cost_tests {
+    use super::parse_usage_cost_and_finish;
+    use serde_json::json;
+
+    fn parse(s: &serde_json::Value) -> super::UsageTokensCostFinish {
+        parse_usage_cost_and_finish(s.to_string().as_bytes())
+    }
+
+    #[test]
+    fn audit_cost_uses_top_level_cost_when_present() {
+        let v = json!({
+            "usage": { "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3 },
+            "cost": 0.05,
+            "cost_details": { "upstream_inference_cost": "0.0000189" }
+        });
+        let (_, _, _, cost, _, upstream, _) = parse(&v);
+        assert!((cost.unwrap() - 0.05).abs() < 1e-12);
+        assert_eq!(upstream.unwrap().to_string(), "0.0000189");
+    }
+
+    #[test]
+    fn audit_cost_falls_back_to_billing_usd_when_no_root_cost() {
+        let v = json!({
+            "usage": { "prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3 },
+            "cost_details": { "upstream_inference_cost": "0.0000189" }
+        });
+        let (_, _, _, cost, _, upstream, _) = parse(&v);
+        assert!(cost.is_some());
+        assert!((cost.unwrap() - 0.0000189).abs() < 1e-15);
+        assert_eq!(upstream.unwrap().to_string(), "0.0000189");
+    }
+
+    #[test]
+    fn audit_cost_from_openrouter_style_usage_block() {
+        let v = json!({
+            "usage": {
+                "prompt_tokens": 42,
+                "completion_tokens": 79,
+                "total_tokens": 121,
+                "cost": 0.0000252,
+                "cost_details": {
+                    "upstream_inference_cost": 0.0000252
+                }
+            }
+        });
+        let (_, _, _, cost, _, upstream, _) = parse(&v);
+        assert!((cost.unwrap() - 0.0000252).abs() < 1e-15);
+        assert_eq!(upstream.unwrap().to_string(), "0.0000252");
+    }
+
+    #[test]
+    fn cached_prompt_tokens_from_usage_details() {
+        let v = json!({
+            "usage": {
+                "prompt_tokens": 100,
+                "prompt_tokens_details": { "cached_tokens": 80 },
+                "completion_tokens": 5,
+                "total_tokens": 105
+            }
+        });
+        let (_, _, _, _, _, _, cached) = parse(&v);
+        assert_eq!(cached, Some(80));
+    }
+
+    #[test]
+    fn invalid_json_returns_empty_tuple() {
+        let t = parse_usage_cost_and_finish(b"not json {{{");
+        assert!(t.0.is_none() && t.1.is_none() && t.2.is_none() && t.3.is_none());
+        assert!(t.4.is_none() && t.5.is_none() && t.6.is_none());
+    }
 }
