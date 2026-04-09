@@ -1,4 +1,5 @@
 //! Prepaid balance (USD minor units, k=15) and charges from **upstream-reported USD** when `billing.enabled` is true.
+//! **BYOK** (`is_byok`): user pays their own upstream; platform balance is not checked and not charged.
 
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -44,7 +45,11 @@ fn json_value_to_decimal(v: &Value) -> Option<Decimal> {
 }
 
 /// Blocks chat when balance is empty (only if billing is enabled).
-pub fn check_can_start_chat(state: &AppState, user_id: i64) -> Result<(), ApiError> {
+/// Skips when `is_byok` — the caller uses their own upstream key; no platform balance applies.
+pub fn check_can_start_chat(state: &AppState, user_id: i64, is_byok: bool) -> Result<(), ApiError> {
+    if is_byok {
+        return Ok(());
+    }
     if !state.cfg.billing.enabled {
         return Ok(());
     }
@@ -64,6 +69,7 @@ pub fn check_can_start_chat(state: &AppState, user_id: i64) -> Result<(), ApiErr
 }
 
 /// Records usage charge after a successful upstream response from upstream-reported USD.
+/// Skips when `is_byok` — no platform charge for BYOK traffic.
 pub fn charge_chat_usage(
     state: &AppState,
     user_id: i64,
@@ -72,7 +78,11 @@ pub fn charge_chat_usage(
     prompt_tokens: Option<i64>,
     completion_tokens: Option<i64>,
     upstream_usd: Option<Decimal>,
+    is_byok: bool,
 ) {
+    if is_byok {
+        return;
+    }
     if !state.cfg.billing.enabled {
         return;
     }

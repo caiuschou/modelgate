@@ -68,8 +68,6 @@ pub async fn chat_completions(
         .ensure_monthly_quota(token_id, now)
         .map_err(ApiError::from)?;
 
-    billing::check_can_start_chat(&state, user_id)?;
-
     api_key_policy::check_model_allowlist(auth_row.model_allowlist.as_deref(), model.as_deref())
         .map_err(|m| ApiError::Forbidden(m.into()))?;
 
@@ -93,6 +91,7 @@ pub async fn chat_completions(
         .map_err(ApiError::from)?;
 
     let resolved = resolve_chat_upstream(&req, &state, &auth_row)?;
+    billing::check_can_start_chat(&state, user_id, resolved.is_byok)?;
     let client_request_headers_json = actix_request_headers_json(&req);
     debug!(
         %request_id,
@@ -344,6 +343,7 @@ pub async fn chat_completions(
                     usage_state.0,
                     usage_state.1,
                     usage_state.5,
+                    stream_is_byok,
                 );
             }
         };
@@ -434,6 +434,7 @@ pub async fn chat_completions(
                 usage.0,
                 usage.1,
                 usage.5,
+                resolved.is_byok,
             );
         }
 
