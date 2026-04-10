@@ -37,10 +37,7 @@ static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
 
 static UPSTREAM_GET_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(
-        reqwest_header::ACCEPT,
-        "application/json".parse().unwrap(),
-    );
+    headers.insert(reqwest_header::ACCEPT, "application/json".parse().unwrap());
     if let Ok(org) = std::env::var("OPENAI_ORGANIZATION") {
         if let Ok(header) = org.parse() {
             headers.insert("openai-organization", header);
@@ -148,9 +145,8 @@ fn filter_models_list_json(
         Some(r) => r,
         None => return Ok(body.to_vec()),
     };
-    let allowed: Vec<String> = serde_json::from_str(raw).map_err(|_| {
-        ApiError::InternalError("invalid model_allowlist on API key".into())
-    })?;
+    let allowed: Vec<String> = serde_json::from_str(raw)
+        .map_err(|_| ApiError::InternalError("invalid model_allowlist on API key".into()))?;
     if allowed.is_empty() {
         return Ok(body.to_vec());
     }
