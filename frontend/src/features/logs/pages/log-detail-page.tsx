@@ -2,12 +2,22 @@ import { useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import {
+  ChatCompletionRequestStructured,
+  ChatCompletionResponseStructured,
+} from '@/features/logs/components/chat-completion-structured-view'
 import { VirtualizedLogBody } from '@/features/logs/components/virtualized-log-body'
 import { useMyByokProfiles } from '@/features/byok/hooks/use-byok-profiles'
 import {
   useAuditLogBody,
   useAuditLogDetail,
 } from '@/features/logs/hooks/use-logs'
+import {
+  parseChatCompletionRequestBody,
+  parseChatCompletionResponseBody,
+  requestHasStructuredDisplay,
+  responseHasStructuredDisplay,
+} from '@/features/logs/parse-chat-completion-display'
 import {
   parseUsageFromBody,
   type UsageData,
@@ -290,6 +300,26 @@ function AuditBodyPanel(props: {
   const q = useAuditLogBody(requestId, part, hasPath)
   const formatted = q.data !== undefined ? formatBodyText(q.data) : ''
 
+  const parsedResponse = useMemo(
+    () =>
+      part === 'response' && q.data !== undefined
+        ? parseChatCompletionResponseBody(q.data)
+        : null,
+    [part, q.data],
+  )
+  const parsedRequest = useMemo(
+    () =>
+      part === 'request' && q.data !== undefined
+        ? parseChatCompletionRequestBody(q.data)
+        : null,
+    [part, q.data],
+  )
+
+  const showStructured =
+    part === 'response'
+      ? responseHasStructuredDisplay(parsedResponse)
+      : requestHasStructuredDisplay(parsedRequest)
+
   return (
     <Card className="space-y-3 p-4">
       <h2 className="text-sm font-medium">{title}</h2>
@@ -309,7 +339,33 @@ function AuditBodyPanel(props: {
           无法加载正文（文件不存在或已清理）。
         </p>
       )}
-      {hasPath && q.data !== undefined && <VirtualizedLogBody text={formatted} />}
+      {hasPath && q.data !== undefined && (
+        <>
+          {showStructured && (
+            <div className="space-y-3">
+              <h3 className="text-sm font-medium">解析视图</h3>
+              {part === 'response' && parsedResponse && (
+                <ChatCompletionResponseStructured parsed={parsedResponse} />
+              )}
+              {part === 'request' && parsedRequest && (
+                <ChatCompletionRequestStructured parsed={parsedRequest} />
+              )}
+            </div>
+          )}
+          {showStructured ? (
+            <details className="rounded-md border border-border/60">
+              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/40">
+                原始正文
+              </summary>
+              <div className="border-t border-border/60 pt-2">
+                <VirtualizedLogBody text={formatted} />
+              </div>
+            </details>
+          ) : (
+            <VirtualizedLogBody text={formatted} />
+          )}
+        </>
+      )}
     </Card>
   )
 }

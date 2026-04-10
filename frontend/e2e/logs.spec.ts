@@ -160,6 +160,11 @@ test('detail page shows request and response body from audit files', async ({
   await expect(
     requestSection.getByText('e2e audit ping', { exact: false }),
   ).toBeVisible({ timeout: 20_000 })
+  // Parsed chat completion adds a collapsible raw body (`<details>`); expand before asserting on JSON.
+  const rawSummaryResponse = responseSection.getByText('原始正文', { exact: true })
+  if ((await rawSummaryResponse.count()) > 0) {
+    await rawSummaryResponse.click()
+  }
   await expect(responseSection.getByText('choices', { exact: false })).toBeVisible({
     timeout: 20_000,
   })
@@ -195,6 +200,11 @@ test('stream chat persists SSE and detail shows body', async ({ page }) => {
   await expect(
     page.getByText('e2e stream chunk', { exact: false }),
   ).toBeVisible({ timeout: 20_000 })
+  const responseSection = page.getByRole('heading', { name: '响应体' }).locator('..')
+  const rawSummaryResponse = responseSection.getByText('原始正文', { exact: true })
+  if ((await rawSummaryResponse.count()) > 0) {
+    await rawSummaryResponse.click()
+  }
   await expect(page.getByText('[DONE]', { exact: false })).toBeVisible()
 })
 
