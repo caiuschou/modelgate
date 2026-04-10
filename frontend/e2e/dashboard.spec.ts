@@ -9,4 +9,6 @@ test('dashboard loads chart sections for authenticated user', async ({ page }) =
   await expect(page.getByText('近 24 小时 · Token（单柱堆叠）')).toBeVisible()
   await expect(page.getByText(/固定 24 个整点小时/)).toBeVisible()
   await expect(page.getByText(/单柱堆叠/)).toBeVisible()
+  await expect(page.getByText('近 24h Token 合计')).toBeVisible()
+  await expect(page.getByText('近 24h 成本 (USD)')).toBeVisible()
 })

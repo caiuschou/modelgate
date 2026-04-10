@@ -35,9 +35,13 @@ export function useAuditLogList(query: Record<string, string | number | undefine
   })
 }
 
-export function useAuditLogDetail(requestId: string | undefined) {
+export function useAuditLogDetail(
+  requestId: string | undefined,
+  options?: { pollIncompleteStream?: boolean },
+) {
   const sessionReady = useConsoleSessionReady()
   const teamId = useTeamStore((s) => s.currentTeamId)
+  const pollIncompleteStream = options?.pollIncompleteStream !== false
   return useQuery({
     queryKey: ['logs', 'detail', requestId, teamId ?? 'personal'],
     queryFn: () =>
@@ -47,6 +51,7 @@ export function useAuditLogDetail(requestId: string | undefined) {
     enabled: sessionReady && Boolean(requestId),
     staleTime: 15_000,
     refetchInterval: (q) => {
+      if (!pollIncompleteStream) return false
       const d = q.state.data
       if (!d || !requestId) return false
       const meta = d.metadata

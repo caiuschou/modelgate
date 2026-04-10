@@ -30,6 +30,34 @@ test('log center heading is visible when authenticated', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '日志中心' })).toBeVisible()
 })
 
+test('log list token cells show usage tooltip on hover', async ({ page }) => {
+  const model = `e2e_tip_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model)
+  expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
+
+  const end = unixNow() + 3600
+  const row = await waitForAuditListRow(backendBase, session, {
+    start_time: '0',
+    end_time: String(end),
+    limit: '20',
+    offset: '0',
+    model,
+  })
+  expect(row, 'audit row did not appear (flush timeout)').not.toBeNull()
+
+  await page.goto('/logs')
+  const dataRow = page.getByRole('row').filter({ hasText: model })
+  await expect(dataRow).toBeVisible({ timeout: 20_000 })
+  // Columns: 时间, request_id, 模型, 应用, 会话, 状态, prompt, completion, …
+  await dataRow.locator('td').nth(6).hover()
+  await expect(page.locator('[role="tooltip"]')).toContainText('用量与计费', {
+    timeout: 15_000,
+  })
+  await expect(page.locator('[role="tooltip"]')).toContainText('输入（prompt）')
+})
+
 test('list shows audit row after chat completion and opens detail', async ({
   page,
 }) => {

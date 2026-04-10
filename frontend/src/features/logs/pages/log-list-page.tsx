@@ -5,7 +5,9 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/shared/empty-state'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { LogDateField } from '@/features/logs/components/log-date-field'
+import { LogListUsageTooltipCell } from '@/features/logs/components/log-list-usage-tooltip-cell'
 import { LogModelPicker } from '@/features/logs/components/log-model-picker'
 import {
   downloadExportFile,
@@ -548,7 +550,8 @@ export function LogListPage() {
       )}
 
       {!isLoading && data && data.data.length > 0 && (
-        <div className="overflow-x-auto rounded-lg border border-border">
+        <TooltipProvider delayDuration={250} skipDelayDuration={200}>
+          <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
             <thead className="border-b border-border bg-muted/40">
               <tr>
@@ -619,10 +622,14 @@ export function LogListPage() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
-                    {row.prompt_tokens ?? '—'}
+                    <LogListUsageTooltipCell row={row} highlight="prompt">
+                      {row.prompt_tokens ?? '—'}
+                    </LogListUsageTooltipCell>
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
-                    {row.completion_tokens ?? '—'}
+                    <LogListUsageTooltipCell row={row} highlight="completion">
+                      {row.completion_tokens ?? '—'}
+                    </LogListUsageTooltipCell>
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
                     {row.total_tokens ?? '—'}
@@ -648,7 +655,8 @@ export function LogListPage() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </TooltipProvider>
       )}
 
       {!isLoading && data && data.data.length > 0 && (
