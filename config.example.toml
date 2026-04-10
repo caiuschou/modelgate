@@ -17,6 +17,7 @@ invite_code = "ZW9Z"
 [upstream]
 # 上游 OpenAI 兼容 Base URL，例如：
 # OpenAI: https://api.openai.com/v1  |  OpenRouter: https://openrouter.ai/api/v1
+# 火山方舟: https://ark.cn-beijing.volces.com/api/v3 ；Coding Plan: https://ark.cn-beijing.volces.com/api/coding/v3
 # 运行时可覆盖：UPSTREAM_BASE_URL
 base_url = "https://api.openai.com/v1"
 # 上游 API Key，仅从此文件读取（不使用 UPSTREAM_API_KEY 环境变量）
