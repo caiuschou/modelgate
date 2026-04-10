@@ -238,6 +238,7 @@ mod tests {
                     quota_period_start: None,
                     team_id: None,
                     default_byok_profile_id: None,
+                    max_concurrent_requests: None,
                 })
             } else {
                 Err(ServiceError::Unauthorized(
@@ -486,6 +487,10 @@ mod tests {
             Ok(())
         }
 
+        fn ensure_monthly_spend_quota(&self, _key_id: i64, _now: i64) -> Result<(), ServiceError> {
+            Ok(())
+        }
+
         fn increment_quota_tokens(&self, _key_id: i64, _delta: i64) -> Result<(), ServiceError> {
             Ok(())
         }
@@ -551,6 +556,7 @@ mod tests {
             user_service: Arc::new(MockUserService),
             audit_sender: tokio::sync::mpsc::channel(4).0,
             audit_config: cfg.audit,
+            key_concurrency: std::sync::Arc::new(dashmap::DashMap::new()),
         }
     }
 

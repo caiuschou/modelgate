@@ -20,6 +20,13 @@ pub struct ApiKeySummary {
     pub expires_at: Option<i64>,
     pub quota_monthly_tokens: Option<i64>,
     pub quota_used_tokens: i64,
+    /// Max simultaneous chat requests; `null` = unlimited.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_requests: Option<i32>,
+    /// Monthly platform spend cap (USD minor, k=15); `null` = no cap.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quota_monthly_spend_minor: Option<String>,
+    pub quota_used_spend_minor: String,
     pub model_allowlist: Option<Vec<String>>,
     pub ip_allowlist: Option<Vec<String>>,
     pub status: String,
@@ -88,6 +95,9 @@ fn row_to_summary(now: i64, r: db::ApiKeyRow) -> ApiKeySummary {
         expires_at: r.expires_at,
         quota_monthly_tokens: r.quota_monthly_tokens,
         quota_used_tokens: r.quota_used_tokens,
+        max_concurrent_requests: r.max_concurrent_requests,
+        quota_monthly_spend_minor: r.quota_monthly_spend_minor.clone(),
+        quota_used_spend_minor: r.quota_used_spend_minor.clone(),
         model_allowlist: parse_json_string_list(r.model_allowlist.clone()),
         ip_allowlist: parse_json_string_list(r.ip_allowlist.clone()),
         status,
@@ -101,6 +111,7 @@ pub trait Repository: Send + Sync {
     fn get_api_key_auth(&self, api_key: &str) -> Result<db::ApiKeyAuthRow, RepositoryError>;
     fn touch_api_key_last_used(&self, key_id: i64, now: i64) -> Result<(), RepositoryError>;
     fn ensure_monthly_quota(&self, key_id: i64, now: i64) -> Result<(), RepositoryError>;
+    fn ensure_monthly_spend_quota(&self, key_id: i64, now: i64) -> Result<(), RepositoryError>;
     fn increment_quota_tokens(&self, key_id: i64, delta: i64) -> Result<(), RepositoryError>;
 
     fn query_audit_logs(
@@ -185,6 +196,8 @@ pub trait Repository: Send + Sync {
         ip_allowlist: Option<&str>,
         team_id: Option<i64>,
         default_byok_profile_id: Option<i64>,
+        max_concurrent_requests: Option<i32>,
+        quota_monthly_spend_minor: Option<i128>,
     ) -> Result<i64, RepositoryError>;
 
     fn list_api_keys_for_team(&self, team_id: i64) -> Result<Vec<ApiKeySummary>, RepositoryError>;
@@ -275,6 +288,20 @@ impl Repository for SqliteRepository {
             .map_err(|_| RepositoryError::PoolUnavailable)?;
         db::ensure_monthly_quota(&conn, key_id, now).map_err(|msg| {
             if msg == "monthly token quota exceeded" {
+                RepositoryError::Forbidden(msg.into())
+            } else {
+                RepositoryError::Internal(msg.into())
+            }
+        })
+    }
+
+    fn ensure_monthly_spend_quota(&self, key_id: i64, now: i64) -> Result<(), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::ensure_monthly_spend_quota(&conn, key_id, now).map_err(|msg| {
+            if msg == "monthly spend quota exceeded" {
                 RepositoryError::Forbidden(msg.into())
             } else {
                 RepositoryError::Internal(msg.into())
@@ -570,6 +597,8 @@ impl Repository for SqliteRepository {
         ip_allowlist: Option<&str>,
         team_id: Option<i64>,
         default_byok_profile_id: Option<i64>,
+        max_concurrent_requests: Option<i32>,
+        quota_monthly_spend_minor: Option<i128>,
     ) -> Result<i64, RepositoryError> {
         let conn = self
             .db_pool
@@ -588,6 +617,8 @@ impl Repository for SqliteRepository {
             ip_allowlist,
             team_id,
             default_byok_profile_id,
+            max_concurrent_requests,
+            quota_monthly_spend_minor,
         )
         .map_err(|e| {
             error!(error = %e, "insert api key with meta");

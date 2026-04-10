@@ -26,12 +26,39 @@ function fromDatetimeLocal(s: string): number | null {
   return Number.isFinite(t) ? Math.floor(t / 1000) : null
 }
 
+const USD_MINOR_EXP = 15
+
+/** Display-only; sufficient for typical monthly USD caps. */
+function minorStrToApproxUsd(s: string): string {
+  try {
+    const x = Number(BigInt(s.trim())) / 10 ** USD_MINOR_EXP
+    if (!Number.isFinite(x)) return s
+    return String(x)
+  } catch {
+    return s
+  }
+}
+
+function usdInputToMinorStr(raw: string): string | null {
+  const t = raw.trim()
+  if (t === '') return null
+  const x = Number(t)
+  if (!Number.isFinite(x) || x <= 0) return null
+  try {
+    return BigInt(Math.round(x * 10 ** USD_MINOR_EXP)).toString()
+  } catch {
+    return null
+  }
+}
+
 /** Remount policy editor when server-backed fields change (avoids setState in an effect). */
 function policiesEditorKey(d: ApiKeySummary): string {
   return [
     d.id,
     d.expires_at ?? '',
     d.quota_monthly_tokens ?? '',
+    d.max_concurrent_requests ?? '',
+    d.quota_monthly_spend_minor ?? '',
     (d.model_allowlist ?? []).join('\0'),
     (d.ip_allowlist ?? []).join('\0'),
     d.default_byok_profile_id ?? '',
@@ -50,6 +77,16 @@ function ApiKeyPoliciesEditor({
   )
   const [quotaInput, setQuotaInput] = useState(() =>
     data.quota_monthly_tokens != null ? String(data.quota_monthly_tokens) : '',
+  )
+  const [maxConcurrentInput, setMaxConcurrentInput] = useState(() =>
+    data.max_concurrent_requests != null
+      ? String(data.max_concurrent_requests)
+      : '',
+  )
+  const [spendUsdInput, setSpendUsdInput] = useState(() =>
+    data.quota_monthly_spend_minor != null && data.quota_monthly_spend_minor !== ''
+      ? minorStrToApproxUsd(data.quota_monthly_spend_minor)
+      : '',
   )
   const [modelsText, setModelsText] = useState(
     () => data.model_allowlist?.join(', ') ?? '',
@@ -73,6 +110,24 @@ function ApiKeyPoliciesEditor({
       window.alert('月度配额必须是数字')
       return
     }
+    let maxConcurrent: number | null = null
+    if (maxConcurrentInput.trim() !== '') {
+      const n = Number.parseInt(maxConcurrentInput, 10)
+      if (Number.isNaN(n) || n < 0 || n > 65_535) {
+        window.alert('并发上限须为 0–65535 的整数（留空表示不限制）')
+        return
+      }
+      maxConcurrent = n === 0 ? null : n
+    }
+    let spendMinor: string | null = null
+    if (spendUsdInput.trim() !== '') {
+      const m = usdInputToMinorStr(spendUsdInput)
+      if (m == null) {
+        window.alert('月度消费上限（USD）须为正数')
+        return
+      }
+      spendMinor = m
+    }
     let expiresAt: number | null | undefined
     if (expiresInput.trim() === '') {
       expiresAt = null
@@ -90,6 +145,8 @@ function ApiKeyPoliciesEditor({
         body: {
           expires_at: expiresAt,
           quota_monthly_tokens: quotaParsed,
+          max_concurrent_requests: maxConcurrent,
+          quota_monthly_spend_minor: spendMinor,
           model_allowlist: models.length > 0 ? models : null,
           ip_allowlist: ips.length > 0 ? ips : null,
         },
@@ -103,7 +160,7 @@ function ApiKeyPoliciesEditor({
     <Card className="space-y-4 p-4">
       <h2 className="text-sm font-medium">编辑策略</h2>
       <p className="text-xs text-muted-foreground">
-        保存后将更新过期时间、月度配额与模型 / IP 白名单（留空表示清除限制）。
+        保存后将更新过期时间、月度配额、并发与消费上限及模型 / IP 白名单（留空表示清除对应限制）。
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5 sm:col-span-2">
@@ -129,6 +186,36 @@ function ApiKeyPoliciesEditor({
             value={quotaInput}
             onChange={(e) => setQuotaInput(e.target.value)}
           />
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="max-concurrent" className="text-sm font-medium">
+            最大并发请求数
+          </label>
+          <Input
+            id="max-concurrent"
+            type="number"
+            min={0}
+            max={65535}
+            placeholder="不限制请留空；0 同不限制"
+            value={maxConcurrentInput}
+            onChange={(e) => setMaxConcurrentInput(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label htmlFor="spend-cap-usd" className="text-sm font-medium">
+            月度消费上限（USD）
+          </label>
+          <Input
+            id="spend-cap-usd"
+            type="text"
+            inputMode="decimal"
+            placeholder="不限制请留空；计费开启时按自然月累计"
+            value={spendUsdInput}
+            onChange={(e) => setSpendUsdInput(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            与账户余额一致使用 USD minor（scale {USD_MINOR_EXP}）；仅非 BYOK 且平台计费成功扣款时累计。
+          </p>
         </div>
         <div className="space-y-1.5">
           <label htmlFor="models" className="text-sm font-medium">
@@ -397,6 +484,23 @@ export function ApiKeyDetailPage() {
               <dt className="text-muted-foreground">月度 Token 配额</dt>
               <dd>
                 已用 {data.quota_used_tokens} / {data.quota_monthly_tokens}
+              </dd>
+            </div>
+          ) : null}
+          {data.max_concurrent_requests != null ? (
+            <div>
+              <dt className="text-muted-foreground">最大并发</dt>
+              <dd>{data.max_concurrent_requests}</dd>
+            </div>
+          ) : null}
+          {data.quota_monthly_spend_minor != null &&
+          data.quota_monthly_spend_minor !== '' ? (
+            <div>
+              <dt className="text-muted-foreground">月度消费上限（USD 约）</dt>
+              <dd className="font-mono text-xs">
+                已用{' '}
+                {minorStrToApproxUsd(data.quota_used_spend_minor ?? '0')} /{' '}
+                {minorStrToApproxUsd(data.quota_monthly_spend_minor)}
               </dd>
             </div>
           ) : null}

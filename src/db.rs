@@ -5,7 +5,7 @@ use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 14] = [
+const MIGRATIONS: [(&str, &str); 15] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -61,6 +61,10 @@ const MIGRATIONS: [(&str, &str); 14] = [
     (
         "0014_audit_cached_prompt_tokens.sql",
         include_str!("../migrations/0014_audit_cached_prompt_tokens.sql"),
+    ),
+    (
+        "0015_api_keys_concurrency_spend.sql",
+        include_str!("../migrations/0015_api_keys_concurrency_spend.sql"),
     ),
 ];
 
@@ -206,6 +210,12 @@ pub struct ApiKeyRow {
     pub team_id: Option<i64>,
     /// Default BYOK profile for Chat proxy when no `X-MG-Byok-Id` (see routing docs).
     pub default_byok_profile_id: Option<i64>,
+    /// Max simultaneous upstream chat requests for this key (`None` = unlimited).
+    pub max_concurrent_requests: Option<i32>,
+    /// Monthly platform spend cap in USD minor units (k=15); `None` = no cap.
+    pub quota_monthly_spend_minor: Option<String>,
+    pub quota_used_spend_minor: String,
+    pub quota_spend_period_start: Option<i64>,
 }
 
 fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
@@ -227,6 +237,10 @@ fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
         ip_allowlist: row.get(14)?,
         team_id: row.get(15)?,
         default_byok_profile_id: row.get(16)?,
+        max_concurrent_requests: row.get(17)?,
+        quota_monthly_spend_minor: row.get(18)?,
+        quota_used_spend_minor: row.get(19)?,
+        quota_spend_period_start: row.get(20)?,
     })
 }
 
@@ -234,7 +248,8 @@ fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
 pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
          FROM api_keys WHERE user_id = ?1 AND team_id IS NULL ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![user_id], map_api_key_row)?;
@@ -245,7 +260,8 @@ pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Resu
 pub fn list_api_keys_for_team(conn: &Connection, team_id: i64) -> rusqlite::Result<Vec<ApiKeyRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
          FROM api_keys WHERE team_id = ?1 ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![team_id], map_api_key_row)?;
@@ -259,7 +275,8 @@ pub fn get_api_key_row_for_user(
 ) -> rusqlite::Result<ApiKeyRow> {
     conn.query_row(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
          FROM api_keys WHERE id = ?1 AND user_id = ?2 AND team_id IS NULL",
         params![key_id, user_id],
         map_api_key_row,
@@ -269,7 +286,8 @@ pub fn get_api_key_row_for_user(
 pub fn get_api_key_row_by_id(conn: &Connection, key_id: i64) -> rusqlite::Result<ApiKeyRow> {
     conn.query_row(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
-                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id
+                quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
          FROM api_keys WHERE id = ?1",
         params![key_id],
         map_api_key_row,
@@ -290,16 +308,25 @@ pub fn insert_api_key_with_meta(
     ip_allowlist: Option<&str>,
     team_id: Option<i64>,
     default_byok_profile_id: Option<i64>,
+    max_concurrent_requests: Option<i32>,
+    quota_monthly_spend_minor: Option<i128>,
 ) -> rusqlite::Result<i64> {
     let period = quota_monthly_tokens
         .filter(|&q| q > 0)
         .map(|_| crate::api_key_policy::unix_month_start(created_at));
+    let spend_period = quota_monthly_spend_minor
+        .filter(|&q| q > 0)
+        .map(|_| crate::api_key_policy::unix_month_start(created_at));
+    let spend_minor_db = quota_monthly_spend_minor
+        .filter(|&q| q > 0)
+        .map(crate::money::minor_to_db);
     let hash = crate::secrets::api_key_sha256_hex(api_key);
     let preview = crate::secrets::api_key_preview_short(api_key);
     conn.execute(
         "INSERT INTO api_keys (user_id, api_key, api_key_hash, key_preview, created_at, name, description, expires_at,
-            quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start, team_id, default_byok_profile_id)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            quota_monthly_tokens, model_allowlist, ip_allowlist, quota_period_start, team_id, default_byok_profile_id,
+            max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, '0', ?16)",
         params![
             user_id,
             hash,
@@ -314,6 +341,9 @@ pub fn insert_api_key_with_meta(
             period,
             team_id,
             default_byok_profile_id,
+            max_concurrent_requests,
+            spend_minor_db,
+            spend_period,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -329,6 +359,8 @@ pub struct ApiKeyPatchDb {
     pub model_allowlist: Option<Option<String>>,
     pub ip_allowlist: Option<Option<String>>,
     pub default_byok_profile_id: Option<Option<i64>>,
+    pub max_concurrent_requests: Option<Option<i32>>,
+    pub quota_monthly_spend_minor: Option<Option<i128>>,
 }
 
 pub fn update_api_key_for_user(
@@ -412,6 +444,46 @@ pub fn update_api_key_for_user(
             )?,
             None => conn.execute(
                 "UPDATE api_keys SET default_byok_profile_id = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    if let Some(m) = &patch.max_concurrent_requests {
+        total += match m {
+            None => conn.execute(
+                "UPDATE api_keys SET max_concurrent_requests = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+            Some(v) if *v > 0 => conn.execute(
+                "UPDATE api_keys SET max_concurrent_requests = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+                params![*v, key_id, user_id],
+            )?,
+            Some(_) => conn.execute(
+                "UPDATE api_keys SET max_concurrent_requests = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    if let Some(s) = &patch.quota_monthly_spend_minor {
+        total += match s {
+            None => conn.execute(
+                "UPDATE api_keys SET quota_monthly_spend_minor = NULL, quota_used_spend_minor = '0', quota_spend_period_start = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+            Some(v) if *v > 0 => {
+                let month_start = crate::api_key_policy::unix_month_start(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64,
+                );
+                conn.execute(
+                    "UPDATE api_keys SET quota_monthly_spend_minor = ?1, quota_used_spend_minor = '0', quota_spend_period_start = ?2 WHERE id = ?3 AND user_id = ?4 AND revoked = 0",
+                    params![crate::money::minor_to_db(*v), month_start, key_id, user_id],
+                )?
+            }
+            Some(_) => conn.execute(
+                "UPDATE api_keys SET quota_monthly_spend_minor = NULL, quota_used_spend_minor = '0', quota_spend_period_start = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
                 params![key_id, user_id],
             )?,
         };
@@ -587,6 +659,46 @@ fn update_api_key_by_id(
             )?,
             None => conn.execute(
                 "UPDATE api_keys SET default_byok_profile_id = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    if let Some(m) = &patch.max_concurrent_requests {
+        total += match m {
+            None => conn.execute(
+                "UPDATE api_keys SET max_concurrent_requests = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+            Some(v) if *v > 0 => conn.execute(
+                "UPDATE api_keys SET max_concurrent_requests = ?1 WHERE id = ?2 AND revoked = 0",
+                params![*v, key_id],
+            )?,
+            Some(_) => conn.execute(
+                "UPDATE api_keys SET max_concurrent_requests = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    if let Some(s) = &patch.quota_monthly_spend_minor {
+        total += match s {
+            None => conn.execute(
+                "UPDATE api_keys SET quota_monthly_spend_minor = NULL, quota_used_spend_minor = '0', quota_spend_period_start = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+            Some(v) if *v > 0 => {
+                let month_start = crate::api_key_policy::unix_month_start(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64,
+                );
+                conn.execute(
+                    "UPDATE api_keys SET quota_monthly_spend_minor = ?1, quota_used_spend_minor = '0', quota_spend_period_start = ?2 WHERE id = ?3 AND revoked = 0",
+                    params![crate::money::minor_to_db(*v), month_start, key_id],
+                )?
+            }
+            Some(_) => conn.execute(
+                "UPDATE api_keys SET quota_monthly_spend_minor = NULL, quota_used_spend_minor = '0', quota_spend_period_start = NULL WHERE id = ?1 AND revoked = 0",
                 params![key_id],
             )?,
         };
@@ -1026,6 +1138,7 @@ pub struct ApiKeyAuthRow {
     pub quota_period_start: Option<i64>,
     pub team_id: Option<i64>,
     pub default_byok_profile_id: Option<i64>,
+    pub max_concurrent_requests: Option<i32>,
 }
 
 pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Result<ApiKeyAuthRow> {
@@ -1036,7 +1149,7 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
     let hash = crate::secrets::api_key_sha256_hex(api_key);
     conn.query_row(
         "SELECT id, user_id, model_allowlist, ip_allowlist, quota_monthly_tokens,
-                quota_used_tokens, quota_period_start, team_id, default_byok_profile_id
+                quota_used_tokens, quota_period_start, team_id, default_byok_profile_id, max_concurrent_requests
          FROM api_keys WHERE (api_key_hash = ?1 OR api_key = ?2) AND revoked = 0 AND disabled = 0
          AND (expires_at IS NULL OR expires_at > ?3)",
         params![hash, api_key, now],
@@ -1051,6 +1164,7 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
                 quota_period_start: row.get(6)?,
                 team_id: row.get(7)?,
                 default_byok_profile_id: row.get(8)?,
+                max_concurrent_requests: row.get(9)?,
             })
         },
     )
@@ -1092,6 +1206,43 @@ pub fn increment_quota_tokens(conn: &Connection, key_id: i64, delta: i64) -> rus
         "UPDATE api_keys SET quota_used_tokens = quota_used_tokens + ?1 WHERE id = ?2 AND quota_monthly_tokens IS NOT NULL",
         params![delta, key_id],
     )?;
+    Ok(())
+}
+
+/// Reset monthly spend counter if we crossed into a new UTC calendar month; then check headroom.
+pub fn ensure_monthly_spend_quota(
+    conn: &Connection,
+    key_id: i64,
+    now: i64,
+) -> Result<(), &'static str> {
+    use crate::api_key_policy::unix_month_start;
+    let month_start = unix_month_start(now);
+    let (limit_s, used_s, period): (Option<String>, String, Option<i64>) = conn
+        .query_row(
+            "SELECT quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start FROM api_keys WHERE id = ?1",
+            params![key_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|_| "api key not found")?;
+    let Some(limit_s) = limit_s else {
+        return Ok(());
+    };
+    let limit = match crate::money::minor_from_db(limit_s.trim()) {
+        Ok(v) if v > 0 => v,
+        _ => return Ok(()),
+    };
+    let mut used = crate::money::minor_from_db(used_s.trim()).unwrap_or(0);
+    if period.map(|p| p < month_start).unwrap_or(true) {
+        used = 0;
+        conn.execute(
+            "UPDATE api_keys SET quota_used_spend_minor = '0', quota_spend_period_start = ?1 WHERE id = ?2",
+            params![month_start, key_id],
+        )
+        .map_err(|_| "database error")?;
+    }
+    if used >= limit {
+        return Err("monthly spend quota exceeded");
+    }
     Ok(())
 }
 
@@ -2007,10 +2158,37 @@ pub struct BillingUsageChargeMeta<'a> {
     pub completion_tokens: Option<i64>,
 }
 
+fn increment_api_key_spend_in_transaction(
+    tx: &rusqlite::Transaction<'_>,
+    key_id: i64,
+    charge_minor: i128,
+) -> rusqlite::Result<()> {
+    if charge_minor <= 0 {
+        return Ok(());
+    }
+    let used_s: String = match tx.query_row(
+        "SELECT quota_used_spend_minor FROM api_keys WHERE id = ?1 AND quota_monthly_spend_minor IS NOT NULL",
+        params![key_id],
+        |r| r.get(0),
+    ) {
+        Ok(u) => u,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let used = crate::money::minor_from_db(used_s.trim()).unwrap_or(0);
+    let new_used = used.saturating_add(charge_minor);
+    tx.execute(
+        "UPDATE api_keys SET quota_used_spend_minor = ?1 WHERE id = ?2 AND quota_monthly_spend_minor IS NOT NULL",
+        params![crate::money::minor_to_db(new_used), key_id],
+    )?;
+    Ok(())
+}
+
 /// Deducts `charge_minor` after a successful upstream chat call. Returns new balance, or error if insufficient funds.
 pub fn billing_charge_usage(
     conn: &Connection,
     user_id: i64,
+    gateway_key_id: Option<i64>,
     charge_minor: i128,
     now: i64,
     meta: BillingUsageChargeMeta<'_>,
@@ -2018,18 +2196,19 @@ pub fn billing_charge_usage(
     if charge_minor <= 0 {
         return Ok(get_balance_minor(conn, user_id)?);
     }
-    ensure_user_balance_row(conn, user_id)?;
-    let cur = get_balance_minor(conn, user_id)?;
+    let tx = conn.unchecked_transaction()?;
+    ensure_user_balance_row(&tx, user_id)?;
+    let cur = get_balance_minor(&tx, user_id)?;
     if cur < charge_minor {
         return Err(BillingChargeError::Insufficient { balance_minor: cur });
     }
     let new_bal = cur - charge_minor;
-    conn.execute(
+    tx.execute(
         "UPDATE user_balances SET balance_minor = ?1 WHERE user_id = ?2",
         params![crate::money::minor_to_db(new_bal), user_id],
     )?;
     let neg = -charge_minor;
-    conn.execute(
+    tx.execute(
         "INSERT INTO billing_ledger (user_id, created_at, kind, amount_minor, balance_after_minor, request_id, model, prompt_tokens, completion_tokens)
          VALUES (?1, ?2, 'usage_charge', ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
@@ -2043,6 +2222,10 @@ pub fn billing_charge_usage(
             meta.completion_tokens
         ],
     )?;
+    if let Some(kid) = gateway_key_id {
+        increment_api_key_spend_in_transaction(&tx, kid, charge_minor)?;
+    }
+    tx.commit()?;
     Ok(new_bal)
 }
 
@@ -2114,6 +2297,8 @@ fn map_ledger_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<BillingLedgerRow>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api_key_policy::unix_month_start;
+    use chrono::{TimeZone, Utc};
     use rusqlite::Connection;
     use rust_decimal::Decimal;
     use std::str::FromStr;
@@ -2411,6 +2596,7 @@ mod tests {
         let after_use = billing_charge_usage(
             &conn,
             user_id,
+            None,
             charge,
             t + 1,
             BillingUsageChargeMeta {
@@ -2441,6 +2627,7 @@ mod tests {
         let err = billing_charge_usage(
             &conn,
             user_id,
+            None,
             1000,
             t,
             BillingUsageChargeMeta {
@@ -2466,6 +2653,7 @@ mod tests {
         let bal = billing_charge_usage(
             &conn,
             user_id,
+            None,
             0,
             t,
             BillingUsageChargeMeta {
@@ -2479,5 +2667,278 @@ mod tests {
         assert_eq!(bal, 0);
         let all = list_billing_ledger(&conn, user_id, None, 20, 0).unwrap();
         assert!(all.is_empty());
+    }
+
+    fn read_key_spend_state(
+        conn: &Connection,
+        key_id: i64,
+    ) -> rusqlite::Result<(Option<String>, String, Option<i64>)> {
+        conn.query_row(
+            "SELECT quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start FROM api_keys WHERE id = ?1",
+            params![key_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+    }
+
+    /// Fixed “mid-month” instant so `unix_month_start` is deterministic across platforms.
+    fn ts_utc(year: i32, month: u32, day: u32) -> i64 {
+        Utc.with_ymd_and_hms(year, month, day, 15, 0, 0)
+            .unwrap()
+            .timestamp()
+    }
+
+    #[test]
+    fn ensure_monthly_spend_no_cap_ok() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = ts_utc(2026, 4, 10);
+        let uid = create_user(&conn, "spend-a", t).expect("user");
+        let kid = insert_api_key_with_meta(
+            &conn,
+            uid,
+            "sk-or-v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            t,
+            "k",
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("key");
+        assert!(ensure_monthly_spend_quota(&conn, kid, t).is_ok());
+    }
+
+    #[test]
+    fn ensure_monthly_spend_invalid_cap_ok() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = ts_utc(2026, 4, 10);
+        let uid = create_user(&conn, "spend-b", t).expect("user");
+        let kid =
+            insert_api_key_for_user(&conn, uid, "sk-or-v1-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", t)
+                .expect("key");
+        conn.execute(
+            "UPDATE api_keys SET quota_monthly_spend_minor = '0', quota_used_spend_minor = '999' WHERE id = ?1",
+            params![kid],
+        )
+        .expect("update");
+        assert!(ensure_monthly_spend_quota(&conn, kid, t).is_ok());
+    }
+
+    #[test]
+    fn ensure_monthly_spend_within_and_exceeded() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = ts_utc(2026, 4, 10);
+        let uid = create_user(&conn, "spend-c", t).expect("user");
+        let kid = insert_api_key_with_meta(
+            &conn,
+            uid,
+            "sk-or-v1-cccccccccccccccccccccccccccccccc",
+            t,
+            "k",
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1000),
+        )
+        .expect("key");
+        assert!(ensure_monthly_spend_quota(&conn, kid, t).is_ok());
+
+        conn.execute(
+            "UPDATE api_keys SET quota_used_spend_minor = ?1 WHERE id = ?2",
+            params![crate::money::minor_to_db(1000_i128), kid],
+        )
+        .expect("set used");
+        assert_eq!(
+            ensure_monthly_spend_quota(&conn, kid, t),
+            Err("monthly spend quota exceeded")
+        );
+    }
+
+    #[test]
+    fn ensure_monthly_spend_resets_when_month_changes() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let now = ts_utc(2026, 3, 15);
+        let month_start = unix_month_start(now);
+        let prev_month_start = unix_month_start(month_start - 1);
+
+        let uid = create_user(&conn, "spend-d", now).expect("user");
+        let kid = insert_api_key_with_meta(
+            &conn,
+            uid,
+            "sk-or-v1-dddddddddddddddddddddddddddddddd",
+            now,
+            "k",
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(10_000),
+        )
+        .expect("key");
+
+        conn.execute(
+            "UPDATE api_keys SET quota_used_spend_minor = ?1, quota_spend_period_start = ?2 WHERE id = ?3",
+            params![
+                crate::money::minor_to_db(5000_i128),
+                prev_month_start,
+                kid
+            ],
+        )
+        .expect("backdate period");
+
+        assert!(ensure_monthly_spend_quota(&conn, kid, now).is_ok());
+
+        let (_, used, period) = read_key_spend_state(&conn, kid).expect("read");
+        assert_eq!(used, "0");
+        assert_eq!(period, Some(month_start));
+    }
+
+    #[test]
+    fn billing_charge_increments_key_spend_when_gateway_id_set() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = ts_utc(2026, 5, 1);
+        let user_id = create_user(&conn, "spend-e", t).expect("user");
+        let add = crate::money::usd_to_minor(Decimal::ONE);
+        billing_deposit(&conn, user_id, add, t, None).expect("deposit");
+
+        let key_id = insert_api_key_with_meta(
+            &conn,
+            user_id,
+            "sk-or-v1-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            t,
+            "k",
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(500_000_000_000_000_000),
+        )
+        .expect("key");
+
+        let charge = 42_i128;
+        let meta = BillingUsageChargeMeta {
+            request_id: "req-spend-1",
+            model: Some("m"),
+            prompt_tokens: Some(1),
+            completion_tokens: Some(2),
+        };
+        let after = billing_charge_usage(&conn, user_id, Some(key_id), charge, t + 1, meta)
+            .expect("charge");
+        assert_eq!(after, add - charge);
+
+        let (_, used_s, _) = read_key_spend_state(&conn, key_id).expect("read");
+        assert_eq!(crate::money::minor_from_db(&used_s).unwrap(), charge);
+    }
+
+    #[test]
+    fn billing_charge_does_not_touch_key_spend_without_cap() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = ts_utc(2026, 5, 2);
+        let user_id = create_user(&conn, "spend-f", t).expect("user");
+        let add = crate::money::usd_to_minor(Decimal::ONE);
+        billing_deposit(&conn, user_id, add, t, None).expect("deposit");
+
+        let key_id = insert_api_key_for_user(
+            &conn,
+            user_id,
+            "sk-or-v1-ffffffffffffffffffffffffffffffff",
+            t,
+        )
+        .expect("key");
+
+        let charge = 100_i128;
+        billing_charge_usage(
+            &conn,
+            user_id,
+            Some(key_id),
+            charge,
+            t + 1,
+            BillingUsageChargeMeta {
+                request_id: "req-spend-2",
+                model: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+            },
+        )
+        .expect("charge");
+
+        let (_, used_s, _) = read_key_spend_state(&conn, key_id).expect("read");
+        assert_eq!(used_s, "0");
+    }
+
+    #[test]
+    fn billing_charge_insufficient_leaves_key_spend_unchanged() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t = ts_utc(2026, 5, 3);
+        let user_id = create_user(&conn, "spend-g", t).expect("user");
+        assert_eq!(get_balance_minor(&conn, user_id).unwrap(), 0);
+
+        let key_id = insert_api_key_with_meta(
+            &conn,
+            user_id,
+            "sk-or-v1-gggggggggggggggggggggggggggggggg",
+            t,
+            "k",
+            "",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(1_000_000),
+        )
+        .expect("key");
+
+        conn.execute(
+            "UPDATE api_keys SET quota_used_spend_minor = ?1 WHERE id = ?2",
+            params![crate::money::minor_to_db(100_i128), key_id],
+        )
+        .expect("set used");
+
+        let err = billing_charge_usage(
+            &conn,
+            user_id,
+            Some(key_id),
+            500,
+            t,
+            BillingUsageChargeMeta {
+                request_id: "req-spend-fail",
+                model: None,
+                prompt_tokens: None,
+                completion_tokens: None,
+            },
+        )
+        .expect_err("insufficient");
+
+        assert!(matches!(err, BillingChargeError::Insufficient { .. }));
+
+        let (_, used_s, _) = read_key_spend_state(&conn, key_id).expect("read");
+        assert_eq!(crate::money::minor_from_db(&used_s).unwrap(), 100);
     }
 }

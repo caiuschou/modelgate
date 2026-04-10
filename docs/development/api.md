@@ -109,6 +109,9 @@
       "expires_at": null,
       "quota_monthly_tokens": null,
       "quota_used_tokens": 0,
+      "max_concurrent_requests": null,
+      "quota_monthly_spend_minor": null,
+      "quota_used_spend_minor": "0",
       "model_allowlist": null,
       "ip_allowlist": null,
       "status": "active",
@@ -132,6 +135,8 @@
   - `description`：可选，最长 512 字符。  
   - `expires_at`：可选，Unix 秒。  
   - `quota_monthly_tokens`：可选，正整数，按**自然月**累计 `total_tokens` 用量（仅非流式成功响应计入）。  
+  - `max_concurrent_requests`：可选，1–65535；该密钥同时进行的 Chat 上游请求数上限（单实例进程内；多实例不协同）。`0` 或不传表示不限制。  
+  - `quota_monthly_spend_minor`：可选，字符串形式的 **USD minor 整数**（与账户余额相同 scale k=15）；按**自然月**累计平台对该密钥的计费扣款（需 `billing.enabled` 且非 BYOK）；达到上限后新请求返回 **`429`**。  
   - `model_allowlist` / `ip_allowlist`：可选，JSON 数组字符串；`chat/completions` 请求将校验模型名与客户端 IP（`X-Forwarded-For` 首选）。  
   - `default_byok_profile_id`：可选，正整数；创建时即可指定 Chat 默认 BYOK（语义同 `PATCH`；须在当前个人/团队范围内可用）。不传则默认为 `null`（走 `[upstream]`）。  
 - **成功：** `201`，`{ "id", "api_key": "<完整密钥>", "created_at" }` — **完整 `api_key` 仅此次响应返回**。
@@ -151,6 +156,8 @@
   - `name`、`description`、`disabled`  
   - `expires_at`：`null` 表示清除过期时间  
   - `quota_monthly_tokens`：`null` 表示取消配额  
+  - `max_concurrent_requests`：`null` 表示不限制并发；设为 **正整数** 启用上限  
+  - `quota_monthly_spend_minor`：`null` 表示取消月度消费上限；否则为 **正整数 minor 字符串**  
   - `model_allowlist` / `ip_allowlist`：`null` 表示清除策略  
   - `default_byok_profile_id`：设为 BYOK 的 `id`；`null` 表示清除（恢复默认走 `[upstream]`）。须为**正整数**且该 profile 在当前密钥的归属范围内可用。  
 - **成功：** `200`，无 JSON 体  

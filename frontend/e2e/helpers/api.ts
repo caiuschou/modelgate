@@ -100,6 +100,9 @@ export type ApiKeySummary = {
   expires_at: number | null
   quota_monthly_tokens: number | null
   quota_used_tokens: number
+  max_concurrent_requests?: number | null
+  quota_monthly_spend_minor?: string | null
+  quota_used_spend_minor?: string
   model_allowlist: string[] | null
   ip_allowlist: string[] | null
   status: string

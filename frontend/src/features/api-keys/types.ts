@@ -10,6 +10,9 @@ export interface ApiKeySummary {
   expires_at: number | null
   quota_monthly_tokens: number | null
   quota_used_tokens: number
+  max_concurrent_requests?: number | null
+  quota_monthly_spend_minor?: string | null
+  quota_used_spend_minor?: string
   model_allowlist: string[] | null
   ip_allowlist: string[] | null
   status: string
@@ -33,6 +36,8 @@ export interface CreateMyApiKeyBody {
   description?: string
   expires_at?: number
   quota_monthly_tokens?: number
+  max_concurrent_requests?: number
+  quota_monthly_spend_minor?: string
   model_allowlist?: string[]
   ip_allowlist?: string[]
   /** Omit or leave unset for ModelGate `[upstream]`. */

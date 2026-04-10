@@ -20,6 +20,9 @@ pub struct CreateMyApiKeyInput {
     pub team_id: Option<i64>,
     /// Default BYOK for chat when `X-MG-Byok-Id` is absent; `None` = ModelGate `[upstream]`.
     pub default_byok_profile_id: Option<i64>,
+    pub max_concurrent_requests: Option<i32>,
+    /// Monthly platform spend cap (USD minor k=15).
+    pub quota_monthly_spend_minor: Option<i128>,
 }
 
 pub trait UserService: Send + Sync {
@@ -82,6 +85,7 @@ pub trait UserService: Send + Sync {
 
     fn touch_api_key_last_used(&self, key_id: i64, now: i64) -> Result<(), ServiceError>;
     fn ensure_monthly_quota(&self, key_id: i64, now: i64) -> Result<(), ServiceError>;
+    fn ensure_monthly_spend_quota(&self, key_id: i64, now: i64) -> Result<(), ServiceError>;
     fn increment_quota_tokens(&self, key_id: i64, delta: i64) -> Result<(), ServiceError>;
 }
 
@@ -120,6 +124,25 @@ fn validate_create_input(input: &CreateMyApiKeyInput) -> Result<(), ServiceError
         if pid <= 0 {
             return Err(ServiceError::BadRequest(
                 "default_byok_profile_id must be positive when set".into(),
+            ));
+        }
+    }
+    if let Some(n) = input.max_concurrent_requests {
+        if n < 0 {
+            return Err(ServiceError::BadRequest(
+                "max_concurrent_requests must be non-negative when set".into(),
+            ));
+        }
+        if n > 65_535 {
+            return Err(ServiceError::BadRequest(
+                "max_concurrent_requests must be at most 65535".into(),
+            ));
+        }
+    }
+    if let Some(s) = input.quota_monthly_spend_minor {
+        if s <= 0 {
+            return Err(ServiceError::BadRequest(
+                "quota_monthly_spend_minor must be positive when set".into(),
             ));
         }
     }
@@ -250,6 +273,8 @@ impl UserService for DefaultUserService {
             ip_json.as_deref(),
             input.team_id,
             input.default_byok_profile_id,
+            input.max_concurrent_requests,
+            input.quota_monthly_spend_minor,
         )?;
         Ok((id, api_key, created_at))
     }
@@ -285,6 +310,16 @@ impl UserService for DefaultUserService {
 
     fn ensure_monthly_quota(&self, key_id: i64, now: i64) -> Result<(), ServiceError> {
         match self.repo.ensure_monthly_quota(key_id, now) {
+            Ok(()) => Ok(()),
+            Err(RepositoryError::Forbidden(m)) if m.contains("quota") => {
+                Err(ServiceError::TooManyRequests(m))
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn ensure_monthly_spend_quota(&self, key_id: i64, now: i64) -> Result<(), ServiceError> {
+        match self.repo.ensure_monthly_spend_quota(key_id, now) {
             Ok(()) => Ok(()),
             Err(RepositoryError::Forbidden(m)) if m.contains("quota") => {
                 Err(ServiceError::TooManyRequests(m))
@@ -333,6 +368,13 @@ mod tests {
             Ok(())
         }
         fn ensure_monthly_quota(&self, _key_id: i64, _now: i64) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+        fn ensure_monthly_spend_quota(
+            &self,
+            _key_id: i64,
+            _now: i64,
+        ) -> Result<(), RepositoryError> {
             Ok(())
         }
         fn increment_quota_tokens(&self, _key_id: i64, _delta: i64) -> Result<(), RepositoryError> {
@@ -454,6 +496,8 @@ mod tests {
             _ip_allowlist: Option<&str>,
             _team_id: Option<i64>,
             _default_byok_profile_id: Option<i64>,
+            _max_concurrent_requests: Option<i32>,
+            _quota_monthly_spend_minor: Option<i128>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
         }

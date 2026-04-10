@@ -307,6 +307,13 @@ mod tests {
         fn ensure_monthly_quota(&self, _key_id: i64, _now: i64) -> Result<(), RepositoryError> {
             Ok(())
         }
+        fn ensure_monthly_spend_quota(
+            &self,
+            _key_id: i64,
+            _now: i64,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
         fn increment_quota_tokens(&self, _key_id: i64, _delta: i64) -> Result<(), RepositoryError> {
             Ok(())
         }
@@ -432,6 +439,8 @@ mod tests {
             _ip_allowlist: Option<&str>,
             _team_id: Option<i64>,
             _default_byok_profile_id: Option<i64>,
+            _max_concurrent_requests: Option<i32>,
+            _quota_monthly_spend_minor: Option<i128>,
         ) -> Result<i64, RepositoryError> {
             Ok(1)
         }

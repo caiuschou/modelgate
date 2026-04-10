@@ -12,7 +12,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     api_key_policy, auth, billing, byok, byok::ByokResolveError, db::ApiKeyAuthRow,
-    errors::ApiError, upstream, AppState,
+    errors::ApiError, key_concurrency, upstream, AppState,
 };
 
 static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
@@ -69,6 +69,11 @@ pub async fn chat_completions(
         .ensure_monthly_quota(token_id, now)
         .map_err(ApiError::from)?;
 
+    state
+        .user_service
+        .ensure_monthly_spend_quota(token_id, now)
+        .map_err(ApiError::from)?;
+
     api_key_policy::check_model_allowlist(auth_row.model_allowlist.as_deref(), model.as_deref())
         .map_err(|m| ApiError::Forbidden(m.into()))?;
 
@@ -93,6 +98,12 @@ pub async fn chat_completions(
 
     let resolved = resolve_chat_upstream(&req, &state, &auth_row)?;
     billing::check_can_start_chat(&state, user_id, resolved.is_byok)?;
+    let chat_slot = key_concurrency::acquire_chat_slot(
+        &state.key_concurrency,
+        token_id,
+        auth_row.max_concurrent_requests,
+    )
+    .await;
     let client_request_headers_json = actix_request_headers_json(&req);
     debug!(
         %request_id,
@@ -243,6 +254,7 @@ pub async fn chat_completions(
         let stream_hdr_req = client_request_headers_json.clone();
         let stream_hdr_resp = upstream_response_headers_json.clone();
         let stream = stream! {
+            let _chat_slot = chat_slot;
             let mut file_pair = match crate::audit::create_stream_response_body_file(
                 &st.audit_config,
                 &stream_request_id,
@@ -341,6 +353,7 @@ pub async fn chat_completions(
                 billing::charge_chat_usage(
                     &st,
                     user_id,
+                    token_id,
                     &stream_request_id,
                     model.as_deref(),
                     usage_state.0,
@@ -355,6 +368,7 @@ pub async fn chat_completions(
             .content_type("text/event-stream")
             .streaming(stream))
     } else {
+        let _chat_slot = chat_slot;
         let bytes = upstream_resp.bytes().await.map_err(|e| {
             error!(
                 %request_id,
@@ -433,6 +447,7 @@ pub async fn chat_completions(
             billing::charge_chat_usage(
                 &state,
                 user_id,
+                token_id,
                 &log_request_id,
                 model.as_deref(),
                 usage.0,

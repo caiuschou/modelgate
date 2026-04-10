@@ -74,6 +74,7 @@ pub fn check_can_start_chat(state: &AppState, user_id: i64, is_byok: bool) -> Re
 pub fn charge_chat_usage(
     state: &AppState,
     user_id: i64,
+    gateway_key_id: i64,
     request_id: &str,
     model: Option<&str>,
     prompt_tokens: Option<i64>,
@@ -105,6 +106,7 @@ pub fn charge_chat_usage(
     match db::billing_charge_usage(
         &conn,
         user_id,
+        Some(gateway_key_id),
         charge_minor,
         now,
         db::BillingUsageChargeMeta {

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::db::ApiKeyPatchDb;
+use crate::money;
 use crate::services::user::CreateMyApiKeyInput;
 use crate::{byok, db, errors::ApiError, session_auth, AppState};
 
@@ -52,6 +53,12 @@ pub struct CreateMyApiKeyBody {
     pub ip_allowlist: Option<Vec<String>>,
     #[serde(default)]
     pub default_byok_profile_id: Option<i64>,
+    /// Max simultaneous chat completions; omit or `null` = unlimited.
+    #[serde(default)]
+    pub max_concurrent_requests: Option<i32>,
+    /// Monthly platform spend cap as USD minor string (k=15); omit = unset.
+    #[serde(default)]
+    pub quota_monthly_spend_minor: Option<String>,
 }
 
 impl Default for CreateMyApiKeyBody {
@@ -64,6 +71,8 @@ impl Default for CreateMyApiKeyBody {
             model_allowlist: None,
             ip_allowlist: None,
             default_byok_profile_id: None,
+            max_concurrent_requests: None,
+            quota_monthly_spend_minor: None,
         }
     }
 }
@@ -121,6 +130,30 @@ pub async fn create_my_api_key(
             ));
         }
     }
+    if let Some(n) = b.max_concurrent_requests {
+        if !(0..=65_535).contains(&n) {
+            return Err(ApiError::BadRequest(
+                "max_concurrent_requests must be between 0 and 65535".into(),
+            ));
+        }
+    }
+    let quota_monthly_spend_minor: Option<i128> =
+        match b.quota_monthly_spend_minor.as_ref().map(|s| s.trim()) {
+            None | Some("") => None,
+            Some(s) => {
+                let v = money::minor_from_db(s).map_err(|_| {
+                    ApiError::BadRequest(
+                        "quota_monthly_spend_minor must be a valid integer string".into(),
+                    )
+                })?;
+                if v <= 0 {
+                    return Err(ApiError::BadRequest(
+                        "quota_monthly_spend_minor must be positive when set".into(),
+                    ));
+                }
+                Some(v)
+            }
+        };
     let input = CreateMyApiKeyInput {
         name: b.name,
         description: b.description,
@@ -130,6 +163,8 @@ pub async fn create_my_api_key(
         ip_allowlist: b.ip_allowlist,
         team_id,
         default_byok_profile_id: b.default_byok_profile_id,
+        max_concurrent_requests: b.max_concurrent_requests,
+        quota_monthly_spend_minor,
     };
     let (id, api_key, created_at) = state
         .user_service
@@ -178,6 +213,10 @@ pub struct PatchMyApiKeyBody {
     /// `null` clears default BYOK (use ModelGate `[upstream]`). Omit = no change.
     #[serde(default)]
     pub default_byok_profile_id: Option<Option<i64>>,
+    #[serde(default)]
+    pub max_concurrent_requests: Option<Option<i32>>,
+    #[serde(default)]
+    pub quota_monthly_spend_minor: Option<Option<String>>,
 }
 
 fn patch_db_has_changes(p: &ApiKeyPatchDb) -> bool {
@@ -189,6 +228,8 @@ fn patch_db_has_changes(p: &ApiKeyPatchDb) -> bool {
         || p.model_allowlist.is_some()
         || p.ip_allowlist.is_some()
         || p.default_byok_profile_id.is_some()
+        || p.max_concurrent_requests.is_some()
+        || p.quota_monthly_spend_minor.is_some()
 }
 
 pub async fn patch_my_api_key(
@@ -256,6 +297,35 @@ pub async fn patch_my_api_key(
             }
         }
         patch.default_byok_profile_id = Some(opt);
+    }
+    if let Some(m) = b.max_concurrent_requests {
+        if let Some(n) = m {
+            if !(0..=65_535).contains(&n) {
+                return Err(ApiError::BadRequest(
+                    "max_concurrent_requests must be between 0 and 65535".into(),
+                ));
+            }
+        }
+        patch.max_concurrent_requests = Some(m);
+    }
+    if let Some(s) = b.quota_monthly_spend_minor {
+        patch.quota_monthly_spend_minor = Some(match s {
+            None => None,
+            Some(ref st) if st.trim().is_empty() => None,
+            Some(st) => {
+                let v = money::minor_from_db(st.trim()).map_err(|_| {
+                    ApiError::BadRequest(
+                        "quota_monthly_spend_minor must be a valid integer string".into(),
+                    )
+                })?;
+                if v <= 0 {
+                    return Err(ApiError::BadRequest(
+                        "quota_monthly_spend_minor must be positive when set".into(),
+                    ));
+                }
+                Some(v)
+            }
+        });
     }
     if !patch_db_has_changes(&patch) {
         return Err(ApiError::BadRequest("no fields to update".into()));

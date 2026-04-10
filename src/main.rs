@@ -8,6 +8,7 @@ pub mod db;
 pub mod errors;
 pub mod handlers;
 pub mod jwt_session;
+pub mod key_concurrency;
 pub mod logging;
 pub mod money;
 pub mod routes;
@@ -46,6 +47,8 @@ pub struct AppState {
     pub user_service: Arc<dyn services::UserService>,
     pub audit_sender: tokio::sync::mpsc::Sender<AuditMessage>,
     pub audit_config: AuditConfig,
+    /// Per–API key in-flight chat slots (see `key_concurrency`).
+    pub key_concurrency: crate::key_concurrency::KeyConcurrencyRegistry,
 }
 
 pub fn build_state(cfg: AppConfig) -> AppState {
@@ -75,6 +78,7 @@ pub fn build_state(cfg: AppConfig) -> AppState {
         audit_service: service_container.audit,
         user_service: service_container.user,
         audit_sender,
+        key_concurrency: std::sync::Arc::new(dashmap::DashMap::new()),
     }
 }
 
@@ -387,6 +391,7 @@ mod tests {
                 flush_interval_seconds: 5,
                 export_dir: "./exports".into(),
             },
+            key_concurrency: std::sync::Arc::new(dashmap::DashMap::new()),
         }
     }
 
