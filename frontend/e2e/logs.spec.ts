@@ -196,6 +196,104 @@ test('model filter syncs to URL query when applying filters', async ({
   await expect(page).toHaveURL(new RegExp(`[?&]model=${encodeURIComponent(model)}`))
 })
 
+test('keyword draft does not filter list until query is applied', async ({
+  page,
+}) => {
+  const model = `e2e_draft_kw_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model)
+  expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
+
+  const end = unixNow() + 3600
+  const row = await waitForAuditListRow(backendBase, session, {
+    start_time: '0',
+    end_time: String(end),
+    limit: '20',
+    offset: '0',
+    model,
+  })
+  expect(row).not.toBeNull()
+
+  await page.goto('/logs')
+  const dataRow = page.getByRole('row').filter({ hasText: model })
+  await expect(dataRow).toBeVisible({ timeout: 20_000 })
+
+  await page.getByLabel('关键词').fill('e2e_will_not_match_any_request_id_xyz')
+  await expect(dataRow).toBeVisible({ timeout: 5_000 })
+
+  await page.getByRole('button', { name: '查询' }).click()
+  await expect(page).toHaveURL(/keyword=e2e_will_not_match/)
+  await expect(dataRow).not.toBeVisible()
+  await expect(page.getByText('暂无日志')).toBeVisible()
+})
+
+test('keyword submit via Enter updates URL', async ({ page }) => {
+  const model = `e2e_enter_kw_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model)
+  expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
+
+  const end = unixNow() + 3600
+  const row = await waitForAuditListRow(backendBase, session, {
+    start_time: '0',
+    end_time: String(end),
+    limit: '20',
+    offset: '0',
+    model,
+  })
+  expect(row).not.toBeNull()
+  const kw = row!.request_id.slice(0, 8)
+
+  await page.goto('/logs')
+  await expect(page.getByRole('row').filter({ hasText: model })).toBeVisible({
+    timeout: 20_000,
+  })
+  await page.getByLabel('关键词').fill(kw)
+  await page.getByLabel('关键词').press('Enter')
+  await expect(page).toHaveURL(new RegExp(`[?&]keyword=${encodeURIComponent(kw)}`))
+  await expect(
+    page.getByRole('row').filter({ hasText: row!.request_id }),
+  ).toBeVisible({ timeout: 20_000 })
+})
+
+test('applied model chip removes model from URL', async ({ page }) => {
+  await page.goto('/logs')
+  const model = `e2e_chip_${Date.now()}`
+  await page.getByLabel('模型').fill(model)
+  await page.getByRole('button', { name: '查询' }).click()
+  await expect(page).toHaveURL(new RegExp(`[?&]model=${encodeURIComponent(model)}`))
+
+  const chip = page.getByRole('button', { name: new RegExp(`模型：${model}`) })
+  await expect(chip).toBeVisible()
+  await chip.click()
+  await expect(page).not.toHaveURL(new RegExp(`[?&]model=${encodeURIComponent(model)}`))
+})
+
+test('logs URL with app_id expands advanced filters', async ({ page }) => {
+  const appId = `e2e_adv_open_${Date.now()}`
+  const end = unixNow() + 3600
+  await page.goto(
+    `/logs?app_id=${encodeURIComponent(appId)}&start_time=0&end_time=${end}&offset=0`,
+  )
+  await expect(page.getByRole('button', { name: /更多条件/ })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  await expect(page.getByLabel('应用 (app_id)')).toBeVisible()
+})
+
+test('HTTP status preset applies status_code to URL', async ({ page }) => {
+  await page.goto('/logs')
+  await page.getByRole('button', { name: /更多条件/ }).click()
+  const filterForm = page
+    .locator('form')
+    .filter({ has: page.getByRole('button', { name: '查询' }) })
+  await filterForm.getByRole('button', { name: '200', exact: true }).click()
+  await expect(page).toHaveURL(/[?&]status_code=200(?:&|$)/)
+})
+
 test('export CSV downloads a file', async ({ page }) => {
   const model = `e2e_export_${Date.now()}`
   const session = await loginApiKey(consoleBase, e2eUser, e2ePass)

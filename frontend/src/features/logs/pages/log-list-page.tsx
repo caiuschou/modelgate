@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { RefreshCw } from 'lucide-react'
+import { ChevronDown, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -18,6 +18,21 @@ const PAGE_SIZE = 20
 
 /** Ensures the refresh icon spins long enough to perceive on fast LAN responses. */
 const REFRESH_SPIN_MIN_MS = 280
+
+const ADVANCED_PARAM_KEYS = [
+  'app_id',
+  'finish_reason',
+  'status_code',
+  'token_id',
+] as const
+
+type AppliedFilterKey =
+  | 'keyword'
+  | 'model'
+  | 'app_id'
+  | 'finish_reason'
+  | 'status_code'
+  | 'token_id'
 
 function delayMs(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -52,9 +67,17 @@ function parseUnixSearchParam(raw: string | null, fallback: number): number {
   return Number.isFinite(n) ? n : fallback
 }
 
+function urlHasAdvancedFilters(sp: URLSearchParams): boolean {
+  return ADVANCED_PARAM_KEYS.some((k) => {
+    const v = sp.get(k)
+    return v != null && v !== ''
+  })
+}
+
 export function LogListPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const defaults = useMemo(() => defaultRange(), [])
+  const searchParamsKey = searchParams.toString()
 
   const limit = PAGE_SIZE
   const offset = Number(searchParams.get('offset') ?? '0')
@@ -64,14 +87,40 @@ export function LogListPage() {
   )
   const endTime = parseUnixSearchParam(searchParams.get('end_time'), defaults.end)
 
-  const [keyword, setKeyword] = useState(searchParams.get('keyword') ?? '')
-  const [model, setModel] = useState(searchParams.get('model') ?? '')
-  const [appId, setAppId] = useState(searchParams.get('app_id') ?? '')
-  const [finishReason, setFinishReason] = useState(
-    searchParams.get('finish_reason') ?? '',
+  const keyword = searchParams.get('keyword') ?? ''
+  const model = searchParams.get('model') ?? ''
+  const appId = searchParams.get('app_id') ?? ''
+  const finishReason = searchParams.get('finish_reason') ?? ''
+  const statusCode = searchParams.get('status_code') ?? ''
+  const tokenId = searchParams.get('token_id') ?? ''
+
+  const [draftKeyword, setDraftKeyword] = useState(keyword)
+  const [draftModel, setDraftModel] = useState(model)
+  const [draftAppId, setDraftAppId] = useState(appId)
+  const [draftFinishReason, setDraftFinishReason] = useState(finishReason)
+  const [draftStatusCode, setDraftStatusCode] = useState(statusCode)
+  const [draftTokenId, setDraftTokenId] = useState(tokenId)
+
+  const [advancedOpen, setAdvancedOpen] = useState(() =>
+    typeof window !== 'undefined' &&
+    urlHasAdvancedFilters(new URLSearchParams(window.location.search)),
   )
-  const [statusCode, setStatusCode] = useState(searchParams.get('status_code') ?? '')
-  const [tokenId, setTokenId] = useState(searchParams.get('token_id') ?? '')
+
+  useEffect(() => {
+    const sp = new URLSearchParams(searchParamsKey)
+    setDraftKeyword(sp.get('keyword') ?? '')
+    setDraftModel(sp.get('model') ?? '')
+    setDraftAppId(sp.get('app_id') ?? '')
+    setDraftFinishReason(sp.get('finish_reason') ?? '')
+    setDraftStatusCode(sp.get('status_code') ?? '')
+    setDraftTokenId(sp.get('token_id') ?? '')
+  }, [searchParamsKey])
+
+  useEffect(() => {
+    if (urlHasAdvancedFilters(new URLSearchParams(searchParamsKey))) {
+      setAdvancedOpen(true)
+    }
+  }, [searchParamsKey])
 
   const listQuery = useMemo(() => {
     const sc = statusCode.trim()
@@ -122,38 +171,72 @@ export function LogListPage() {
 
   const listFetchSpin = isFetching || manualRefreshSpin
 
-  const applyFilters = useCallback(() => {
-    const next = new URLSearchParams()
-    next.set('start_time', String(startTime))
-    next.set('end_time', String(endTime))
-    next.set('offset', '0')
-    if (keyword.trim()) next.set('keyword', keyword.trim())
-    if (model.trim()) next.set('model', model.trim())
-    if (appId.trim()) next.set('app_id', appId.trim())
-    if (finishReason.trim()) next.set('finish_reason', finishReason.trim())
-    if (statusCode.trim()) next.set('status_code', statusCode.trim())
-    if (tokenId.trim()) next.set('token_id', tokenId.trim())
-    setSearchParams(next)
-  }, [
-    startTime,
-    endTime,
-    keyword,
-    model,
-    appId,
-    finishReason,
-    statusCode,
-    tokenId,
-    setSearchParams,
-  ])
+  const buildAppliedParams = useCallback(
+    (opts: {
+      start: number
+      end: number
+      off: string
+      kw: string
+      m: string
+      app: string
+      fr: string
+      sc: string
+      tid: string
+    }) => {
+      const next = new URLSearchParams()
+      next.set('start_time', String(opts.start))
+      next.set('end_time', String(opts.end))
+      next.set('offset', opts.off)
+      if (opts.kw.trim()) next.set('keyword', opts.kw.trim())
+      if (opts.m.trim()) next.set('model', opts.m.trim())
+      if (opts.app.trim()) next.set('app_id', opts.app.trim())
+      if (opts.fr.trim()) next.set('finish_reason', opts.fr.trim())
+      if (opts.sc.trim()) next.set('status_code', opts.sc.trim())
+      if (opts.tid.trim()) next.set('token_id', opts.tid.trim())
+      return next
+    },
+    [],
+  )
+
+  const applyFilters = useCallback(
+    (override?: { statusCode?: string }) => {
+      const sc = override?.statusCode ?? draftStatusCode
+      setSearchParams(
+        buildAppliedParams({
+          start: startTime,
+          end: endTime,
+          off: '0',
+          kw: draftKeyword,
+          m: draftModel,
+          app: draftAppId,
+          fr: draftFinishReason,
+          sc,
+          tid: draftTokenId,
+        }),
+      )
+    },
+    [
+      startTime,
+      endTime,
+      draftKeyword,
+      draftModel,
+      draftAppId,
+      draftFinishReason,
+      draftStatusCode,
+      draftTokenId,
+      buildAppliedParams,
+      setSearchParams,
+    ],
+  )
 
   const resetFilters = useCallback(() => {
     const r = defaultRange()
-    setKeyword('')
-    setModel('')
-    setAppId('')
-    setFinishReason('')
-    setStatusCode('')
-    setTokenId('')
+    setDraftKeyword('')
+    setDraftModel('')
+    setDraftAppId('')
+    setDraftFinishReason('')
+    setDraftStatusCode('')
+    setDraftTokenId('')
     setSearchParams({
       start_time: String(r.start),
       end_time: String(r.end),
@@ -166,6 +249,31 @@ export function LogListPage() {
     next.set('offset', String(newOffset))
     setSearchParams(next)
   }
+
+  const patchTimeAndOffset = useCallback(
+    (patch: { start_time?: number; end_time?: number }) => {
+      const next = new URLSearchParams(searchParams)
+      if (patch.start_time !== undefined) {
+        next.set('start_time', String(patch.start_time))
+      }
+      if (patch.end_time !== undefined) {
+        next.set('end_time', String(patch.end_time))
+      }
+      next.set('offset', '0')
+      setSearchParams(next)
+    },
+    [searchParams, setSearchParams],
+  )
+
+  const removeFilterKey = useCallback(
+    (key: AppliedFilterKey) => {
+      const next = new URLSearchParams(searchParams)
+      next.delete(key)
+      next.set('offset', '0')
+      setSearchParams(next)
+    },
+    [searchParams, setSearchParams],
+  )
 
   const handleExport = async () => {
     const created = await exportMutation.mutateAsync({
@@ -185,6 +293,33 @@ export function LogListPage() {
   const page = Math.floor(offset / limit) + 1
   const pageCount = Math.max(1, Math.ceil(total / limit))
 
+  const activeChips = useMemo(() => {
+    const chips: { key: AppliedFilterKey; label: string }[] = []
+    if (keyword.trim()) {
+      chips.push({
+        key: 'keyword',
+        label: `关键词：${keyword.trim().length > 24 ? `${keyword.trim().slice(0, 24)}…` : keyword.trim()}`,
+      })
+    }
+    if (model.trim()) chips.push({ key: 'model', label: `模型：${model.trim()}` })
+    if (appId.trim()) chips.push({ key: 'app_id', label: `应用：${appId.trim()}` })
+    if (finishReason.trim()) {
+      chips.push({ key: 'finish_reason', label: `Finish：${finishReason.trim()}` })
+    }
+    if (statusCode.trim()) {
+      chips.push({ key: 'status_code', label: `HTTP ${statusCode.trim()}` })
+    }
+    if (tokenId.trim()) chips.push({ key: 'token_id', label: `密钥 ID：${tokenId.trim()}` })
+    return chips
+  }, [keyword, model, appId, finishReason, statusCode, tokenId])
+
+  const statusPresets = [
+    { label: '全部', value: '' },
+    { label: '200', value: '200' },
+    { label: '429', value: '429' },
+    { label: '500', value: '500' },
+  ] as const
+
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -192,7 +327,7 @@ export function LogListPage() {
           <h1 className="text-2xl font-semibold">日志中心</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             请求审计日志 · 开始/结束按本地日历日选择（当日 0:00 至 23:59:59.999，对应
-            OpenAPI 的 Unix 秒参数）
+            OpenAPI 的 Unix 秒参数）；修改关键词后请点击查询。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -217,6 +352,7 @@ export function LogListPage() {
             variant="outline"
             size="sm"
             disabled={exportMutation.isPending}
+            title="导出范围与当前时间选择一致，不含关键词等筛选"
             onClick={() => void handleExport()}
           >
             {exportMutation.isPending ? '导出中…' : '导出 CSV'}
@@ -225,89 +361,182 @@ export function LogListPage() {
       </div>
 
       <Card className="space-y-4 p-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <LogDateField
-            label="开始时间"
-            mode="start"
-            valueUnix={startTime}
-            onChangeUnix={(unix) => {
-              const next = new URLSearchParams(searchParams)
-              next.set('start_time', String(unix))
-              setSearchParams(next)
-            }}
-          />
-          <LogDateField
-            label="结束时间"
-            mode="end"
-            valueUnix={endTime}
-            onChangeUnix={(unix) => {
-              const next = new URLSearchParams(searchParams)
-              next.set('end_time', String(unix))
-              setSearchParams(next)
-            }}
-          />
-          <label className="text-sm sm:col-span-2">
-            <span className="text-muted-foreground">关键词</span>
-            <Input
-              className="mt-1"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder="request_id / 错误信息 / model"
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault()
+            applyFilters()
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <LogDateField
+              label="开始时间"
+              mode="start"
+              valueUnix={startTime}
+              onChangeUnix={(unix) => patchTimeAndOffset({ start_time: unix })}
             />
-          </label>
-          <label className="text-sm">
-            <span className="text-muted-foreground">模型</span>
-            <Input
-              className="mt-1"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
+            <LogDateField
+              label="结束时间"
+              mode="end"
+              valueUnix={endTime}
+              onChangeUnix={(unix) => patchTimeAndOffset({ end_time: unix })}
             />
-          </label>
-          <label className="text-sm">
-            <span className="text-muted-foreground">应用 (app_id)</span>
-            <Input
-              className="mt-1"
-              value={appId}
-              onChange={(e) => setAppId(e.target.value)}
-              placeholder="请求头 X-App-Id"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="text-muted-foreground">Finish 原因</span>
-            <Input
-              className="mt-1 font-mono text-sm"
-              value={finishReason}
-              onChange={(e) => setFinishReason(e.target.value)}
-              placeholder="stop 或 stop,length"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="text-muted-foreground">HTTP 状态码</span>
-            <Input
-              className="mt-1 font-mono text-sm"
-              value={statusCode}
-              onChange={(e) => setStatusCode(e.target.value)}
-              placeholder="200"
-            />
-          </label>
-          <label className="text-sm">
-            <span className="text-muted-foreground">密钥 ID (token_id)</span>
-            <Input
-              className="mt-1 font-mono text-sm"
-              value={tokenId}
-              onChange={(e) => setTokenId(e.target.value)}
-              placeholder="与审计日志中的 token_id 一致"
-            />
-          </label>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" onClick={applyFilters}>
-            查询
-          </Button>
-          <Button type="button" variant="outline" onClick={resetFilters}>
-            重置
-          </Button>
-        </div>
+            <label className="text-sm sm:col-span-2">
+              <span className="text-muted-foreground">关键词</span>
+              <Input
+                className="mt-1"
+                name="log-keyword"
+                value={draftKeyword}
+                onChange={(e) => setDraftKeyword(e.target.value)}
+                placeholder="request_id / 错误信息 / model（应用查询后生效）"
+              />
+            </label>
+            <label className="text-sm sm:col-span-2 lg:col-span-2">
+              <span className="text-muted-foreground">模型</span>
+              <Input
+                className="mt-1"
+                name="log-model"
+                value={draftModel}
+                onChange={(e) => setDraftModel(e.target.value)}
+                placeholder="精确匹配模型名（应用查询后生效）"
+              />
+            </label>
+          </div>
+
+          <div className="border-t border-border pt-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="-ml-2 h-8 gap-1 px-2 text-muted-foreground"
+              aria-expanded={advancedOpen}
+              onClick={() => setAdvancedOpen((o) => !o)}
+            >
+              <ChevronDown
+                className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')}
+                aria-hidden
+              />
+              更多条件（应用、Finish、状态码、密钥 ID）
+            </Button>
+
+            {advancedOpen && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="text-sm">
+                  <span className="text-muted-foreground">应用 (app_id)</span>
+                  <Input
+                    className="mt-1"
+                    value={draftAppId}
+                    onChange={(e) => setDraftAppId(e.target.value)}
+                    placeholder="请求头 X-App-Id"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="text-muted-foreground">Finish 原因</span>
+                  <Input
+                    className="mt-1 font-mono text-sm"
+                    value={draftFinishReason}
+                    onChange={(e) => setDraftFinishReason(e.target.value)}
+                    placeholder="stop 或 stop,length"
+                  />
+                </label>
+                <div className="text-sm sm:col-span-2 lg:col-span-2">
+                  <span className="text-muted-foreground">HTTP 状态码</span>
+                  <Input
+                    className="mt-1 font-mono text-sm"
+                    value={draftStatusCode}
+                    onChange={(e) => setDraftStatusCode(e.target.value)}
+                    placeholder="200"
+                    inputMode="numeric"
+                  />
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {statusPresets.map((p) => (
+                      <Button
+                        key={p.label}
+                        type="button"
+                        size="sm"
+                        variant={
+                          (p.value === '' && draftStatusCode.trim() === '') ||
+                          draftStatusCode.trim() === p.value
+                            ? 'secondary'
+                            : 'outline'
+                        }
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          if (p.value === '') {
+                            setDraftStatusCode('')
+                            const next = buildAppliedParams({
+                              start: startTime,
+                              end: endTime,
+                              off: '0',
+                              kw: draftKeyword,
+                              m: draftModel,
+                              app: draftAppId,
+                              fr: draftFinishReason,
+                              sc: '',
+                              tid: draftTokenId,
+                            })
+                            setSearchParams(next)
+                          } else {
+                            setDraftStatusCode(p.value)
+                            setSearchParams(
+                              buildAppliedParams({
+                                start: startTime,
+                                end: endTime,
+                                off: '0',
+                                kw: draftKeyword,
+                                m: draftModel,
+                                app: draftAppId,
+                                fr: draftFinishReason,
+                                sc: p.value,
+                                tid: draftTokenId,
+                              }),
+                            )
+                          }
+                        }}
+                      >
+                        {p.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <label className="text-sm sm:col-span-2 lg:col-span-4">
+                  <span className="text-muted-foreground">密钥 ID (token_id)</span>
+                  <Input
+                    className="mt-1 max-w-md font-mono text-sm"
+                    value={draftTokenId}
+                    onChange={(e) => setDraftTokenId(e.target.value)}
+                    placeholder="与审计日志中的 token_id 一致"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit">查询</Button>
+            <Button type="button" variant="outline" onClick={resetFilters}>
+              重置
+            </Button>
+          </div>
+        </form>
+
+        {activeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+            <span className="text-xs text-muted-foreground">已应用</span>
+            {activeChips.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-foreground hover:bg-muted/70"
+                onClick={() => removeFilterKey(c.key)}
+              >
+                {c.label}
+                <X className="size-3.5 opacity-70" aria-hidden />
+                <span className="sr-only">移除{c.label}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </Card>
 
       {isError && (
@@ -321,7 +550,14 @@ export function LogListPage() {
       )}
 
       {!isLoading && data && data.data.length === 0 && (
-        <EmptyState title="暂无日志" description="调整时间范围或筛选条件后再试。" />
+        <EmptyState
+          title="暂无日志"
+          description={
+            offset > 0 && total > 0
+              ? '当前页没有结果，可尝试上一页或调整筛选。'
+              : '调整时间范围或筛选条件后再试。'
+          }
+        />
       )}
 
       {!isLoading && data && data.data.length > 0 && (
