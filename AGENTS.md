@@ -57,3 +57,14 @@ Use the smallest test layer that still guards the change.
 - **E2E:** `.github/workflows/ci-e2e.yml` — installs Chromium, runs `npm run test:e2e` in `frontend` with `CI=true` when relevant paths change.
 
 PRs should pass the workflows that apply to the changed files.
+
+## Ship / deploy loop
+
+Use this loop when landing changes (feature work or fixes). It is separate from ad-hoc access to the deployed host in **Server** — that host is not described as automated from this repo.
+
+1. **Commit** — Commit with clear messages. Before pushing, run the smallest relevant checks from **Testing** / **CI** locally when practical (saves round-trips).
+2. **Push** — Push to the branch that will run CI (e.g. PR branch, or the default branch per your workflow).
+3. **Check GitHub Actions** — Confirm the workflows that apply to your changes (see **CI**) ran for this push and are green (repo Actions tab and/or PR checks).
+4. **If anything fails** — Read the failing job logs, reproduce or fix locally, commit, push, and repeat from step 3 until checks pass.
+
+For work that goes through a PR: open or update the PR after pushing so reviewers and CI run against the same commits.

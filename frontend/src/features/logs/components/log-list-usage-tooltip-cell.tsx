@@ -64,7 +64,8 @@ export function LogListUsageTooltipCell({
   children,
 }: {
   row: AuditLogListItem
-  highlight: 'prompt' | 'completion'
+  /** When set, emphasizes that section in the tooltip; omit for merged list cells. */
+  highlight?: 'prompt' | 'completion'
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
@@ -91,7 +92,8 @@ export function LogListUsageTooltipCell({
     <div
       className={cn(
         'space-y-1 rounded-md border border-transparent p-1.5',
-        highlight === 'prompt' && 'border-sky-500/50 bg-sky-500/5',
+        highlight === 'prompt' &&
+          'border-sky-500/50 bg-sky-500/5',
       )}
     >
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -130,7 +132,8 @@ export function LogListUsageTooltipCell({
     <div
       className={cn(
         'space-y-1 rounded-md border border-transparent p-1.5',
-        highlight === 'completion' && 'border-emerald-500/50 bg-emerald-500/5',
+        highlight === 'completion' &&
+          'border-emerald-500/50 bg-emerald-500/5',
       )}
     >
       <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -203,12 +206,12 @@ export function LogListUsageTooltipCell({
       }}
     >
       <TooltipTrigger asChild>
-        <span
-          className="block w-full cursor-help border-b border-dotted border-muted-foreground/40 text-right"
+        <div
+          className="w-full cursor-help border-b border-dotted border-muted-foreground/40 text-right outline-none"
           tabIndex={0}
         >
           {children}
-        </span>
+        </div>
       </TooltipTrigger>
       <TooltipContent
         side="left"

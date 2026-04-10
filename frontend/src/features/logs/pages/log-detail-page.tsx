@@ -2,6 +2,8 @@ import { useMemo } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import { AuditLogTimestamp } from '@/features/logs/components/audit-log-timestamp'
 import {
   ChatCompletionRequestStructured,
   ChatCompletionResponseStructured,
@@ -24,10 +26,6 @@ import {
 } from '@/features/logs/parse-log-usage'
 import type { AuditLogRecord } from '@/features/logs/types'
 import { formatCostUsd } from '@/lib/format-cost'
-
-function formatTime(ts: number): string {
-  return new Date(ts * 1000).toLocaleString()
-}
 
 function formatBodyText(raw: string): string {
   try {
@@ -72,7 +70,7 @@ function AuditHeadersPanel({
     : []
 
   return (
-    <Card className="p-4">
+    <Card className="min-w-0 max-w-full overflow-hidden p-4">
       <h2 className="text-sm font-medium">{title}</h2>
       <p className="mt-1 text-xs text-muted-foreground">
         敏感头（如 Authorization、Cookie）在审计记录中为{' '}
@@ -165,7 +163,7 @@ function UsageDetailCard({
     auditUpstream.isByok ?? usage.is_byok ?? null
 
   return (
-    <Card className="space-y-4 p-4">
+    <Card className="min-w-0 max-w-full space-y-4 overflow-hidden p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium">用量与成本</h2>
         {upstreamTag != null && (
@@ -321,7 +319,7 @@ function AuditBodyPanel(props: {
       : requestHasStructuredDisplay(parsedRequest)
 
   return (
-    <Card className="space-y-3 p-4">
+    <Card className="min-w-0 max-w-full space-y-3 overflow-hidden p-4">
       <h2 className="text-sm font-medium">{title}</h2>
       {streamSseNote && (
         <p className="text-xs text-muted-foreground">
@@ -342,7 +340,7 @@ function AuditBodyPanel(props: {
       {hasPath && q.data !== undefined && (
         <>
           {showStructured && (
-            <div className="space-y-3">
+            <div className="min-w-0 max-w-full space-y-3">
               <h3 className="text-sm font-medium">解析视图</h3>
               {part === 'response' && parsedResponse && (
                 <ChatCompletionResponseStructured parsed={parsedResponse} />
@@ -353,16 +351,18 @@ function AuditBodyPanel(props: {
             </div>
           )}
           {showStructured ? (
-            <details className="rounded-md border border-border/60">
+            <details className="min-w-0 max-w-full overflow-hidden rounded-md border border-border/60">
               <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/40">
                 原始正文
               </summary>
-              <div className="border-t border-border/60 pt-2">
+              <div className="min-w-0 border-t border-border/60 pt-2">
                 <VirtualizedLogBody text={formatted} />
               </div>
             </details>
           ) : (
-            <VirtualizedLogBody text={formatted} />
+            <div className="min-w-0 max-w-full">
+              <VirtualizedLogBody text={formatted} />
+            </div>
           )}
         </>
       )}
@@ -415,7 +415,7 @@ export function LogDetailPage() {
   }
 
   return (
-    <section className="space-y-6">
+    <section className="min-w-0 max-w-full space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="outline" size="sm" asChild>
           <Link to="/logs">← 返回列表</Link>
@@ -431,7 +431,8 @@ export function LogDetailPage() {
       )}
 
       {data && (
-        <>
+        <TooltipProvider delayDuration={300}>
+          <>
           {(() => {
             const meta = data.metadata
             const streamAborted =
@@ -445,15 +446,20 @@ export function LogDetailPage() {
               </p>
             ) : null
           })()}
-          <Card className="space-y-3 p-4">
-            <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Card className="min-w-0 max-w-full space-y-3 overflow-hidden p-4">
+            <dl className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               <div>
                 <dt className="text-xs text-muted-foreground">request_id</dt>
                 <dd className="mt-0.5 break-all font-mono text-sm">{data.request_id}</dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">时间</dt>
-                <dd className="mt-0.5 text-sm">{formatTime(data.created_at)}</dd>
+                <dd className="mt-0.5 text-sm">
+                  <AuditLogTimestamp
+                    unixSeconds={data.created_at}
+                    className="cursor-default underline decoration-dotted decoration-muted-foreground/50 underline-offset-2"
+                  />
+                </dd>
               </div>
               <div>
                 <dt className="text-xs text-muted-foreground">HTTP 状态</dt>
@@ -552,7 +558,7 @@ export function LogDetailPage() {
             )}
           </Card>
 
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div className="grid min-w-0 gap-4 lg:grid-cols-2">
             <AuditHeadersPanel title="请求头" headers={requestHeaders} />
             <AuditHeadersPanel title="响应头（上游）" headers={responseHeaders} />
           </div>
@@ -590,14 +596,15 @@ export function LogDetailPage() {
           />
 
           {metadataRest && Object.keys(metadataRest).length > 0 && (
-            <Card className="p-4">
+            <Card className="min-w-0 max-w-full overflow-hidden p-4">
               <h2 className="text-sm font-medium">metadata</h2>
-              <pre className="mt-2 max-h-64 overflow-auto rounded bg-muted/50 p-3 font-mono text-xs">
+              <pre className="mt-2 max-h-64 max-w-full overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded bg-muted/50 p-3 font-mono text-xs">
                 {JSON.stringify(metadataRest, null, 2)}
               </pre>
             </Card>
           )}
         </>
+        </TooltipProvider>
       )}
     </section>
   )

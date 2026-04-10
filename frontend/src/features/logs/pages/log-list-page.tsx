@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/shared/empty-state'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { AuditLogTimestamp } from '@/features/logs/components/audit-log-timestamp'
 import { LogDateField } from '@/features/logs/components/log-date-field'
 import { LogListUsageTooltipCell } from '@/features/logs/components/log-list-usage-tooltip-cell'
 import { LogModelPicker } from '@/features/logs/components/log-model-picker'
@@ -45,8 +46,9 @@ function delayMs(ms: number): Promise<void> {
   })
 }
 
-function formatTime(ts: number): string {
-  return new Date(ts * 1000).toLocaleString()
+function formatListToken(n: number | null | undefined): string {
+  if (n == null) return '—'
+  return n.toLocaleString()
 }
 
 function statusBadgeClass(code: number | null): string {
@@ -552,7 +554,7 @@ export function LogListPage() {
       {!isLoading && data && data.data.length > 0 && (
         <TooltipProvider delayDuration={250} skipDelayDuration={200}>
           <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
             <thead className="border-b border-border bg-muted/40">
               <tr>
                 <th scope="col" className="px-3 py-2 font-medium">
@@ -574,13 +576,7 @@ export function LogListPage() {
                   状态
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium text-right">
-                  prompt
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium text-right">
-                  completion
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium text-right">
-                  合计
+                  用量 (P/C/Σ)
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium text-right">
                   成本 (USD)
@@ -600,7 +596,7 @@ export function LogListPage() {
               {data.data.map((row) => (
                 <tr key={row.request_id} className="border-b border-border/80 hover:bg-muted/30">
                   <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                    {formatTime(row.created_at)}
+                    <AuditLogTimestamp unixSeconds={row.created_at} />
                   </td>
                   <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs">
                     {row.request_id}
@@ -622,17 +618,22 @@ export function LogListPage() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
-                    <LogListUsageTooltipCell row={row} highlight="prompt">
-                      {row.prompt_tokens ?? '—'}
+                    <LogListUsageTooltipCell row={row}>
+                      <div className="flex flex-col items-end gap-0.5 leading-tight">
+                        <div>
+                          <span className="text-muted-foreground">P</span>{' '}
+                          {formatListToken(row.prompt_tokens)}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">C</span>{' '}
+                          {formatListToken(row.completion_tokens)}
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Σ</span>{' '}
+                          {formatListToken(row.total_tokens)}
+                        </div>
+                      </div>
                     </LogListUsageTooltipCell>
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    <LogListUsageTooltipCell row={row} highlight="completion">
-                      {row.completion_tokens ?? '—'}
-                    </LogListUsageTooltipCell>
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    {row.total_tokens ?? '—'}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
                     {row.cost != null ? formatCostUsd(row.cost) : '—'}

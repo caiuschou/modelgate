@@ -16,18 +16,23 @@ function tryFormatJson(s: string): string {
   }
 }
 
+const codeBlockClass =
+  'min-w-0 max-w-full overflow-x-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] font-mono text-xs leading-relaxed'
+
 function ToolCallCard({ tc, index }: { tc: ParsedToolCall; index: number }) {
   const title = tc.name || `工具调用 #${index + 1}`
   return (
-    <Card className="overflow-hidden border-border/80 p-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="font-mono text-sm font-medium">{title}</h3>
+    <Card className="min-w-0 max-w-full overflow-hidden border-border/80 p-3">
+      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2">
+        <h3 className="min-w-0 break-words font-mono text-sm font-medium">{title}</h3>
         {tc.id ? (
-          <span className="font-mono text-xs text-muted-foreground">{tc.id}</span>
+          <span className="max-w-full break-all font-mono text-xs text-muted-foreground">
+            {tc.id}
+          </span>
         ) : null}
       </div>
       {tc.arguments.trim() ? (
-        <pre className="mt-2 max-h-56 overflow-auto rounded-md bg-muted/50 p-2 font-mono text-xs leading-relaxed">
+        <pre className={`mt-2 max-h-56 max-w-full rounded-md bg-muted/50 p-2 ${codeBlockClass}`}>
           {tryFormatJson(tc.arguments)}
         </pre>
       ) : (
@@ -39,16 +44,18 @@ function ToolCallCard({ tc, index }: { tc: ParsedToolCall; index: number }) {
 
 function ToolResultCard({ tm, index }: { tm: ParsedToolResultMessage; index: number }) {
   return (
-    <Card className="overflow-hidden border-border/80 p-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3 className="text-sm font-medium">工具结果 #{index + 1}</h3>
+    <Card className="min-w-0 max-w-full overflow-hidden border-border/80 p-3">
+      <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2">
+        <h3 className="min-w-0 text-sm font-medium">工具结果 #{index + 1}</h3>
         {tm.tool_call_id ? (
-          <span className="font-mono text-xs text-muted-foreground">
+          <span className="max-w-full break-all font-mono text-xs text-muted-foreground">
             {tm.tool_call_id}
           </span>
         ) : null}
       </div>
-      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/50 p-2 font-mono text-xs leading-relaxed">
+      <pre
+        className={`mt-2 max-h-56 max-w-full rounded-md bg-muted/50 p-2 ${codeBlockClass}`}
+      >
         {tryFormatJson(tm.content)}
       </pre>
     </Card>
@@ -66,44 +73,46 @@ export function ChatCompletionResponseStructured({
       : '非流式 JSON'
 
   return (
-    <div className="space-y-4">
-      <p className="text-xs text-muted-foreground">{sourceLabel}</p>
+    <div className="min-w-0 max-w-full space-y-4">
+      <p className="break-words text-xs text-muted-foreground">{sourceLabel}</p>
 
       {parsed.reasoning.trim() ? (
-        <details className="rounded-lg border border-border/80 bg-muted/20">
+        <details className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border/80 bg-muted/20">
           <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium">
             推理内容
             <span className="ml-2 font-normal text-muted-foreground">
               （{parsed.reasoning.length.toLocaleString()} 字符）
             </span>
           </summary>
-          <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words border-t border-border/60 px-3 py-2 font-mono text-xs leading-relaxed">
+          <pre
+            className={`max-h-96 border-t border-border/60 px-3 py-2 ${codeBlockClass}`}
+          >
             {parsed.reasoning}
           </pre>
         </details>
       ) : null}
 
       {parsed.refusal.trim() ? (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+        <div className="min-w-0 max-w-full rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
           <p className="font-medium text-amber-900 dark:text-amber-200">拒绝回答</p>
-          <p className="mt-1 whitespace-pre-wrap">{parsed.refusal}</p>
+          <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {parsed.refusal}
+          </p>
         </div>
       ) : null}
 
       {parsed.content.trim() ? (
-        <div>
+        <div className="min-w-0 max-w-full">
           <p className="mb-1.5 text-xs font-medium text-muted-foreground">助手正文</p>
-          <div className="rounded-lg border border-border/80 bg-background p-3">
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-relaxed">
-              {parsed.content}
-            </pre>
+          <div className="min-w-0 rounded-lg border border-border/80 bg-background p-3">
+            <pre className={`max-h-96 ${codeBlockClass}`}>{parsed.content}</pre>
           </div>
         </div>
       ) : null}
 
       {parsed.tool_calls.length > 0 ? (
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-muted-foreground">
+        <div className="min-w-0 max-w-full space-y-2">
+          <p className="break-words text-xs font-medium text-muted-foreground">
             工具调用（模型发起，执行结果见下一轮请求的「工具结果」或同一会话后续日志）
           </p>
           <div className="space-y-3">
@@ -123,8 +132,8 @@ export function ChatCompletionRequestStructured({
   parsed: ParsedChatCompletionRequest
 }) {
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
+    <div className="min-w-0 max-w-full space-y-3">
+      <p className="break-words text-xs text-muted-foreground">
         请求中携带的 <span className="font-mono">role: tool</span> 消息（上一轮工具执行结果）
       </p>
       <div className="space-y-3">

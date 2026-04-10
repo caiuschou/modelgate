@@ -18,7 +18,7 @@ export function VirtualizedLogBody({ text }: { text: string }) {
   return (
     <div
       ref={parentRef}
-      className="max-h-[480px] overflow-auto rounded border border-border/60 bg-muted/50 font-mono text-xs"
+      className="max-h-[480px] min-w-0 max-w-full overflow-auto rounded border border-border/60 bg-muted/50 font-mono text-xs"
     >
       <div
         className="relative w-full min-w-0"

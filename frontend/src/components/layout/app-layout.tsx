@@ -318,7 +318,7 @@ export function AppLayout() {
 
       <div
         className={cn(
-          'mx-auto flex w-full max-w-[1400px]',
+          'mx-auto flex w-full min-w-0 max-w-[1400px]',
           !showConsoleSidebar && 'max-w-[1200px]',
         )}
       >
@@ -350,7 +350,7 @@ export function AppLayout() {
 
         <main
           className={cn(
-            'min-h-[calc(100vh-56px)] flex-1 p-6',
+            'min-h-[calc(100vh-56px)] min-w-0 flex-1 p-6',
             !showConsoleSidebar && 'w-full',
           )}
         >
