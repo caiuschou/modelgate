@@ -16,5 +16,17 @@ export default defineConfig({
     globals: true,
     css: true,
     exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'text-summary'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        '**/*.test.*',
+        '**/test/**',
+        '**/e2e/**',
+        '**/main.tsx',
+        '**/vite-env.d.ts',
+      ],
+    },
   },
 })

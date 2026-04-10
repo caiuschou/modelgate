@@ -20,6 +20,11 @@ import {
   useAuditLogDetail,
 } from '@/features/logs/hooks/use-logs'
 import {
+  auditBodyPhysicalLine,
+  auditBodyRequestSemanticLine,
+  auditBodyResponseSemanticLine,
+} from '@/features/logs/audit-body-summary'
+import {
   parseChatCompletionRequestBody,
   parseChatCompletionResponseBody,
   requestHasStructuredDisplay,
@@ -323,6 +328,17 @@ function AuditBodyPanel(props: {
       ? responseHasStructuredDisplay(parsedResponse)
       : requestHasStructuredDisplay(parsedRequest)
 
+  const physicalLine = useMemo(
+    () => (q.data !== undefined ? auditBodyPhysicalLine(q.data) : null),
+    [q.data],
+  )
+  const semanticLine = useMemo(() => {
+    if (q.data === undefined) return null
+    return part === 'request'
+      ? auditBodyRequestSemanticLine(q.data, parsedRequest)
+      : auditBodyResponseSemanticLine(q.data, parsedResponse)
+  }, [part, q.data, parsedRequest, parsedResponse])
+
   const auditGroup = part === 'request' ? 'audit-req' : 'audit-res'
   const testId =
     part === 'request' ? 'audit-body-request' : 'audit-body-response'
@@ -337,7 +353,29 @@ function AuditBodyPanel(props: {
           groupName={auditGroup}
           className="px-4 py-3 hover:bg-muted/40"
         >
-          <h2 className="text-sm font-medium">{title}</h2>
+          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h2 className="shrink-0 text-sm font-medium">{title}</h2>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+              {!hasPath ? <span>无文件</span> : null}
+              {hasPath && q.isLoading ? <span>加载中…</span> : null}
+              {hasPath && q.isError ? (
+                <span className="text-red-600">无法加载</span>
+              ) : null}
+              {hasPath && q.data !== undefined && physicalLine ? (
+                <>
+                  <span className="tabular-nums">{physicalLine}</span>
+                  {semanticLine ? (
+                    <span
+                      className="min-w-0 max-w-[min(100%,28rem)] truncate"
+                      title={semanticLine}
+                    >
+                      {semanticLine}
+                    </span>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+          </div>
         </LogDetailsSummary>
         <div className="space-y-3 border-t border-border/60 px-4 pb-4 pt-3">
           {streamSseNote && (
