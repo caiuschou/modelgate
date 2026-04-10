@@ -1,6 +1,7 @@
 /** Query keys that live in the collapsible “更多条件” section (not keyword/model). */
 export const LOG_LIST_ADVANCED_PARAM_KEYS = [
   'app_id',
+  'thread_id',
   'finish_reason',
   'status_code',
   'token_id',
@@ -27,6 +28,7 @@ export type AuditLogListQueryInput = {
   keyword: string
   model: string
   appId: string
+  threadId: string
   finishReason: string
   statusCode: string
   tokenId: string
@@ -47,6 +49,7 @@ export function auditLogListQuery(
     ...(input.keyword.trim() ? { keyword: input.keyword.trim() } : {}),
     ...(input.model.trim() ? { model: input.model.trim() } : {}),
     ...(input.appId.trim() ? { app_id: input.appId.trim() } : {}),
+    ...(input.threadId.trim() ? { thread_id: input.threadId.trim() } : {}),
     ...(input.finishReason.trim() ? { finish_reason: input.finishReason.trim() } : {}),
     ...(Number.isFinite(code) ? { status_code: code } : {}),
     ...(Number.isFinite(tid) ? { token_id: tid } : {}),
@@ -60,6 +63,7 @@ export type BuildAppliedSearchParamsInput = {
   kw: string
   m: string
   app: string
+  thread: string
   fr: string
   sc: string
   tid: string
@@ -74,6 +78,7 @@ export function buildAppliedSearchParams(opts: BuildAppliedSearchParamsInput): U
   if (opts.kw.trim()) next.set('keyword', opts.kw.trim())
   if (opts.m.trim()) next.set('model', opts.m.trim())
   if (opts.app.trim()) next.set('app_id', opts.app.trim())
+  if (opts.thread.trim()) next.set('thread_id', opts.thread.trim())
   if (opts.fr.trim()) next.set('finish_reason', opts.fr.trim())
   if (opts.sc.trim()) next.set('status_code', opts.sc.trim())
   if (opts.tid.trim()) next.set('token_id', opts.tid.trim())

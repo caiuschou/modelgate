@@ -35,10 +35,12 @@ test('list shows audit row after chat completion and opens detail', async ({
 }) => {
   const model = `e2e_audit_${Date.now()}`
   const appId = `e2e_app_${Date.now()}`
+  const threadId = `e2e_thread_${Date.now()}`
   const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
   const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
   const chat = await createChatCompletion(backendBase, gatewayKey, model, {
     appId,
+    threadId,
   })
   expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
 
@@ -56,6 +58,7 @@ test('list shows audit row after chat completion and opens detail', async ({
   const dataRow = page.getByRole('row').filter({ hasText: model })
   await expect(dataRow).toBeVisible({ timeout: 20_000 })
   await expect(dataRow).toContainText(appId)
+  await expect(dataRow).toContainText(threadId)
 
   await dataRow.getByRole('link', { name: '详情' }).click()
 
@@ -70,6 +73,9 @@ test('list shows audit row after chat completion and opens detail', async ({
     page.locator('dt', { hasText: '应用 (app_id)' }).locator('+ dd'),
   ).toHaveText(appId)
   await expect(
+    page.locator('dt', { hasText: '会话 (thread_id)' }).locator('+ dd'),
+  ).toHaveText(threadId)
+  await expect(
     page.locator('dt', { hasText: 'Finish 原因' }).locator('+ dd'),
   ).toHaveText('stop')
 
@@ -82,6 +88,9 @@ test('list shows audit row after chat completion and opens detail', async ({
   )
   await expect(page.getByRole('heading', { name: '请求头' }).locator('..')).toContainText(
     'x-app-id',
+  )
+  await expect(page.getByRole('heading', { name: '请求头' }).locator('..')).toContainText(
+    'x-thread-id',
   )
 })
 
@@ -191,9 +200,22 @@ test('model filter syncs to URL query when applying filters', async ({
 }) => {
   await page.goto('/logs')
   const model = `e2e_filter_${Date.now()}`
-  await page.getByLabel('模型').fill(model)
+  await page.getByRole('textbox', { name: '模型' }).fill(model)
   await page.getByRole('button', { name: '查询' }).click()
   await expect(page).toHaveURL(new RegExp(`[?&]model=${encodeURIComponent(model)}`))
+})
+
+test('model picker dropdown lists model by recency after query', async ({ page }) => {
+  await page.goto('/logs')
+  const model = `e2e_recent_${Date.now()}`
+  await page.getByRole('textbox', { name: '模型' }).fill(model)
+  await page.getByRole('button', { name: '查询' }).click()
+  await page
+    .getByRole('button', { name: '展开模型列表（OpenRouter 全目录 + 最近使用排序）' })
+    .click()
+  await expect(
+    page.locator('[data-slot="popover-content"]').getByText(model, { exact: true }),
+  ).toBeVisible()
 })
 
 test('keyword draft does not filter list until query is applied', async ({
@@ -261,7 +283,7 @@ test('keyword submit via Enter updates URL', async ({ page }) => {
 test('applied model chip removes model from URL', async ({ page }) => {
   await page.goto('/logs')
   const model = `e2e_chip_${Date.now()}`
-  await page.getByLabel('模型').fill(model)
+  await page.getByRole('textbox', { name: '模型' }).fill(model)
   await page.getByRole('button', { name: '查询' }).click()
   await expect(page).toHaveURL(new RegExp(`[?&]model=${encodeURIComponent(model)}`))
 
@@ -282,6 +304,19 @@ test('logs URL with app_id expands advanced filters', async ({ page }) => {
     'true',
   )
   await expect(page.getByLabel('应用 (app_id)')).toBeVisible()
+})
+
+test('logs URL with thread_id expands advanced filters', async ({ page }) => {
+  const threadId = `e2e_thr_open_${Date.now()}`
+  const end = unixNow() + 3600
+  await page.goto(
+    `/logs?thread_id=${encodeURIComponent(threadId)}&start_time=0&end_time=${end}&offset=0`,
+  )
+  await expect(page.getByRole('button', { name: /更多条件/ })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  await expect(page.getByLabel('会话 (thread_id)')).toBeVisible()
 })
 
 test('HTTP status preset applies status_code to URL', async ({ page }) => {

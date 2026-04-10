@@ -39,6 +39,7 @@ pub async fn get_audit_analytics(
         model = p.model.as_deref(),
         token_id = p.token_id,
         app_id = p.app_id.as_deref(),
+        thread_id = p.thread_id.as_deref(),
         "GET /api/v1/analytics"
     );
     let list_query = AuditListQuery {
@@ -51,6 +52,7 @@ pub async fn get_audit_analytics(
         status_code: None,
         keyword: None,
         app_id: p.app_id,
+        thread_id: p.thread_id,
         finish_reason: None,
         min_prompt_tokens: None,
         max_prompt_tokens: None,
@@ -274,6 +276,7 @@ mod tests {
                     cost: Some(0.01),
                     latency_ms: Some(100),
                     app_id: Some("demo-app".into()),
+                    thread_id: None,
                     finish_reason: Some("stop".into()),
                     created_at: query.start_time.unwrap_or(1),
                 }],
@@ -304,6 +307,7 @@ mod tests {
                 cost: Some(0.01),
                 latency_ms: Some(100),
                 app_id: Some("demo-app".into()),
+                thread_id: None,
                 finish_reason: Some("stop".into()),
                 metadata: None,
                 created_at: 1,

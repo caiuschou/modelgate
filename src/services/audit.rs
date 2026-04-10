@@ -112,6 +112,7 @@ impl AuditService for DefaultAuditService {
                 status_code: None,
                 keyword: None,
                 app_id: None,
+                thread_id: None,
                 finish_reason: None,
                 min_prompt_tokens: None,
                 max_prompt_tokens: None,
@@ -234,11 +235,11 @@ fn escape_csv(value: &str) -> String {
 
 fn build_csv_content(rows: &[AuditListItem]) -> String {
     let mut out = String::from(
-        "request_id,user_id,team_id,token_id,channel_id,model,request_type,status_code,error_message,prompt_tokens,completion_tokens,total_tokens,cost,latency_ms,app_id,finish_reason,created_at\n",
+        "request_id,user_id,team_id,token_id,channel_id,model,request_type,status_code,error_message,prompt_tokens,completion_tokens,total_tokens,cost,latency_ms,app_id,thread_id,finish_reason,created_at\n",
     );
     for row in rows {
         let line = format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             escape_csv(&row.request_id),
             row.user_id.map(|v| v.to_string()).unwrap_or_default(),
             row.team_id.map(|v| v.to_string()).unwrap_or_default(),
@@ -265,6 +266,7 @@ fn build_csv_content(rows: &[AuditListItem]) -> String {
             row.cost.map(|v| v.to_string()).unwrap_or_default(),
             row.latency_ms.map(|v| v.to_string()).unwrap_or_default(),
             row.app_id.as_deref().map(escape_csv).unwrap_or_default(),
+            row.thread_id.as_deref().map(escape_csv).unwrap_or_default(),
             row.finish_reason
                 .as_deref()
                 .map(escape_csv)
@@ -520,6 +522,7 @@ mod tests {
                 cost: Some(0.01),
                 latency_ms: Some(10),
                 app_id: None,
+                thread_id: None,
                 finish_reason: Some("stop".into()),
                 created_at: 1,
             }],

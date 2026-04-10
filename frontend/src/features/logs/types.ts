@@ -14,6 +14,7 @@ export interface AuditLogListItem {
   cost: number | null
   latency_ms: number | null
   app_id: string | null
+  thread_id: string | null
   finish_reason: string | null
   created_at: number
 }

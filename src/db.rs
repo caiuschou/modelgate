@@ -5,7 +5,7 @@ use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 15] = [
+const MIGRATIONS: [(&str, &str); 16] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -65,6 +65,10 @@ const MIGRATIONS: [(&str, &str); 15] = [
     (
         "0015_api_keys_concurrency_spend.sql",
         include_str!("../migrations/0015_api_keys_concurrency_spend.sql"),
+    ),
+    (
+        "0016_audit_thread_id.sql",
+        include_str!("../migrations/0016_audit_thread_id.sql"),
     ),
 ];
 
@@ -1294,9 +1298,9 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 request_id, user_id, token_id, channel_id, model, request_type,
                 request_body_path, response_body_path, status_code, error_message,
                 prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms,
-                app_id, finish_reason, metadata, created_at, team_id
+                app_id, thread_id, finish_reason, metadata, created_at, team_id
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
             )",
         )?;
 
@@ -1320,6 +1324,7 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 record.cost,
                 record.latency_ms,
                 record.app_id,
+                record.thread_id,
                 record.finish_reason,
                 metadata,
                 record.created_at,
@@ -1413,7 +1418,7 @@ pub fn query_audit_logs(
         "SELECT
             request_id, user_id, team_id, token_id, channel_id, model, request_type,
             status_code, error_message, prompt_tokens, completion_tokens, cached_prompt_tokens,
-            total_tokens, cost, latency_ms, app_id, finish_reason, created_at
+            total_tokens, cost, latency_ms, app_id, thread_id, finish_reason, created_at
          FROM audit_logs
          {where_sql}
          ORDER BY created_at DESC
@@ -1442,8 +1447,9 @@ pub fn query_audit_logs(
             cost: row.get(13)?,
             latency_ms: row.get(14)?,
             app_id: row.get(15)?,
-            finish_reason: row.get(16)?,
-            created_at: row.get(17)?,
+            thread_id: row.get(16)?,
+            finish_reason: row.get(17)?,
+            created_at: row.get(18)?,
         })
     })?;
 
@@ -1479,12 +1485,12 @@ pub fn get_audit_log_by_request_id(
             request_id, user_id, token_id, channel_id, model, request_type,
             request_body_path, response_body_path, status_code, error_message,
             prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms,
-            app_id, finish_reason, metadata, created_at, team_id
+            app_id, thread_id, finish_reason, metadata, created_at, team_id
          FROM audit_logs
          WHERE request_id = ?1";
 
     let record = conn.query_row(sql, params![request_id], |row| {
-        let metadata_str: Option<String> = row.get(18)?;
+        let metadata_str: Option<String> = row.get(19)?;
         let metadata = metadata_str.and_then(|raw| serde_json::from_str(&raw).ok());
         Ok(AuditRecord {
             request_id: row.get(0)?,
@@ -1504,10 +1510,11 @@ pub fn get_audit_log_by_request_id(
             cost: row.get(14)?,
             latency_ms: row.get(15)?,
             app_id: row.get(16)?,
-            finish_reason: row.get(17)?,
+            thread_id: row.get(17)?,
+            finish_reason: row.get(18)?,
             metadata,
-            created_at: row.get(19)?,
-            team_id: row.get(20)?,
+            created_at: row.get(20)?,
+            team_id: row.get(21)?,
         })
     })?;
 
@@ -1577,6 +1584,12 @@ fn build_audit_where_clause(
             args.push(Value::Text(app_id.clone()));
         }
     }
+    if let Some(thread_id) = &query.thread_id {
+        if !thread_id.is_empty() {
+            where_clauses.push("thread_id = ?".to_string());
+            args.push(Value::Text(thread_id.clone()));
+        }
+    }
     if let Some(fr) = &query.finish_reason {
         let parts: Vec<String> = fr
             .split(',')
@@ -1625,6 +1638,7 @@ fn audit_analytics_rollup_eligible(query: &AuditListQuery) -> bool {
         && query.status_code.is_none()
         && query.token_id.is_none()
         && query.app_id.is_none()
+        && query.thread_id.is_none()
         && query.finish_reason.is_none()
         && query.min_prompt_tokens.is_none()
         && query.max_prompt_tokens.is_none()
@@ -2380,6 +2394,7 @@ mod tests {
                     cost: Some(0.02),
                     latency_ms: Some(50),
                     app_id: None,
+                    thread_id: None,
                     finish_reason: None,
                     metadata: None,
                     created_at: t0,
@@ -2403,6 +2418,7 @@ mod tests {
                     cost: None,
                     latency_ms: Some(200),
                     app_id: None,
+                    thread_id: None,
                     finish_reason: None,
                     metadata: None,
                     created_at: t0 + 4000,
@@ -2422,6 +2438,7 @@ mod tests {
             status_code: None,
             keyword: None,
             app_id: None,
+            thread_id: None,
             finish_reason: None,
             min_prompt_tokens: None,
             max_prompt_tokens: None,
@@ -2469,6 +2486,7 @@ mod tests {
                 cost: Some(0.001),
                 latency_ms: Some(10),
                 app_id: None,
+                thread_id: None,
                 finish_reason: None,
                 metadata: None,
                 created_at: t0,
@@ -2487,6 +2505,7 @@ mod tests {
             status_code: None,
             keyword: None,
             app_id: None,
+            thread_id: None,
             finish_reason: None,
             min_prompt_tokens: None,
             max_prompt_tokens: None,
@@ -2538,6 +2557,7 @@ mod tests {
                 cost: Some(0.07),
                 latency_ms: Some(12),
                 app_id: None,
+                thread_id: None,
                 finish_reason: None,
                 metadata: None,
                 created_at: t0,
@@ -2556,6 +2576,7 @@ mod tests {
             status_code: None,
             keyword: None,
             app_id: None,
+            thread_id: None,
             finish_reason: None,
             min_prompt_tokens: None,
             max_prompt_tokens: None,

@@ -29,6 +29,7 @@ describe('urlHasAdvancedFilters', () => {
 
   it('is true when any advanced key is non-empty', () => {
     expect(urlHasAdvancedFilters(new URLSearchParams('app_id=myapp'))).toBe(true)
+    expect(urlHasAdvancedFilters(new URLSearchParams('thread_id=t1'))).toBe(true)
     expect(urlHasAdvancedFilters(new URLSearchParams('finish_reason=stop'))).toBe(true)
     expect(urlHasAdvancedFilters(new URLSearchParams('status_code=200'))).toBe(true)
     expect(urlHasAdvancedFilters(new URLSearchParams('token_id=42'))).toBe(true)
@@ -36,6 +37,7 @@ describe('urlHasAdvancedFilters', () => {
 
   it('treats empty advanced values as absent', () => {
     expect(urlHasAdvancedFilters(new URLSearchParams('app_id='))).toBe(false)
+    expect(urlHasAdvancedFilters(new URLSearchParams('thread_id='))).toBe(false)
     expect(urlHasAdvancedFilters(new URLSearchParams('status_code='))).toBe(false)
   })
 })
@@ -49,6 +51,7 @@ describe('auditLogListQuery', () => {
     keyword: '',
     model: '',
     appId: '',
+    threadId: '',
     finishReason: '',
     statusCode: '',
     tokenId: '',
@@ -70,6 +73,7 @@ describe('auditLogListQuery', () => {
         keyword: '  rid  ',
         model: ' m ',
         appId: ' app ',
+        threadId: ' thr ',
         finishReason: ' stop ',
         statusCode: '429',
         tokenId: ' 7 ',
@@ -82,6 +86,7 @@ describe('auditLogListQuery', () => {
       keyword: 'rid',
       model: 'm',
       app_id: 'app',
+      thread_id: 'thr',
       finish_reason: 'stop',
       status_code: 429,
       token_id: 7,
@@ -107,6 +112,7 @@ describe('buildAppliedSearchParams', () => {
       kw: ' k ',
       m: '',
       app: 'aid',
+      thread: 'tid',
       fr: '',
       sc: '500',
       tid: '',
@@ -116,6 +122,7 @@ describe('buildAppliedSearchParams', () => {
     expect(sp.get('offset')).toBe('40')
     expect(sp.get('keyword')).toBe('k')
     expect(sp.get('app_id')).toBe('aid')
+    expect(sp.get('thread_id')).toBe('tid')
     expect(sp.get('status_code')).toBe('500')
     expect(sp.get('model')).toBeNull()
     expect(sp.get('finish_reason')).toBeNull()

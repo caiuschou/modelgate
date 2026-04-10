@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ChevronDown, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -6,6 +6,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/shared/empty-state'
 import { LogDateField } from '@/features/logs/components/log-date-field'
+import { LogModelPicker } from '@/features/logs/components/log-model-picker'
 import {
   downloadExportFile,
   useAuditLogList,
@@ -17,6 +18,7 @@ import {
   parseUnixSearchParam,
   urlHasAdvancedFilters,
 } from '@/features/logs/log-list-filters'
+import { rememberLogModel } from '@/features/logs/log-recent-models'
 import { defaultLogListRange } from '@/features/logs/log-list-range'
 import { formatCostUsd } from '@/lib/format-cost'
 import { cn } from '@/lib/utils'
@@ -30,6 +32,7 @@ type AppliedFilterKey =
   | 'keyword'
   | 'model'
   | 'app_id'
+  | 'thread_id'
   | 'finish_reason'
   | 'status_code'
   | 'token_id'
@@ -53,6 +56,7 @@ function statusBadgeClass(code: number | null): string {
 }
 
 export function LogListPage() {
+  const modelFieldId = useId()
   const [searchParams, setSearchParams] = useSearchParams()
   const defaults = useMemo(() => defaultLogListRange(), [])
   const searchParamsKey = searchParams.toString()
@@ -68,6 +72,7 @@ export function LogListPage() {
   const keyword = searchParams.get('keyword') ?? ''
   const model = searchParams.get('model') ?? ''
   const appId = searchParams.get('app_id') ?? ''
+  const threadId = searchParams.get('thread_id') ?? ''
   const finishReason = searchParams.get('finish_reason') ?? ''
   const statusCode = searchParams.get('status_code') ?? ''
   const tokenId = searchParams.get('token_id') ?? ''
@@ -75,6 +80,7 @@ export function LogListPage() {
   const [draftKeyword, setDraftKeyword] = useState(keyword)
   const [draftModel, setDraftModel] = useState(model)
   const [draftAppId, setDraftAppId] = useState(appId)
+  const [draftThreadId, setDraftThreadId] = useState(threadId)
   const [draftFinishReason, setDraftFinishReason] = useState(finishReason)
   const [draftStatusCode, setDraftStatusCode] = useState(statusCode)
   const [draftTokenId, setDraftTokenId] = useState(tokenId)
@@ -84,11 +90,14 @@ export function LogListPage() {
     urlHasAdvancedFilters(new URLSearchParams(window.location.search)),
   )
 
+  const [recentModelsStorageRev, setRecentModelsStorageRev] = useState(0)
+
   useEffect(() => {
     const sp = new URLSearchParams(searchParamsKey)
     setDraftKeyword(sp.get('keyword') ?? '')
     setDraftModel(sp.get('model') ?? '')
     setDraftAppId(sp.get('app_id') ?? '')
+    setDraftThreadId(sp.get('thread_id') ?? '')
     setDraftFinishReason(sp.get('finish_reason') ?? '')
     setDraftStatusCode(sp.get('status_code') ?? '')
     setDraftTokenId(sp.get('token_id') ?? '')
@@ -110,6 +119,7 @@ export function LogListPage() {
         keyword,
         model,
         appId,
+        threadId,
         finishReason,
         statusCode,
         tokenId,
@@ -122,6 +132,7 @@ export function LogListPage() {
       keyword,
       model,
       appId,
+      threadId,
       finishReason,
       statusCode,
       tokenId,
@@ -151,6 +162,11 @@ export function LogListPage() {
   const applyFilters = useCallback(
     (override?: { statusCode?: string }) => {
       const sc = override?.statusCode ?? draftStatusCode
+      const m = draftModel.trim()
+      if (m) {
+        rememberLogModel(m)
+        setRecentModelsStorageRev((n) => n + 1)
+      }
       setSearchParams(
         buildAppliedSearchParams({
           start: startTime,
@@ -159,6 +175,7 @@ export function LogListPage() {
           kw: draftKeyword,
           m: draftModel,
           app: draftAppId,
+          thread: draftThreadId,
           fr: draftFinishReason,
           sc,
           tid: draftTokenId,
@@ -171,6 +188,7 @@ export function LogListPage() {
       draftKeyword,
       draftModel,
       draftAppId,
+      draftThreadId,
       draftFinishReason,
       draftStatusCode,
       draftTokenId,
@@ -183,6 +201,7 @@ export function LogListPage() {
     setDraftKeyword('')
     setDraftModel('')
     setDraftAppId('')
+    setDraftThreadId('')
     setDraftFinishReason('')
     setDraftStatusCode('')
     setDraftTokenId('')
@@ -252,6 +271,9 @@ export function LogListPage() {
     }
     if (model.trim()) chips.push({ key: 'model', label: `模型：${model.trim()}` })
     if (appId.trim()) chips.push({ key: 'app_id', label: `应用：${appId.trim()}` })
+    if (threadId.trim()) {
+      chips.push({ key: 'thread_id', label: `会话：${threadId.trim()}` })
+    }
     if (finishReason.trim()) {
       chips.push({ key: 'finish_reason', label: `Finish：${finishReason.trim()}` })
     }
@@ -260,7 +282,7 @@ export function LogListPage() {
     }
     if (tokenId.trim()) chips.push({ key: 'token_id', label: `密钥 ID：${tokenId.trim()}` })
     return chips
-  }, [keyword, model, appId, finishReason, statusCode, tokenId])
+  }, [keyword, model, appId, threadId, finishReason, statusCode, tokenId])
 
   const statusPresets = [
     { label: '全部', value: '' },
@@ -341,16 +363,20 @@ export function LogListPage() {
                 placeholder="request_id / 错误信息 / model（应用查询后生效）"
               />
             </label>
-            <label className="text-sm sm:col-span-2 lg:col-span-2">
-              <span className="text-muted-foreground">模型</span>
-              <Input
-                className="mt-1"
-                name="log-model"
+            <div className="text-sm sm:col-span-2 lg:col-span-2">
+              <label
+                htmlFor={modelFieldId}
+                className="text-muted-foreground"
+              >
+                模型
+              </label>
+              <LogModelPicker
+                id={modelFieldId}
                 value={draftModel}
-                onChange={(e) => setDraftModel(e.target.value)}
-                placeholder="精确匹配模型名（应用查询后生效）"
+                onChange={setDraftModel}
+                storageRevision={recentModelsStorageRev}
               />
-            </label>
+            </div>
           </div>
 
           <div className="border-t border-border pt-3">
@@ -366,7 +392,7 @@ export function LogListPage() {
                 className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')}
                 aria-hidden
               />
-              更多条件（应用、Finish、状态码、密钥 ID）
+              更多条件（应用、会话、Finish、状态码、密钥 ID）
             </Button>
 
             {advancedOpen && (
@@ -378,6 +404,15 @@ export function LogListPage() {
                     value={draftAppId}
                     onChange={(e) => setDraftAppId(e.target.value)}
                     placeholder="请求头 X-App-Id"
+                  />
+                </label>
+                <label className="text-sm">
+                  <span className="text-muted-foreground">会话 (thread_id)</span>
+                  <Input
+                    className="mt-1"
+                    value={draftThreadId}
+                    onChange={(e) => setDraftThreadId(e.target.value)}
+                    placeholder="请求头 X-Thread-Id"
                   />
                 </label>
                 <label className="text-sm">
@@ -421,6 +456,7 @@ export function LogListPage() {
                               kw: draftKeyword,
                               m: draftModel,
                               app: draftAppId,
+                              thread: draftThreadId,
                               fr: draftFinishReason,
                               sc: '',
                               tid: draftTokenId,
@@ -436,6 +472,7 @@ export function LogListPage() {
                                 kw: draftKeyword,
                                 m: draftModel,
                                 app: draftAppId,
+                                thread: draftThreadId,
                                 fr: draftFinishReason,
                                 sc: p.value,
                                 tid: draftTokenId,
@@ -512,7 +549,7 @@ export function LogListPage() {
 
       {!isLoading && data && data.data.length > 0 && (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[1040px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1180px] border-collapse text-left text-sm">
             <thead className="border-b border-border bg-muted/40">
               <tr>
                 <th scope="col" className="px-3 py-2 font-medium">
@@ -526,6 +563,9 @@ export function LogListPage() {
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium">
                   应用
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  会话
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium">
                   状态
@@ -564,6 +604,9 @@ export function LogListPage() {
                   </td>
                   <td className="px-3 py-2">{row.model ?? '—'}</td>
                   <td className="px-3 py-2">{row.app_id ?? '—'}</td>
+                  <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs">
+                    {row.thread_id ?? '—'}
+                  </td>
                   <td className="px-3 py-2">
                     {row.status_code !== null ? (
                       <span

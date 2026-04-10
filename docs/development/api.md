@@ -260,7 +260,7 @@
 - **吊销 BYOK：** 吊销某 profile 后，服务端会将引用该 profile 的 `api_keys.default_byok_profile_id` 清空。  
 - **流式：** 支持 `stream: true`（SSE 透传）  
 - **预付费：** 若启用 `[billing].enabled`，见 **3.4**（余额不足 **`402`**；扣费与上游 `cost` / `cost_details` 对齐）。  
-- **可选请求头：** `X-App-Id` — 写入审计日志的 `app_id`  
+- **可选请求头：** `X-App-Id` — 写入审计日志的 `app_id`；`X-Thread-Id` — 写入审计日志的 `thread_id`（会话/线程标识）  
 - **审计 `metadata`：** 含 `is_byok`（bool）、可选 `byok_profile_id`（int），以及原有 `stream` 等字段。  
 - **可选环境变量（转发到上游）：** `OPENAI_ORGANIZATION`、`OPENAI_PROJECT`
 
@@ -282,7 +282,7 @@
 | Query 参数 | 说明 |
 |------------|------|
 | `start_time` / `end_time` | Unix **秒**；均未传时默认 **近 7 天**；跨度超过 **366 天** 时按结束时间向前截断 |
-| `model` / `token_id` / `app_id` | 与列表接口一致（精确匹配） |
+| `model` / `token_id` / `app_id` / `thread_id` | 与列表接口一致（精确匹配） |
 
 **响应：** `summary`（`total_requests`、`success_requests`、`total_tokens`、`total_cost`、`avg_latency_ms`）、`bucket_seconds`（时间桶秒数：约 1h / 1d / 7d 视跨度而定）、`series[]`（`bucket_start`、`request_count`、`total_tokens`）、`by_model[]`（按请求数降序，最多 30 条；空模型为 `(unknown)`）。
 
@@ -299,6 +299,7 @@
 | `status_code` | 精确匹配 |
 | `keyword` | 模糊匹配 `request_id` / `error_message` / `model` |
 | `app_id` | 精确匹配 |
+| `thread_id` | 精确匹配（与请求头 `X-Thread-Id` 写入字段对应） |
 | `finish_reason` | 逗号分隔，多值为 **OR** |
 | `min_prompt_tokens` / `max_prompt_tokens` / `min_completion_tokens` / `max_completion_tokens` | 区间 |
 | `limit` | 默认 `100`，范围 `1..=1000` |

@@ -42,6 +42,10 @@ export function AnalyticsPage() {
   const [preset, setPreset] = useState<'24h' | '7d' | '30d'>('7d')
   const [modelDraft, setModelDraft] = useState('')
   const [modelFilter, setModelFilter] = useState('')
+  const [appIdDraft, setAppIdDraft] = useState('')
+  const [appIdFilter, setAppIdFilter] = useState('')
+  const [threadIdDraft, setThreadIdDraft] = useState('')
+  const [threadIdFilter, setThreadIdFilter] = useState('')
 
   const range = useMemo(() => {
     const end = unixNow()
@@ -55,8 +59,10 @@ export function AnalyticsPage() {
       start_time: range.start,
       end_time: range.end,
       ...(modelFilter.trim() ? { model: modelFilter.trim() } : {}),
+      ...(appIdFilter.trim() ? { app_id: appIdFilter.trim() } : {}),
+      ...(threadIdFilter.trim() ? { thread_id: threadIdFilter.trim() } : {}),
     }),
-    [range.start, range.end, modelFilter],
+    [range.start, range.end, modelFilter, appIdFilter, threadIdFilter],
   )
 
   const { data, isLoading, isError, error, refetch, isFetching } = useAnalytics(query)
@@ -77,7 +83,15 @@ export function AnalyticsPage() {
         ).toFixed(1)
       : '—'
 
-  const logsHref = `/logs?start_time=${range.start}&end_time=${range.end}${modelFilter.trim() ? `&model=${encodeURIComponent(modelFilter.trim())}` : ''}`
+  const logsHref = useMemo(() => {
+    const p = new URLSearchParams()
+    p.set('start_time', String(range.start))
+    p.set('end_time', String(range.end))
+    if (modelFilter.trim()) p.set('model', modelFilter.trim())
+    if (appIdFilter.trim()) p.set('app_id', appIdFilter.trim())
+    if (threadIdFilter.trim()) p.set('thread_id', threadIdFilter.trim())
+    return `/logs?${p.toString()}`
+  }, [range.start, range.end, modelFilter, appIdFilter, threadIdFilter])
 
   return (
     <section>
@@ -138,6 +152,44 @@ export function AnalyticsPage() {
               size="sm"
               variant="secondary"
               onClick={() => setModelFilter(modelDraft)}
+            >
+              应用
+            </Button>
+          </div>
+        </div>
+        <div className="flex min-w-[200px] flex-1 flex-col gap-1 sm:max-w-sm">
+          <span className="text-xs text-muted-foreground">应用 app_id（精确匹配）</span>
+          <div className="flex gap-2">
+            <Input
+              value={appIdDraft}
+              onChange={(e) => setAppIdDraft(e.target.value)}
+              placeholder="留空表示全部"
+              className="h-9"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => setAppIdFilter(appIdDraft)}
+            >
+              应用
+            </Button>
+          </div>
+        </div>
+        <div className="flex min-w-[200px] flex-1 flex-col gap-1 sm:max-w-sm">
+          <span className="text-xs text-muted-foreground">会话 thread_id（精确匹配）</span>
+          <div className="flex gap-2">
+            <Input
+              value={threadIdDraft}
+              onChange={(e) => setThreadIdDraft(e.target.value)}
+              placeholder="留空表示全部"
+              className="h-9"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() => setThreadIdFilter(threadIdDraft)}
             >
               应用
             </Button>

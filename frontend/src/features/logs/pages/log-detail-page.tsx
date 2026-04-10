@@ -453,6 +453,10 @@ export function LogDetailPage() {
                 <dd className="mt-0.5 text-sm">{data.app_id ?? '—'}</dd>
               </div>
               <div>
+                <dt className="text-xs text-muted-foreground">会话 (thread_id)</dt>
+                <dd className="mt-0.5 break-all font-mono text-sm">{data.thread_id ?? '—'}</dd>
+              </div>
+              <div>
                 <dt className="text-xs text-muted-foreground">类型</dt>
                 <dd className="mt-0.5 text-sm">{data.request_type ?? '—'}</dd>
               </div>

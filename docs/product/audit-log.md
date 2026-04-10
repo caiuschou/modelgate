@@ -31,6 +31,7 @@
 | model | string | 模型名称 |
 | request_type | string | 请求类型：`chat`、`completion`、`embedding` 等 |
 | app_id | string | 调用方应用标识（可选；可由请求头 `X-App-Id` 传入） |
+| thread_id | string | 会话/线程标识（可选；可由请求头 `X-Thread-Id` 传入） |
 | request_body | json | 请求体内容 |
 | created_at | timestamp | 请求时间 |
 

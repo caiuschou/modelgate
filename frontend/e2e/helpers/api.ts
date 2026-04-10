@@ -68,7 +68,7 @@ export async function createChatCompletion(
   backendBaseUrl: string,
   apiKey: string,
   model: string,
-  options?: { appId?: string },
+  options?: { appId?: string; threadId?: string },
 ): Promise<Response> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -76,6 +76,9 @@ export async function createChatCompletion(
   }
   if (options?.appId) {
     headers['X-App-Id'] = options.appId
+  }
+  if (options?.threadId) {
+    headers['X-Thread-Id'] = options.threadId
   }
   return fetch(`${backendBaseUrl}/v1/chat/completions`, {
     method: 'POST',

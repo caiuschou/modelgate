@@ -36,6 +36,9 @@ pub struct AuditRecord {
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
     pub app_id: Option<String>,
+    /// 调用方会话/线程标识（可选；可由请求头 `X-Thread-Id` 传入）
+    #[serde(default)]
+    pub thread_id: Option<String>,
     pub finish_reason: Option<String>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: i64,
@@ -78,6 +81,8 @@ pub struct AuditListQuery {
     pub keyword: Option<String>,
     /// 调用方应用标识（精确匹配）
     pub app_id: Option<String>,
+    /// 会话/线程标识（精确匹配）
+    pub thread_id: Option<String>,
     /// 多个值用英文逗号分隔，语义为 OR（如 `stop,length`）
     pub finish_reason: Option<String>,
     pub min_prompt_tokens: Option<i64>,
@@ -107,6 +112,7 @@ pub struct AuditListItem {
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
     pub app_id: Option<String>,
+    pub thread_id: Option<String>,
     pub finish_reason: Option<String>,
     pub created_at: i64,
 }
@@ -127,6 +133,7 @@ pub struct AuditAnalyticsParams {
     pub model: Option<String>,
     pub token_id: Option<i64>,
     pub app_id: Option<String>,
+    pub thread_id: Option<String>,
     /// When true (and no `X-Team-Id`), aggregate all usage for API keys owned by the user (personal + team keys).
     #[serde(default)]
     pub combined: Option<bool>,

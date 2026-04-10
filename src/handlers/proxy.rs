@@ -42,6 +42,7 @@ pub async fn chat_completions(
 ) -> Result<HttpResponse, ApiError> {
     let request_id = crate::audit::generate_request_id();
     let app_id = extract_app_id(&req);
+    let thread_id = extract_thread_id(&req);
     let start = std::time::Instant::now();
     let api_key = auth::extract_bearer_token(&req)
         .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
@@ -112,6 +113,7 @@ pub async fn chat_completions(
         model = model.as_deref(),
         stream = is_stream,
         ?app_id,
+        ?thread_id,
         is_byok = resolved.is_byok,
         "chat completions proxy request accepted"
     );
@@ -139,6 +141,7 @@ pub async fn chat_completions(
                 model = model.as_deref(),
                 stream = is_stream,
                 ?app_id,
+                ?thread_id,
                 error = %e,
                 "upstream request failed"
             );
@@ -162,6 +165,7 @@ pub async fn chat_completions(
                     cost: None,
                     latency_ms: Some(start.elapsed().as_millis() as i64),
                     app_id: app_id.clone(),
+                    thread_id: thread_id.clone(),
                     finish_reason: None,
                     metadata: Some(chat_audit_metadata(
                         is_stream,
@@ -196,6 +200,7 @@ pub async fn chat_completions(
             upstream_status = status_i64,
             latency_ms = start.elapsed().as_millis() as i64,
             ?app_id,
+            ?thread_id,
             "upstream returned client error status"
         );
     }
@@ -222,6 +227,7 @@ pub async fn chat_completions(
                 cost: None,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 app_id: app_id.clone(),
+                thread_id: thread_id.clone(),
                 finish_reason: None,
                 metadata: Some(chat_audit_metadata(
                     true,
@@ -245,6 +251,7 @@ pub async fn chat_completions(
             upstream_status = status_i64,
             latency_ms = start.elapsed().as_millis() as i64,
             ?app_id,
+            ?thread_id,
             "chat completion proxied"
         );
         let st = state.clone();
@@ -377,6 +384,7 @@ pub async fn chat_completions(
                 model = model.as_deref(),
                 upstream_status = status_i64,
                 ?app_id,
+                ?thread_id,
                 error = %e,
                 "upstream response read failed"
             );
@@ -411,6 +419,7 @@ pub async fn chat_completions(
                 cost: usage.3,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
                 app_id: app_id.clone(),
+                thread_id: thread_id.clone(),
                 finish_reason: usage.4,
                 metadata: Some(chat_audit_metadata(
                     false,
@@ -434,6 +443,7 @@ pub async fn chat_completions(
             upstream_status = status_i64,
             latency_ms = start.elapsed().as_millis() as i64,
             ?app_id,
+            ?thread_id,
             prompt_tokens = usage.0,
             completion_tokens = usage.1,
             total_tokens = usage.2,
@@ -531,6 +541,15 @@ fn parse_model_from_request(body: &[u8]) -> Option<String> {
 fn extract_app_id(req: &HttpRequest) -> Option<String> {
     req.headers()
         .get("x-app-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(std::string::ToString::to_string)
+}
+
+fn extract_thread_id(req: &HttpRequest) -> Option<String> {
+    req.headers()
+        .get("x-thread-id")
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|s| !s.is_empty())
