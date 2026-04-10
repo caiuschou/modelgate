@@ -17,6 +17,29 @@ pub fn build_chat_completions_url(base_url: &str) -> String {
     format!("{base}/v1/chat/completions")
 }
 
+/// Resolves `GET /v1/models` against the same upstream base as chat completions.
+pub fn build_models_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+
+    if base.ends_with("/models") {
+        return base.to_string();
+    }
+
+    if base.ends_with("/chat/completions") {
+        let prefix = base.trim_end_matches("/chat/completions");
+        return format!("{prefix}/models");
+    }
+
+    if base.ends_with("/v1") {
+        return format!("{base}/models");
+    }
+    if base.ends_with("/api") {
+        return format!("{base}/v1/models");
+    }
+
+    format!("{base}/v1/models")
+}
+
 pub fn is_stream_request(body: &[u8]) -> bool {
     serde_json::from_slice::<Value>(body)
         .ok()
@@ -57,6 +80,46 @@ mod tests {
         assert_eq!(
             build_chat_completions_url("https://api.example.com"),
             "https://api.example.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn build_models_url_for_v1_base() {
+        assert_eq!(
+            build_models_url("https://api.example.com/v1"),
+            "https://api.example.com/v1/models"
+        );
+    }
+
+    #[test]
+    fn build_models_url_for_api_base() {
+        assert_eq!(
+            build_models_url("https://api.example.com/api"),
+            "https://api.example.com/api/v1/models"
+        );
+    }
+
+    #[test]
+    fn build_models_url_returns_existing_models_url() {
+        assert_eq!(
+            build_models_url("https://api.example.com/v1/models"),
+            "https://api.example.com/v1/models"
+        );
+    }
+
+    #[test]
+    fn build_models_url_strips_chat_completions_suffix() {
+        assert_eq!(
+            build_models_url("https://api.example.com/v1/chat/completions"),
+            "https://api.example.com/v1/models"
+        );
+    }
+
+    #[test]
+    fn build_models_url_defaults_to_v1_models() {
+        assert_eq!(
+            build_models_url("https://api.example.com"),
+            "https://api.example.com/v1/models"
         );
     }
 

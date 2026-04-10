@@ -527,6 +527,15 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn list_models_requires_gateway_api_key() {
+        let state = build_test_app_state();
+        let app = test::init_service(gateway_test_app!(state, with_limits)).await;
+        let req = test::TestRequest::get().uri("/v1/models").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
     async fn create_app_middleware_handles_health_request() {
         let state = build_test_app_state();
         let app = test::init_service(gateway_test_app!(state, with_limits)).await;

@@ -35,6 +35,141 @@ static UPSTREAM_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
     headers
 });
 
+static UPSTREAM_GET_HEADERS: Lazy<reqwest::header::HeaderMap> = Lazy::new(|| {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest_header::ACCEPT,
+        "application/json".parse().unwrap(),
+    );
+    if let Ok(org) = std::env::var("OPENAI_ORGANIZATION") {
+        if let Ok(header) = org.parse() {
+            headers.insert("openai-organization", header);
+        }
+    }
+    if let Ok(project) = std::env::var("OPENAI_PROJECT") {
+        if let Ok(header) = project.parse() {
+            headers.insert("openai-project", header);
+        }
+    }
+    headers
+});
+
+/// `GET /v1/models` — same gateway API key and upstream resolution as chat; proxies to the upstream
+/// OpenAI-compatible models list. Optional `model_allowlist` on the key filters the `data` array.
+pub async fn list_models(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+) -> Result<HttpResponse, ApiError> {
+    let api_key = auth::extract_bearer_token(&req)
+        .ok_or_else(|| ApiError::Unauthorized("Invalid or missing API key".into()))?;
+    if !api_key.starts_with("sk-or-v1-") {
+        return Err(ApiError::Unauthorized(
+            "Models list requires an sk-or-v1-* gateway API key".into(),
+        ));
+    }
+
+    let auth_row = state.auth_service.get_api_key_auth(api_key)?;
+    let token_id = auth_row.id;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    if let Some(ip) = api_key_policy::client_ip(&req) {
+        api_key_policy::check_ip_allowlist(auth_row.ip_allowlist.as_deref(), ip)
+            .map_err(|m| ApiError::Forbidden(m.into()))?;
+    } else if auth_row
+        .ip_allowlist
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
+        return Err(ApiError::Forbidden(
+            "cannot determine client IP for this API key policy".into(),
+        ));
+    }
+
+    state
+        .user_service
+        .touch_api_key_last_used(token_id, now)
+        .map_err(ApiError::from)?;
+
+    let resolved = resolve_chat_upstream(&req, &state, &auth_row)?;
+
+    let mut upstream_url = upstream::build_models_url(&resolved.base_url);
+    if let Some(qs) = req.uri().query() {
+        upstream_url.push('?');
+        upstream_url.push_str(qs);
+    }
+
+    let req_builder = state
+        .http
+        .get(&upstream_url)
+        .headers(UPSTREAM_GET_HEADERS.clone())
+        .header(
+            reqwest_header::AUTHORIZATION,
+            format!("Bearer {}", resolved.api_key),
+        );
+
+    let upstream_resp = match req_builder.send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            error!(error = %e, url = %upstream_url, "upstream models request failed");
+            return Err(ApiError::InternalError("Upstream request failed".into()));
+        }
+    };
+
+    let status = ActixStatusCode::from_u16(upstream_resp.status().as_u16())
+        .unwrap_or(ActixStatusCode::BAD_GATEWAY);
+
+    let body_bytes = upstream_resp.bytes().await.map_err(|e| {
+        error!(error = %e, "reading upstream models body failed");
+        ApiError::InternalError("Upstream request failed".into())
+    })?;
+
+    let code = status.as_u16();
+    let out = if (200..300).contains(&code) {
+        filter_models_list_json(&body_bytes, auth_row.model_allowlist.as_deref())?
+    } else {
+        body_bytes.to_vec()
+    };
+
+    Ok(HttpResponse::build(status)
+        .content_type("application/json")
+        .body(out))
+}
+
+fn filter_models_list_json(
+    body: &[u8],
+    model_allowlist_json: Option<&str>,
+) -> Result<Vec<u8>, ApiError> {
+    let raw = match model_allowlist_json.filter(|s| !s.is_empty()) {
+        Some(r) => r,
+        None => return Ok(body.to_vec()),
+    };
+    let allowed: Vec<String> = serde_json::from_str(raw).map_err(|_| {
+        ApiError::InternalError("invalid model_allowlist on API key".into())
+    })?;
+    if allowed.is_empty() {
+        return Ok(body.to_vec());
+    }
+
+    let mut v: Value = serde_json::from_slice(body).map_err(|_| {
+        ApiError::InternalError("upstream models response is not valid JSON".into())
+    })?;
+    let Some(data) = v.get_mut("data").and_then(|d| d.as_array_mut()) else {
+        return Ok(body.to_vec());
+    };
+    data.retain(|item| {
+        item.get("id")
+            .and_then(|x| x.as_str())
+            .map(|id| allowed.iter().any(|a| a == id))
+            .unwrap_or(false)
+    });
+    serde_json::to_vec(&v).map_err(|e| ApiError::InternalError(e.to_string()))
+}
+
 pub async fn chat_completions(
     req: HttpRequest,
     state: web::Data<AppState>,
@@ -866,6 +1001,41 @@ fn reqwest_response_headers_json(resp: &reqwest::Response) -> serde_json::Value 
         merge_audit_header_line(&mut map, key, v);
     }
     serde_json::Value::Object(map)
+}
+
+#[cfg(test)]
+mod filter_models_list_tests {
+    use super::filter_models_list_json;
+
+    #[test]
+    fn allowlist_none_passthrough() {
+        let body = br#"{"object":"list","data":[{"id":"a"},{"id":"b"}]}"#;
+        let out = filter_models_list_json(body, None).unwrap();
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn allowlist_empty_array_passthrough() {
+        let body = br#"{"object":"list","data":[{"id":"a"}]}"#;
+        let out = filter_models_list_json(body, Some("[]")).unwrap();
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn allowlist_filters_data() {
+        let body = br#"{"object":"list","data":[{"id":"keep"},{"id":"drop"}]}"#;
+        let out = filter_models_list_json(body, Some(r#"["keep"]"#)).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["data"].as_array().unwrap().len(), 1);
+        assert_eq!(v["data"][0]["id"], "keep");
+    }
+
+    #[test]
+    fn missing_data_array_passthrough() {
+        let body = br#"{"error":{"message":"x"}}"#;
+        let out = filter_models_list_json(body, Some(r#"["a"]"#)).unwrap();
+        assert_eq!(out, body);
+    }
 }
 
 #[cfg(test)]

@@ -19,6 +19,7 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             "/v1/chat/completions",
             web::post().to(proxy::chat_completions),
         )
+        .route("/v1/models", web::get().to(proxy::list_models))
         .route(
             "/api/v1/analytics",
             web::get().to(audit::get_audit_analytics),

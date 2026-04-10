@@ -38,6 +38,17 @@ function readBody(req) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`)
 
+  if (req.method === 'GET' && url.pathname === '/v1/models') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(
+      JSON.stringify({
+        object: 'list',
+        data: [{ id: 'e2e-mock-model', object: 'model' }],
+      }),
+    )
+    return
+  }
+
   if (req.method === 'POST' && url.pathname === '/v1/chat/completions') {
     const raw = await readBody(req)
     let stream = false
