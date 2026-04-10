@@ -64,6 +64,7 @@ pub struct AuditStreamCompletionUpdate {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // channel messages; boxing would touch every send/match site
 pub enum AuditMessage {
     Record(AuditRecord),
     StreamCompletion(AuditStreamCompletionUpdate),
