@@ -9,11 +9,6 @@ export interface ParsedToolCall {
   arguments: string
 }
 
-export interface ParsedToolResultMessage {
-  tool_call_id: string | null
-  content: string
-}
-
 export interface ParsedChatCompletionResponse {
   /** Plain assistant text (non-tool). */
   content: string
@@ -26,8 +21,20 @@ export interface ParsedChatCompletionResponse {
   source: 'json' | 'sse_merged'
 }
 
+/** One entry from the chat completion request `messages` array. */
+export interface ParsedChatMessage {
+  role: string
+  name: string | null
+  content: string
+  reasoning: string
+  refusal: string
+  tool_call_id: string | null
+  tool_calls: ParsedToolCall[]
+}
+
 export interface ParsedChatCompletionRequest {
-  tool_messages: ParsedToolResultMessage[]
+  /** Preserves API order. */
+  messages: ParsedChatMessage[]
 }
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -238,20 +245,29 @@ export function parseChatCompletionResponseBody(
   return parseSseCompletionResponse(text)
 }
 
-function parseMessagesForToolResults(messages: unknown): ParsedToolResultMessage[] {
-  if (!Array.isArray(messages)) return []
-  const out: ParsedToolResultMessage[] = []
-  for (const m of messages) {
-    if (!isRecord(m)) continue
-    if (m.role !== 'tool') continue
-    const id = typeof m.tool_call_id === 'string' ? m.tool_call_id : null
-    const content = formatMessageContent(m.content)
-    out.push({ tool_call_id: id, content })
+function parseRequestMessage(m: Record<string, unknown>): ParsedChatMessage {
+  const role = typeof m.role === 'string' && m.role.trim() ? m.role : 'unknown'
+  const name = typeof m.name === 'string' ? m.name : null
+  const content = formatMessageContent(m.content)
+  const reasoning = pickReasoning(m)
+  const refusal = typeof m.refusal === 'string' ? m.refusal : ''
+  const tool_call_id = typeof m.tool_call_id === 'string' ? m.tool_call_id : null
+  let tool_calls = parseToolCallsFromMessage(m.tool_calls)
+  if (tool_calls.length === 0) {
+    tool_calls = legacyFunctionCall(m)
   }
-  return out
+  return {
+    role,
+    name,
+    content,
+    reasoning,
+    refusal,
+    tool_call_id,
+    tool_calls,
+  }
 }
 
-/** Parse chat completion **request** body for `role: tool` messages (tool execution results). */
+/** Parse chat completion **request** body (`messages` array). */
 export function parseChatCompletionRequestBody(text: string): ParsedChatCompletionRequest | null {
   let json: unknown
   try {
@@ -260,9 +276,15 @@ export function parseChatCompletionRequestBody(text: string): ParsedChatCompleti
     return null
   }
   if (!isRecord(json)) return null
-  const tool_messages = parseMessagesForToolResults(json.messages)
-  if (tool_messages.length === 0) return null
-  return { tool_messages }
+  const rawMessages = json.messages
+  if (!Array.isArray(rawMessages) || rawMessages.length === 0) return null
+  const messages: ParsedChatMessage[] = []
+  for (const item of rawMessages) {
+    if (!isRecord(item)) continue
+    messages.push(parseRequestMessage(item))
+  }
+  if (messages.length === 0) return null
+  return { messages }
 }
 
 export function responseHasStructuredDisplay(p: ParsedChatCompletionResponse | null): boolean {
@@ -277,5 +299,5 @@ export function responseHasStructuredDisplay(p: ParsedChatCompletionResponse | n
 
 export function requestHasStructuredDisplay(p: ParsedChatCompletionRequest | null): boolean {
   if (!p) return false
-  return p.tool_messages.length > 0
+  return p.messages.length > 0
 }

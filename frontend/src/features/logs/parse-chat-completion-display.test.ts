@@ -78,7 +78,7 @@ describe('parseChatCompletionResponseBody', () => {
 })
 
 describe('parseChatCompletionRequestBody', () => {
-  it('extracts tool role messages', () => {
+  it('parses full messages array including user and tool', () => {
     const raw = JSON.stringify({
       messages: [
         { role: 'user', content: 'hello' },
@@ -90,9 +90,34 @@ describe('parseChatCompletionRequestBody', () => {
       ],
     })
     const p = parseChatCompletionRequestBody(raw)
-    expect(p?.tool_messages).toHaveLength(1)
-    expect(p?.tool_messages[0].tool_call_id).toBe('call_1')
-    expect(p?.tool_messages[0].content).toBe('{"ok":true}')
+    expect(p?.messages).toHaveLength(2)
+    expect(p?.messages[0].role).toBe('user')
+    expect(p?.messages[0].content).toBe('hello')
+    expect(p?.messages[1].role).toBe('tool')
+    expect(p?.messages[1].tool_call_id).toBe('call_1')
+    expect(p?.messages[1].content).toBe('{"ok":true}')
+  })
+
+  it('parses assistant tool_calls in conversation history', () => {
+    const raw = JSON.stringify({
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [
+            {
+              id: 'c1',
+              type: 'function',
+              function: { name: 'x', arguments: '{}' },
+            },
+          ],
+        },
+      ],
+    })
+    const p = parseChatCompletionRequestBody(raw)
+    expect(p?.messages).toHaveLength(1)
+    expect(p?.messages[0].tool_calls).toHaveLength(1)
+    expect(p?.messages[0].tool_calls[0].name).toBe('x')
   })
 })
 
@@ -127,6 +152,15 @@ describe('display flags', () => {
         parseChatCompletionRequestBody(
           JSON.stringify({
             messages: [{ role: 'tool', tool_call_id: 'c', content: 'z' }],
+          }),
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      requestHasStructuredDisplay(
+        parseChatCompletionRequestBody(
+          JSON.stringify({
+            messages: [{ role: 'user', content: 'hi' }],
           }),
         ),
       ),
