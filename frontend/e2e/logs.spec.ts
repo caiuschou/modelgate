@@ -154,13 +154,18 @@ test('detail page shows request and response body from audit files', async ({
   // Bodies render in `VirtualizedLogBody`; scope to panels so metadata `<dd>` does not collide.
   const requestSection = page.getByRole('heading', { name: '请求体' }).locator('..')
   const responseSection = page.getByRole('heading', { name: '响应体' }).locator('..')
-  await expect(requestSection.getByText(model, { exact: false })).toBeVisible({
+  // Parsed chat completion adds a collapsible raw body (`<details>`); expand before asserting on JSON.
+  const rawSummaryRequest = requestSection.getByText('原始正文', { exact: true })
+  if ((await rawSummaryRequest.count()) > 0) {
+    await rawSummaryRequest.click()
+  }
+  await expect(requestSection.getByText(model, { exact: false }).first()).toBeVisible({
     timeout: 20_000,
   })
+  // Structured "内容" and raw JSON both contain the user message string.
   await expect(
-    requestSection.getByText('e2e audit ping', { exact: false }),
+    requestSection.getByText('e2e audit ping', { exact: true }).first(),
   ).toBeVisible({ timeout: 20_000 })
-  // Parsed chat completion adds a collapsible raw body (`<details>`); expand before asserting on JSON.
   const rawSummaryResponse = responseSection.getByText('原始正文', { exact: true })
   if ((await rawSummaryResponse.count()) > 0) {
     await rawSummaryResponse.click()
