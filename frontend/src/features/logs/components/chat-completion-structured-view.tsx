@@ -1,4 +1,8 @@
 import { Card } from '@/components/ui/card'
+import {
+  LogDetailsSummary,
+  logDetailsGroupClass,
+} from '@/features/logs/components/log-disclosure'
 import type {
   ParsedChatCompletionRequest,
   ParsedChatCompletionResponse,
@@ -88,13 +92,23 @@ function RequestMessageCard({ msg, index }: { msg: ParsedChatMessage; index: num
       </div>
 
       {msg.reasoning.trim() ? (
-        <details className="mt-2 min-w-0 max-w-full overflow-hidden rounded-md border border-border/60 bg-muted/20">
-          <summary className="cursor-pointer select-none px-2 py-1.5 text-xs font-medium">
-            推理 / 思考内容
-            <span className="ml-1 font-normal text-muted-foreground">
-              （{msg.reasoning.length.toLocaleString()} 字符）
+        <details
+          className={logDetailsGroupClass(
+            'msg-r',
+            'mt-2 min-w-0 max-w-full overflow-hidden rounded-md border border-border/60 bg-muted/20',
+          )}
+        >
+          <LogDetailsSummary
+            groupName="msg-r"
+            className="px-2 py-1.5 text-xs font-medium"
+          >
+            <span>
+              推理 / 思考内容
+              <span className="ml-1 font-normal text-muted-foreground">
+                （{msg.reasoning.length.toLocaleString()} 字符）
+              </span>
             </span>
-          </summary>
+          </LogDetailsSummary>
           <pre
             className={`max-h-64 border-t border-border/60 px-2 py-2 ${codeBlockClass}`}
           >
@@ -152,13 +166,23 @@ export function ChatCompletionResponseStructured({
       <p className="break-words text-xs text-muted-foreground">{sourceLabel}</p>
 
       {parsed.reasoning.trim() ? (
-        <details className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border/80 bg-muted/20">
-          <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium">
-            推理内容
-            <span className="ml-2 font-normal text-muted-foreground">
-              （{parsed.reasoning.length.toLocaleString()} 字符）
+        <details
+          className={logDetailsGroupClass(
+            'resp-r',
+            'min-w-0 max-w-full overflow-hidden rounded-lg border border-border/80 bg-muted/20',
+          )}
+        >
+          <LogDetailsSummary
+            groupName="resp-r"
+            className="px-3 py-2 text-sm font-medium"
+          >
+            <span>
+              推理内容
+              <span className="ml-2 font-normal text-muted-foreground">
+                （{parsed.reasoning.length.toLocaleString()} 字符）
+              </span>
             </span>
-          </summary>
+          </LogDetailsSummary>
           <pre
             className={`max-h-96 border-t border-border/60 px-3 py-2 ${codeBlockClass}`}
           >

@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import { ChevronLeft } from 'lucide-react'
 import { Link, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -8,6 +9,10 @@ import {
   ChatCompletionRequestStructured,
   ChatCompletionResponseStructured,
 } from '@/features/logs/components/chat-completion-structured-view'
+import {
+  LogDetailsSummary,
+  logDetailsGroupClass,
+} from '@/features/logs/components/log-disclosure'
 import { VirtualizedLogBody } from '@/features/logs/components/virtualized-log-body'
 import { useMyByokProfiles } from '@/features/byok/hooks/use-byok-profiles'
 import {
@@ -318,54 +323,78 @@ function AuditBodyPanel(props: {
       ? responseHasStructuredDisplay(parsedResponse)
       : requestHasStructuredDisplay(parsedRequest)
 
+  const auditGroup = part === 'request' ? 'audit-req' : 'audit-res'
+  const testId =
+    part === 'request' ? 'audit-body-request' : 'audit-body-response'
+
   return (
-    <Card className="min-w-0 max-w-full space-y-3 overflow-hidden p-4">
-      <h2 className="text-sm font-medium">{title}</h2>
-      {streamSseNote && (
-        <p className="text-xs text-muted-foreground">
-          原始 SSE（与客户端收到的 event-stream 一致）。
-        </p>
-      )}
-      {!hasPath && (
-        <p className="text-sm text-muted-foreground">{emptyHint}</p>
-      )}
-      {hasPath && q.isLoading && (
-        <p className="text-sm text-muted-foreground">加载中…</p>
-      )}
-      {hasPath && q.isError && (
-        <p className="text-sm text-red-600" role="alert">
-          无法加载正文（文件不存在或已清理）。
-        </p>
-      )}
-      {hasPath && q.data !== undefined && (
-        <>
-          {showStructured && (
-            <div className="min-w-0 max-w-full space-y-3">
-              <h3 className="text-sm font-medium">解析视图</h3>
-              {part === 'response' && parsedResponse && (
-                <ChatCompletionResponseStructured parsed={parsedResponse} />
-              )}
-              {part === 'request' && parsedRequest && (
-                <ChatCompletionRequestStructured parsed={parsedRequest} />
-              )}
-            </div>
+    <Card className="min-w-0 max-w-full overflow-hidden p-0">
+      <details
+        className={logDetailsGroupClass(auditGroup)}
+        data-testid={testId}
+      >
+        <LogDetailsSummary
+          groupName={auditGroup}
+          className="px-4 py-3 hover:bg-muted/40"
+        >
+          <h2 className="text-sm font-medium">{title}</h2>
+        </LogDetailsSummary>
+        <div className="space-y-3 border-t border-border/60 px-4 pb-4 pt-3">
+          {streamSseNote && (
+            <p className="text-xs text-muted-foreground">
+              原始 SSE（与客户端收到的 event-stream 一致）。
+            </p>
           )}
-          {showStructured ? (
-            <details className="min-w-0 max-w-full overflow-hidden rounded-md border border-border/60">
-              <summary className="cursor-pointer select-none px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/40">
-                原始正文
-              </summary>
-              <div className="min-w-0 border-t border-border/60 pt-2">
-                <VirtualizedLogBody text={formatted} />
-              </div>
-            </details>
-          ) : (
-            <div className="min-w-0 max-w-full">
-              <VirtualizedLogBody text={formatted} />
-            </div>
+          {!hasPath && (
+            <p className="text-sm text-muted-foreground">{emptyHint}</p>
           )}
-        </>
-      )}
+          {hasPath && q.isLoading && (
+            <p className="text-sm text-muted-foreground">加载中…</p>
+          )}
+          {hasPath && q.isError && (
+            <p className="text-sm text-red-600" role="alert">
+              无法加载正文（文件不存在或已清理）。
+            </p>
+          )}
+          {hasPath && q.data !== undefined && (
+            <>
+              {showStructured && (
+                <div className="min-w-0 max-w-full space-y-3">
+                  <h3 className="text-sm font-medium">解析视图</h3>
+                  {part === 'response' && parsedResponse && (
+                    <ChatCompletionResponseStructured parsed={parsedResponse} />
+                  )}
+                  {part === 'request' && parsedRequest && (
+                    <ChatCompletionRequestStructured parsed={parsedRequest} />
+                  )}
+                </div>
+              )}
+              {showStructured ? (
+                <details
+                  className={logDetailsGroupClass(
+                    'raw',
+                    'max-w-full overflow-hidden rounded-md border border-border/60',
+                  )}
+                >
+                  <LogDetailsSummary
+                    groupName="raw"
+                    className="px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/40"
+                  >
+                    <span>原始正文</span>
+                  </LogDetailsSummary>
+                  <div className="min-w-0 border-t border-border/60 pt-2">
+                    <VirtualizedLogBody text={formatted} />
+                  </div>
+                </details>
+              ) : (
+                <div className="min-w-0 max-w-full">
+                  <VirtualizedLogBody text={formatted} />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </details>
     </Card>
   )
 }
@@ -418,7 +447,10 @@ export function LogDetailPage() {
     <section className="min-w-0 max-w-full space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="outline" size="sm" asChild>
-          <Link to="/logs">← 返回列表</Link>
+          <Link to="/logs" className="inline-flex items-center gap-1.5">
+            <ChevronLeft className="size-4" aria-hidden />
+            返回列表
+          </Link>
         </Button>
         <h1 className="text-xl font-semibold">日志详情</h1>
       </div>

@@ -148,12 +148,14 @@ test('detail page shows request and response body from audit files', async ({
   await page.getByRole('row').filter({ hasText: model }).getByRole('link', { name: '详情' }).click()
 
   await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '请求体' })).toBeVisible()
-  await expect(page.getByRole('heading', { name: '响应体' })).toBeVisible()
+  const requestSection = page.getByTestId('audit-body-request')
+  const responseSection = page.getByTestId('audit-body-response')
+  await expect(requestSection).toBeVisible()
+  await expect(responseSection).toBeVisible()
+  await requestSection.locator(':scope > summary').click()
+  await responseSection.locator(':scope > summary').click()
 
   // Bodies render in `VirtualizedLogBody`; scope to panels so metadata `<dd>` does not collide.
-  const requestSection = page.getByRole('heading', { name: '请求体' }).locator('..')
-  const responseSection = page.getByRole('heading', { name: '响应体' }).locator('..')
   // Parsed chat completion adds a collapsible raw body (`<details>`); expand before asserting on JSON.
   const rawSummaryRequest = requestSection.getByText('原始正文', { exact: true })
   if ((await rawSummaryRequest.count()) > 0) {
@@ -202,11 +204,12 @@ test('stream chat persists SSE and detail shows body', async ({ page }) => {
 
   await page.goto(`/logs/${encodeURIComponent(row!.request_id)}`)
   await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
+  await page.getByTestId('audit-body-response').locator(':scope > summary').click()
   // Structured view shows merged content in a <pre>; raw SSE line also contains this substring — use exact match to avoid strict-mode duplicate.
   await expect(
     page.getByText('e2e stream chunk', { exact: true }),
   ).toBeVisible({ timeout: 20_000 })
-  const responseSection = page.getByRole('heading', { name: '响应体' }).locator('..')
+  const responseSection = page.getByTestId('audit-body-response')
   const rawSummaryResponse = responseSection.getByText('原始正文', { exact: true })
   if ((await rawSummaryResponse.count()) > 0) {
     await rawSummaryResponse.click()
