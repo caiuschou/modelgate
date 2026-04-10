@@ -11,6 +11,13 @@ import {
   useAuditLogList,
   useExportAuditLogs,
 } from '@/features/logs/hooks/use-logs'
+import {
+  auditLogListQuery,
+  buildAppliedSearchParams,
+  parseUnixSearchParam,
+  urlHasAdvancedFilters,
+} from '@/features/logs/log-list-filters'
+import { defaultLogListRange } from '@/features/logs/log-list-range'
 import { formatCostUsd } from '@/lib/format-cost'
 import { cn } from '@/lib/utils'
 
@@ -18,13 +25,6 @@ const PAGE_SIZE = 20
 
 /** Ensures the refresh icon spins long enough to perceive on fast LAN responses. */
 const REFRESH_SPIN_MIN_MS = 280
-
-const ADVANCED_PARAM_KEYS = [
-  'app_id',
-  'finish_reason',
-  'status_code',
-  'token_id',
-] as const
 
 type AppliedFilterKey =
   | 'keyword'
@@ -40,15 +40,6 @@ function delayMs(ms: number): Promise<void> {
   })
 }
 
-function unixNow(): number {
-  return Math.floor(Date.now() / 1000)
-}
-
-function defaultRange(): { start: number; end: number } {
-  const end = unixNow()
-  return { start: end - 7 * 24 * 3600, end }
-}
-
 function formatTime(ts: number): string {
   return new Date(ts * 1000).toLocaleString()
 }
@@ -61,22 +52,9 @@ function statusBadgeClass(code: number | null): string {
   return 'bg-muted text-muted-foreground'
 }
 
-function parseUnixSearchParam(raw: string | null, fallback: number): number {
-  if (raw === null || raw === '') return fallback
-  const n = Number(raw)
-  return Number.isFinite(n) ? n : fallback
-}
-
-function urlHasAdvancedFilters(sp: URLSearchParams): boolean {
-  return ADVANCED_PARAM_KEYS.some((k) => {
-    const v = sp.get(k)
-    return v != null && v !== ''
-  })
-}
-
 export function LogListPage() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const defaults = useMemo(() => defaultRange(), [])
+  const defaults = useMemo(() => defaultLogListRange(), [])
   const searchParamsKey = searchParams.toString()
 
   const limit = PAGE_SIZE
@@ -122,34 +100,33 @@ export function LogListPage() {
     }
   }, [searchParamsKey])
 
-  const listQuery = useMemo(() => {
-    const sc = statusCode.trim()
-    const code = sc === '' ? NaN : Number(sc)
-    const tid = tokenId.trim() === '' ? NaN : Number(tokenId.trim())
-    return {
-      start_time: startTime,
-      end_time: endTime,
+  const listQuery = useMemo(
+    () =>
+      auditLogListQuery({
+        startTime,
+        endTime,
+        limit,
+        offset,
+        keyword,
+        model,
+        appId,
+        finishReason,
+        statusCode,
+        tokenId,
+      }),
+    [
+      startTime,
+      endTime,
       limit,
       offset,
-      ...(keyword.trim() ? { keyword: keyword.trim() } : {}),
-      ...(model.trim() ? { model: model.trim() } : {}),
-      ...(appId.trim() ? { app_id: appId.trim() } : {}),
-      ...(finishReason.trim() ? { finish_reason: finishReason.trim() } : {}),
-      ...(Number.isFinite(code) ? { status_code: code } : {}),
-      ...(Number.isFinite(tid) ? { token_id: tid } : {}),
-    }
-  }, [
-    startTime,
-    endTime,
-    limit,
-    offset,
-    keyword,
-    model,
-    appId,
-    finishReason,
-    statusCode,
-    tokenId,
-  ])
+      keyword,
+      model,
+      appId,
+      finishReason,
+      statusCode,
+      tokenId,
+    ],
+  )
 
   const { data, isLoading, isError, refetch, isFetching } = useAuditLogList(listQuery)
   const exportMutation = useExportAuditLogs()
@@ -171,38 +148,11 @@ export function LogListPage() {
 
   const listFetchSpin = isFetching || manualRefreshSpin
 
-  const buildAppliedParams = useCallback(
-    (opts: {
-      start: number
-      end: number
-      off: string
-      kw: string
-      m: string
-      app: string
-      fr: string
-      sc: string
-      tid: string
-    }) => {
-      const next = new URLSearchParams()
-      next.set('start_time', String(opts.start))
-      next.set('end_time', String(opts.end))
-      next.set('offset', opts.off)
-      if (opts.kw.trim()) next.set('keyword', opts.kw.trim())
-      if (opts.m.trim()) next.set('model', opts.m.trim())
-      if (opts.app.trim()) next.set('app_id', opts.app.trim())
-      if (opts.fr.trim()) next.set('finish_reason', opts.fr.trim())
-      if (opts.sc.trim()) next.set('status_code', opts.sc.trim())
-      if (opts.tid.trim()) next.set('token_id', opts.tid.trim())
-      return next
-    },
-    [],
-  )
-
   const applyFilters = useCallback(
     (override?: { statusCode?: string }) => {
       const sc = override?.statusCode ?? draftStatusCode
       setSearchParams(
-        buildAppliedParams({
+        buildAppliedSearchParams({
           start: startTime,
           end: endTime,
           off: '0',
@@ -224,13 +174,12 @@ export function LogListPage() {
       draftFinishReason,
       draftStatusCode,
       draftTokenId,
-      buildAppliedParams,
       setSearchParams,
     ],
   )
 
   const resetFilters = useCallback(() => {
-    const r = defaultRange()
+    const r = defaultLogListRange()
     setDraftKeyword('')
     setDraftModel('')
     setDraftAppId('')
@@ -327,7 +276,8 @@ export function LogListPage() {
           <h1 className="text-2xl font-semibold">日志中心</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             请求审计日志 · 开始/结束按本地日历日选择（当日 0:00 至 23:59:59.999，对应
-            OpenAPI 的 Unix 秒参数）；修改关键词后请点击查询。
+            OpenAPI 的 Unix 秒参数）；未在地址栏指定时间时，结束时间默认为今日日末（与「结束时间」
+            选择器一致），而非当前时刻。修改关键词后请点击查询。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -464,7 +414,7 @@ export function LogListPage() {
                         onClick={() => {
                           if (p.value === '') {
                             setDraftStatusCode('')
-                            const next = buildAppliedParams({
+                            const next = buildAppliedSearchParams({
                               start: startTime,
                               end: endTime,
                               off: '0',
@@ -479,7 +429,7 @@ export function LogListPage() {
                           } else {
                             setDraftStatusCode(p.value)
                             setSearchParams(
-                              buildAppliedParams({
+                              buildAppliedSearchParams({
                                 start: startTime,
                                 end: endTime,
                                 off: '0',
