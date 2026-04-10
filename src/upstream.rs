@@ -129,7 +129,10 @@ mod tests {
             build_chat_completions_url(base),
             "https://openrouter.ai/api/v1/chat/completions"
         );
-        assert_eq!(build_models_url(base), "https://openrouter.ai/api/v1/models");
+        assert_eq!(
+            build_models_url(base),
+            "https://openrouter.ai/api/v1/models"
+        );
     }
 
     /// 火山方舟 Coding Plan：base 为 `.../api/coding/v3`，对话路径为 `.../v3/chat/completions`（不是 `.../v3/v1/...`）。
