@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AuditConfig {
@@ -238,25 +238,59 @@ pub(crate) fn normalize_audit_body_stored_path(s: &str) -> &str {
     }
 }
 
-fn normalize_audit_path_opt(p: &mut Option<String>) {
-    if let Some(s) = p {
-        let n = normalize_audit_body_stored_path(s);
-        if n != s.as_str() {
-            *s = n.to_string();
+/// Strips a duplicated [`AuditConfig::log_dir`] prefix if someone persisted `log_dir` + relative path
+/// in SQLite (e.g. `../../shared/audit_logs/20260411/...` instead of `20260411/...`).
+pub(crate) fn normalize_storage_entry_path(log_dir: &str, stored: &str) -> String {
+    let ld = log_dir.trim().trim_end_matches('/').trim_end_matches('\\');
+    let mut s = stored.trim().to_string();
+    if !ld.is_empty() {
+        while s.starts_with(ld) {
+            let rest = &s[ld.len()..];
+            s = rest.trim_start_matches('/').trim_start_matches('\\').to_string();
         }
+    }
+    let n = normalize_audit_body_stored_path(&s);
+    if n != s.as_str() {
+        n.to_string()
+    } else {
+        s
     }
 }
 
-pub(crate) fn normalize_audit_record_paths(r: &mut AuditRecord) {
-    normalize_audit_path_opt(&mut r.request_body_path);
-    normalize_audit_path_opt(&mut r.response_body_path);
+pub(crate) fn normalize_audit_record_paths_for_storage(log_dir: &str, r: &mut AuditRecord) {
+    if let Some(ref mut s) = r.request_body_path {
+        *s = normalize_storage_entry_path(log_dir, s);
+    }
+    if let Some(ref mut s) = r.response_body_path {
+        *s = normalize_storage_entry_path(log_dir, s);
+    }
 }
 
 /// Subdirectory under `log_dir`: UTC calendar day `YYYYMMDD` (easy to prune old days).
 fn audit_day_dir_name(unix_secs: i64) -> String {
-    DateTime::<Utc>::from_timestamp(unix_secs, 0)
-        .map(|dt| dt.format("%Y%m%d").to_string())
-        .unwrap_or_else(|| "19700101".to_string())
+    let fallback = || Utc::now().format("%Y%m%d").to_string();
+    match DateTime::<Utc>::from_timestamp(unix_secs, 0) {
+        Some(dt) => {
+            let s = dt.format("%Y%m%d").to_string();
+            if s.len() == 8 && s.bytes().all(|b| b.is_ascii_digit()) {
+                s
+            } else {
+                warn!(
+                    unix_secs,
+                    bucket = %s,
+                    "audit day bucket had unexpected format; using UTC today"
+                );
+                fallback()
+            }
+        }
+        None => {
+            warn!(
+                unix_secs,
+                "audit_day_dir_name timestamp out of range; using UTC today"
+            );
+            fallback()
+        }
+    }
 }
 
 /// Read an audit body file after resolving `stored_path` under `log_dir`. Rejects `..`
@@ -268,8 +302,8 @@ fn audit_day_dir_name(unix_secs: i64) -> String {
 /// `stored` relative to cwd, and absolute paths must remain under `log_dir` after canonicalize.
 pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec<u8>> {
     let log_root = Path::new(log_dir);
-    let trimmed = normalize_audit_body_stored_path(stored_path.trim());
-    let stored = Path::new(trimmed);
+    let normalized = normalize_storage_entry_path(log_dir, stored_path.trim());
+    let stored = Path::new(normalized.as_str());
     if stored.as_os_str().is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -369,17 +403,15 @@ pub async fn audit_writer_loop(
             msg = receiver.recv() => {
                 match msg {
                     Some(AuditMessage::Record(mut record)) => {
-                        normalize_audit_record_paths(&mut record);
+                        normalize_audit_record_paths_for_storage(&config.log_dir, &mut record);
                         buffer.push(record);
                         if buffer.len() >= config.batch_size {
                             should_flush = true;
                         }
                     }
                     Some(AuditMessage::StreamCompletion(mut update)) => {
-                        let n = normalize_audit_body_stored_path(&update.response_body_path);
-                        if n != update.response_body_path.as_str() {
-                            update.response_body_path = n.to_string();
-                        }
+                        update.response_body_path =
+                            normalize_storage_entry_path(&config.log_dir, &update.response_body_path);
                         if !buffer.is_empty() {
                             if let Ok(mut conn) = db.get() {
                                 if let Err(err) = crate::db::insert_audit_logs(&mut conn, &buffer) {
@@ -464,6 +496,22 @@ mod read_body_tests {
         assert_eq!(
             normalize_audit_body_stored_path("20260411/abc-request.json"),
             "20260411/abc-request.json"
+        );
+    }
+
+    #[test]
+    fn normalize_storage_strips_log_dir_prefix() {
+        let ld = "../../shared/audit_logs";
+        assert_eq!(
+            normalize_storage_entry_path(
+                ld,
+                "../../shared/audit_logs/20260411/z-request.json"
+            ),
+            "20260411/z-request.json"
+        );
+        assert_eq!(
+            normalize_storage_entry_path(ld, "20260411/z-request.json"),
+            "20260411/z-request.json"
         );
     }
 
