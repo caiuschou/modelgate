@@ -45,7 +45,7 @@
    - `audit.log_dir`：请求/响应体落盘目录（与 SQLite 中的列表元数据分离存储）  
    - `audit.export_dir`：导出文件目录  
    - 确保进程用户对该路径有读写权限。  
-   - **SSH / 多版本目录发版：** 与 `[sqlite].path` 一样，不要把 `log_dir` / `export_dir` 留在各 release 目录下的默认 `./audit_logs`、`./exports`，应改为发版根下**持久目录**（如 `../shared/audit_logs`），否则发版后日志中心**详情正文**会找不到文件。GitHub Actions `cd-ssh.yml` 会对 `shared/config.toml` 自动写入上述共享路径并做一次从上一版 release 的迁移。
+   - **SSH / 多版本目录发版：** 与 `[sqlite].path` 一样，不要把 `log_dir` / `export_dir` 留在各 release 目录下的默认 `./audit_logs`、`./exports`，应改为发版根下**持久目录**（如 `../../shared/audit_logs`，相对 `WorkingDirectory` = `releases/<sha>`），否则发版后日志中心**详情正文**会找不到文件。GitHub Actions `cd-ssh.yml` 会对 `shared/config.toml` 自动写入上述共享路径并做一次从上一版 release 的迁移。
 
 ---
 
