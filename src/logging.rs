@@ -7,7 +7,19 @@ use crate::config::LoggingConfig;
 
 /// Initialize global tracing. Safe to call from tests: second `try_init` is ignored.
 pub fn init_tracing(cfg: &LoggingConfig) {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        let s = cfg.default_filter.trim();
+        if s.is_empty() {
+            return EnvFilter::new("info");
+        }
+        match EnvFilter::try_new(s) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("modelgate: invalid [logging].default_filter {s:?}: {e}; using info");
+                EnvFilter::new("info")
+            }
+        }
+    });
 
     let stderr = fmt::layer().with_writer(std::io::stderr).with_target(true);
 

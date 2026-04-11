@@ -18,11 +18,28 @@ pub struct AppConfig {
     pub auth: AuthConfig,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct LoggingConfig {
     /// Directory for daily rolling files `modelgate.log.YYYY-MM-DD`. Empty = no log files.
     #[serde(default)]
     pub tracing_log_dir: String,
+    /// `tracing_subscriber::EnvFilter` when the `RUST_LOG` environment variable is unset.
+    /// Examples: `info`, `trace`, `modelgate=trace,actix_web=info`.
+    #[serde(default = "default_logging_filter")]
+    pub default_filter: String,
+}
+
+fn default_logging_filter() -> String {
+    "info".to_string()
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            tracing_log_dir: String::new(),
+            default_filter: default_logging_filter(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +148,7 @@ fn config_builder(
         .set_default("audit.flush_interval_seconds", 5)?
         .set_default("audit.export_dir", "./exports")?
         .set_default("logging.tracing_log_dir", "")?
+        .set_default("logging.default_filter", "info")?
         .set_default("auth.invite_code", "ZW9Z")
 }
 

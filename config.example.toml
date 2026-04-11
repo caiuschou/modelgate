@@ -31,8 +31,12 @@ api_key = "sk-your-openai-key-here"
 # 可选：按日滚动的 tracing 日志目录（如 modelgate.log.YYYY-MM-DD）；留空则只输出到 stderr（如 systemd journal）
 # SSH 部署时常设为 `../shared/logs`（相对 release 目录，便于持久化）
 # 环境变量覆盖：TRACING_LOG_DIR
+#
+# default_filter：tracing 级别（仅当未设置环境变量 RUST_LOG 时生效）。服务器落盘排障可设为 trace（日志量大）。
+# 也可用 `modelgate=trace,actix_web=info,h2=info` 等缩小噪声。
 [logging]
 tracing_log_dir = ""
+default_filter = "info"
 
 # SQLite 数据库文件路径；默认进程当前工作目录下的 modelgate.db（本地开发足够）
 # SSH 部署建议：`path = "../shared/modelgate.db"`，避免随发版目录切换丢失数据
