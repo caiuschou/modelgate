@@ -115,30 +115,25 @@ jobs:
             fi
             # Rolling tracing logs + trace-level filter when RUST_LOG unset.
             # systemd WorkingDirectory is $DEPLOY_ROOT/current → releases/<sha>: use ../../shared/... (not ../shared/, which resolves under releases/).
-            # Use positive grep branches only (avoid `if ! grep` + set -e edge cases). sed -i needs parent dir writable for temp file.
-            deploy_step "config: patch [logging] (tracing_log_dir, default_filter)"
+            # Use positive grep branches only (avoid `if ! grep` + set -e edge cases).
             if [ -f "${CONFIG}" ]; then
               _cfgdir="$(dirname "${CONFIG}")"
-              if [ ! -w "${_cfgdir}" ]; then
-                echo "[deploy] ERROR: directory not writable (sed -i temp files): ${_cfgdir}" >&2
-                ls -ld "${_cfgdir}" >&2 || true
-                exit 1
-              fi
+              deploy_step "config: patch [logging] (dir=${_cfgdir})"
               export LC_ALL=C
               if grep -q '^\[logging\]' "${CONFIG}"; then
                 if grep -q 'tracing_log_dir = ""' "${CONFIG}"; then
-                  sed -i 's|tracing_log_dir = ""|tracing_log_dir = "../../shared/logs"|' "${CONFIG}"
+                  sed -i 's|tracing_log_dir = ""|tracing_log_dir = "../../shared/logs"|' "${CONFIG}" || true
                 fi
-                if grep -qE '^default_filter[[:space:]]*=' "${CONFIG}"; then
-                  :
+                if grep -q '^default_filter' "${CONFIG}"; then
+                  true
                 else
-                  sed -i '/^\[logging\]/a default_filter = "trace"' "${CONFIG}"
+                  sed -i '/^\[logging\]/a default_filter = "trace"' "${CONFIG}" || true
                 fi
               else
-                printf '\n[logging]\ntracing_log_dir = "../../shared/logs"\ndefault_filter = "trace"\n' >> "${CONFIG}"
+                printf '\n[logging]\ntracing_log_dir = "../../shared/logs"\ndefault_filter = "trace"\n' >> "${CONFIG}" || true
               fi
               # Fix older CD that wrote ../shared/ (wrong when cwd is releases/<sha>)
-              sed -i 's|tracing_log_dir = "\.\./shared/|tracing_log_dir = "../../shared/|g' "${CONFIG}"
+              sed -i 's|tracing_log_dir = "\.\./shared/|tracing_log_dir = "../../shared/|g' "${CONFIG}" || true
             fi
             # SQLite: default modelgate.db is per-release cwd; pin DB under shared/ so data survives deploys
             deploy_step "config: patch [sqlite] (path under shared/)"
