@@ -246,7 +246,10 @@ pub(crate) fn normalize_storage_entry_path(log_dir: &str, stored: &str) -> Strin
     if !ld.is_empty() {
         while s.starts_with(ld) {
             let rest = &s[ld.len()..];
-            s = rest.trim_start_matches('/').trim_start_matches('\\').to_string();
+            s = rest
+                .trim_start_matches('/')
+                .trim_start_matches('\\')
+                .to_string();
         }
     }
     let n = normalize_audit_body_stored_path(&s);
@@ -488,9 +491,7 @@ mod read_body_tests {
     #[test]
     fn normalize_strips_redundant_audit_logs_prefix() {
         assert_eq!(
-            normalize_audit_body_stored_path(
-                "../../shared/audit_logs/20260411/abc-request.json"
-            ),
+            normalize_audit_body_stored_path("../../shared/audit_logs/20260411/abc-request.json"),
             "20260411/abc-request.json"
         );
         assert_eq!(
@@ -503,10 +504,7 @@ mod read_body_tests {
     fn normalize_storage_strips_log_dir_prefix() {
         let ld = "../../shared/audit_logs";
         assert_eq!(
-            normalize_storage_entry_path(
-                ld,
-                "../../shared/audit_logs/20260411/z-request.json"
-            ),
+            normalize_storage_entry_path(ld, "../../shared/audit_logs/20260411/z-request.json"),
             "20260411/z-request.json"
         );
         assert_eq!(

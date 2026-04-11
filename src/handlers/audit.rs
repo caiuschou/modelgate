@@ -94,7 +94,10 @@ pub async fn get_audit_log(
 ) -> Result<HttpResponse, ApiError> {
     let (_, user_id) = auth_scope(&req, &state)?;
     let mut record = state.audit_service.get_audit_log(&request_id, user_id)?;
-    crate::audit::normalize_audit_record_paths_for_storage(&state.audit_config.log_dir, &mut record);
+    crate::audit::normalize_audit_record_paths_for_storage(
+        &state.audit_config.log_dir,
+        &mut record,
+    );
     Ok(HttpResponse::Ok().json(record))
 }
 
@@ -118,7 +121,10 @@ pub async fn get_audit_log_body(
     let (_, user_id) = auth_scope(&req, &state)?;
     let request_id = request_id.into_inner();
     let mut record = state.audit_service.get_audit_log(&request_id, user_id)?;
-    crate::audit::normalize_audit_record_paths_for_storage(&state.audit_config.log_dir, &mut record);
+    crate::audit::normalize_audit_record_paths_for_storage(
+        &state.audit_config.log_dir,
+        &mut record,
+    );
     let stored_path = match part.as_str() {
         "request" => record.request_body_path.as_deref(),
         "response" => record.response_body_path.as_deref(),
