@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { format } from 'date-fns'
+import { zhCN } from 'date-fns/locale'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ChevronDown, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, Info, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/shared/empty-state'
-import { TooltipProvider } from '@/components/ui/tooltip'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { AuditLogTimestamp } from '@/features/logs/components/audit-log-timestamp'
 import { LogDateField } from '@/features/logs/components/log-date-field'
 import { LogListLatencyTooltipCell } from '@/features/logs/components/log-list-latency-tooltip-cell'
@@ -24,7 +31,13 @@ import {
 } from '@/features/logs/log-list-filters'
 import { rememberLogModel } from '@/features/logs/log-recent-models'
 import { formatLatencySeconds } from '@/features/logs/format-latency'
-import { defaultLogListRange } from '@/features/logs/log-list-range'
+import {
+  defaultLogListRange,
+  normalizeLogListTimeRange,
+  presetLogListRangeToday,
+  presetLogListRangeYesterday,
+  rollingLogListRange,
+} from '@/features/logs/log-list-range'
 import { useMyApiKeys } from '@/features/api-keys/hooks/use-api-keys'
 import type { ApiKeySummary } from '@/features/api-keys/types'
 import { formatCostUsd } from '@/lib/format-cost'
@@ -235,19 +248,74 @@ export function LogListPage() {
   }
 
   const patchTimeAndOffset = useCallback(
-    (patch: { start_time?: number; end_time?: number }) => {
+    (patch: { start_time?: number; end_time?: number; which: 'start' | 'end' }) => {
+      const nextStart = patch.start_time ?? startTime
+      const nextEnd = patch.end_time ?? endTime
+      const norm = normalizeLogListTimeRange(nextStart, nextEnd, patch.which)
       const next = new URLSearchParams(searchParams)
-      if (patch.start_time !== undefined) {
-        next.set('start_time', String(patch.start_time))
-      }
-      if (patch.end_time !== undefined) {
-        next.set('end_time', String(patch.end_time))
-      }
+      next.set('start_time', String(norm.start))
+      next.set('end_time', String(norm.end))
+      next.set('offset', '0')
+      setSearchParams(next)
+    },
+    [searchParams, setSearchParams, startTime, endTime],
+  )
+
+  const applyTimePreset = useCallback(
+    (preset: 'today' | 'yesterday' | 'last7' | 'last30') => {
+      const at = new Date()
+      const range =
+        preset === 'today'
+          ? presetLogListRangeToday(at)
+          : preset === 'yesterday'
+            ? presetLogListRangeYesterday(at)
+            : preset === 'last7'
+              ? defaultLogListRange(at)
+              : rollingLogListRange(30, at)
+      const next = new URLSearchParams(searchParams)
+      next.set('start_time', String(range.start))
+      next.set('end_time', String(range.end))
       next.set('offset', '0')
       setSearchParams(next)
     },
     [searchParams, setSearchParams],
   )
+
+  const activeTimePreset = useMemo((): 'today' | 'yesterday' | 'last7' | 'last30' | null => {
+    const cur = { start: startTime, end: endTime }
+    const at = new Date()
+    const today = presetLogListRangeToday(at)
+    if (cur.start === today.start && cur.end === today.end) return 'today'
+    const yesterday = presetLogListRangeYesterday(at)
+    if (cur.start === yesterday.start && cur.end === yesterday.end) return 'yesterday'
+    const last7 = defaultLogListRange(at)
+    if (cur.start === last7.start && cur.end === last7.end) return 'last7'
+    const last30 = rollingLogListRange(30, at)
+    if (cur.start === last30.start && cur.end === last30.end) return 'last30'
+    return null
+  }, [startTime, endTime])
+
+  const logRangeSummaryLine = useMemo(() => {
+    const s = new Date(startTime * 1000)
+    const e = new Date(endTime * 1000)
+    const rawDays = (endTime - startTime) / (24 * 3600)
+    const spanLabel =
+      Math.abs(rawDays - Math.round(rawDays)) < 1e-3
+        ? `${Math.round(rawDays)} 天`
+        : `约 ${rawDays.toFixed(1)} 天`
+    return `${format(s, 'M月d日 HH:mm', { locale: zhCN })} — ${format(e, 'M月d日 HH:mm', { locale: zhCN })} · 跨度 ${spanLabel}（本地时区）`
+  }, [startTime, endTime])
+
+  const logRangeSummaryCompact = useMemo(() => {
+    const s = new Date(startTime * 1000)
+    const e = new Date(endTime * 1000)
+    const rawDays = (endTime - startTime) / (24 * 3600)
+    const spanLabel =
+      Math.abs(rawDays - Math.round(rawDays)) < 1e-3
+        ? `${Math.round(rawDays)} 天`
+        : `约 ${rawDays.toFixed(1)} 天`
+    return `${format(s, 'yyyy/M/d', { locale: zhCN })} — ${format(e, 'yyyy/M/d', { locale: zhCN })} · ${spanLabel}`
+  }, [startTime, endTime])
 
   const removeFilterKey = useCallback(
     (key: AppliedFilterKey) => {
@@ -342,14 +410,12 @@ export function LogListPage() {
   ] as const
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">日志中心</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            请求审计日志 · 开始/结束按本地日历日选择（当日 0:00 至 23:59:59.999，对应
-            OpenAPI 的 Unix 秒参数）；未在地址栏指定时间时，结束时间默认为今日日末（与「结束时间」
-            选择器一致），而非当前时刻。修改关键词后请点击查询。
+          <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
+            审计请求日志 · 默认最近 7×24 小时至今日日末。
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -382,59 +448,108 @@ export function LogListPage() {
         </div>
       </div>
 
-      <Card className="space-y-4 p-4">
+      <TooltipProvider delayDuration={280}>
+      <Card className="overflow-hidden p-0">
         <form
-          className="space-y-4"
+          className="divide-y divide-border"
           onSubmit={(e) => {
             e.preventDefault()
             applyFilters()
           }}
         >
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <LogDateField
-              label="开始时间"
-              mode="start"
-              valueUnix={startTime}
-              onChangeUnix={(unix) => patchTimeAndOffset({ start_time: unix })}
-            />
-            <LogDateField
-              label="结束时间"
-              mode="end"
-              valueUnix={endTime}
-              onChangeUnix={(unix) => patchTimeAndOffset({ end_time: unix })}
-            />
-            <label className="text-sm sm:col-span-2">
-              <span className="text-muted-foreground">关键词</span>
-              <Input
-                className="mt-1"
-                name="log-keyword"
-                value={draftKeyword}
-                onChange={(e) => setDraftKeyword(e.target.value)}
-                placeholder="request_id / 错误信息 / model（应用查询后生效）"
-              />
-            </label>
-            <div className="text-sm sm:col-span-2 lg:col-span-2">
-              <label
-                htmlFor={modelFieldId}
-                className="text-muted-foreground"
-              >
-                模型
+          <div className="space-y-2 p-3 sm:p-4">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:gap-3">
+              <div className="grid min-w-0 flex-1 gap-2 sm:max-w-xl sm:grid-cols-2">
+                <LogDateField
+                  compact
+                  label="开始"
+                  mode="start"
+                  valueUnix={startTime}
+                  onChangeUnix={(unix) => patchTimeAndOffset({ start_time: unix, which: 'start' })}
+                />
+                <LogDateField
+                  compact
+                  label="结束"
+                  mode="end"
+                  valueUnix={endTime}
+                  onChangeUnix={(unix) => patchTimeAndOffset({ end_time: unix, which: 'end' })}
+                />
+              </div>
+              <label className="flex w-full flex-col gap-0.5 lg:w-36 lg:shrink-0">
+                <span className="text-xs text-muted-foreground">快捷范围</span>
+                <select
+                  aria-label="快捷时间范围"
+                  className={cn(
+                    'h-8 w-full rounded-lg border border-input bg-transparent px-2 text-xs outline-none transition-colors',
+                    'focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40',
+                    'dark:bg-input/30',
+                  )}
+                  value={activeTimePreset ?? 'custom'}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v === 'custom') return
+                    applyTimePreset(v as 'today' | 'yesterday' | 'last7' | 'last30')
+                  }}
+                >
+                  <option value="custom">自定义区间</option>
+                  <option value="today">今天</option>
+                  <option value="yesterday">昨天</option>
+                  <option value="last7">最近 7 天</option>
+                  <option value="last30">最近 30 天</option>
+                </select>
               </label>
-              <LogModelPicker
-                id={modelFieldId}
-                value={draftModel}
-                onChange={setDraftModel}
-                storageRevision={recentModelsStorageRev}
-              />
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate tabular-nums" title={logRangeSummaryLine}>
+                {logRangeSummaryCompact}
+              </span>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label="完整时间区间说明"
+                  >
+                    <Info className="size-3.5" aria-hidden />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" align="end" className="max-w-xs text-left">
+                  {logRangeSummaryLine}
+                </TooltipContent>
+              </Tooltip>
+            </div>
+
+            <div className="grid gap-2 border-t border-dashed border-border/80 pt-2 lg:grid-cols-2">
+              <label className="text-xs sm:text-sm">
+                <span className="text-muted-foreground">关键词</span>
+                <Input
+                  className="mt-0.5 h-8 text-sm"
+                  name="log-keyword"
+                  value={draftKeyword}
+                  onChange={(e) => setDraftKeyword(e.target.value)}
+                  placeholder="request_id / 错误 / model"
+                />
+              </label>
+              <div className="text-xs sm:text-sm">
+                <label htmlFor={modelFieldId} className="text-muted-foreground">
+                  模型
+                </label>
+                <LogModelPicker
+                  id={modelFieldId}
+                  value={draftModel}
+                  onChange={setDraftModel}
+                  storageRevision={recentModelsStorageRev}
+                />
+              </div>
             </div>
           </div>
 
-          <div className="border-t border-border pt-3">
+          <div className="p-3 sm:p-4">
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="-ml-2 h-8 gap-1 px-2 text-muted-foreground"
+              className="h-8 gap-1 px-2 text-muted-foreground hover:text-foreground"
               aria-expanded={advancedOpen}
               onClick={() => setAdvancedOpen((o) => !o)}
             >
@@ -446,7 +561,7 @@ export function LogListPage() {
             </Button>
 
             {advancedOpen && (
-              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <label className="text-sm">
                   <span className="text-muted-foreground">应用 (app_id)</span>
                   <Input
@@ -542,7 +657,7 @@ export function LogListPage() {
                     id={tokenFieldId}
                     name="log-token-id"
                     className={cn(
-                      'mt-1 max-w-md w-full font-mono text-sm',
+                      'mt-1 w-full max-w-full font-mono text-sm',
                       'h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 outline-none transition-colors',
                       'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
                       'disabled:cursor-not-allowed disabled:opacity-50',
@@ -577,16 +692,23 @@ export function LogListPage() {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit">查询</Button>
-            <Button type="button" variant="outline" onClick={resetFilters}>
-              重置
-            </Button>
+          <div className="flex flex-col gap-2 bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
+            <p className="hidden text-[11px] leading-snug text-muted-foreground sm:block sm:max-w-[min(100%,20rem)]">
+              改时间即查列表；关键词与更多条件需点查询。
+            </p>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+              <Button type="submit" size="sm" title="将关键词、模型与更多条件写入地址栏并查询">
+                查询
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
+                重置
+              </Button>
+            </div>
           </div>
         </form>
 
         {activeChips.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          <div className="flex flex-wrap items-center gap-2 border-t border-border bg-muted/15 px-3 py-2 sm:px-4">
             <span className="text-xs text-muted-foreground">已应用</span>
             {activeChips.map((c) => (
               <button
@@ -603,6 +725,7 @@ export function LogListPage() {
           </div>
         )}
       </Card>
+      </TooltipProvider>
 
       {isError && (
         <p className="text-sm text-red-600" role="alert">
