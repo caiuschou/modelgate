@@ -18,6 +18,7 @@ pub mod session_auth;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod upstream;
+pub mod version;
 
 use actix_cors::Cors;
 use actix_web::{
@@ -88,6 +89,7 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
     });
     if !test_mode {
         logging::init_tracing(&cfg.logging);
+        info!(version = %crate::version::full_version_line(), "modelgate starting");
     }
     let state = build_state(cfg.clone());
     let (audit_sender, audit_receiver) = tokio::sync::mpsc::channel(4096);
@@ -193,6 +195,22 @@ pub async fn app_main(test_mode: bool) -> std::io::Result<()> {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("{}", crate::version::full_version_line());
+                return Ok(());
+            }
+            "--help" | "-h" => {
+                println!(
+                    "modelgate {}\n\nUsage: modelgate [--version|-V] [--help|-h]\n\nRuns the API server (config.toml in the working directory).\nPublic endpoints: GET /healthz, GET /version",
+                    crate::version::VERSION
+                );
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
     app_main(false).await
 }
 

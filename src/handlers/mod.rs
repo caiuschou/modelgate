@@ -14,6 +14,10 @@ pub async fn health() -> HttpResponse {
     HttpResponse::Ok().body("ok")
 }
 
+pub async fn version() -> HttpResponse {
+    HttpResponse::Ok().json(crate::version::version_json())
+}
+
 pub async fn not_found(req: HttpRequest) -> HttpResponse {
     use serde_json::json;
     HttpResponse::NotFound().json(json!({

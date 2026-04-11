@@ -4,6 +4,7 @@ use crate::handlers::{self, audit, billing, password, proxy, session, team, user
 
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg.route("/healthz", web::get().to(handlers::health))
+        .route("/version", web::get().to(handlers::version))
         .route("/api/v1/auth/register", web::post().to(session::register))
         .route("/api/v1/auth/login", web::post().to(session::login))
         .route(
@@ -146,6 +147,14 @@ mod tests {
     async fn health_route_is_registered() {
         let app = test::init_service(App::new().configure(configure_routes)).await;
         let req = test::TestRequest::get().uri("/healthz").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn version_route_is_registered() {
+        let app = test::init_service(App::new().configure(configure_routes)).await;
+        let req = test::TestRequest::get().uri("/version").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
