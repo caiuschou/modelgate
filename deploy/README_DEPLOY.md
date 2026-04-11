@@ -81,9 +81,9 @@ sudo chmod 600 /etc/modelgate/modelgate.env
 
 部署后确保 **`${DEPLOY_ROOT}/shared/logs`** 存在且 **`modelgate`** 用户可写（CD 工作流会 `mkdir` 并 `chown`）。tracing 日志文件名为 `modelgate.log.YYYY-MM-DD`。
 
-CD 还会在 **`shared/config.toml`** 中写入 **`[sqlite] path = "../shared/modelgate.db"`**（若尚未配置），并把**上一版 release** 里的 `modelgate.db` **复制**到 `shared/`（仅当 `shared/modelgate.db` 尚不存在时），避免每次发版换目录导致**用户/API Key 数据丢失**。
+CD 还会在 **`shared/config.toml`** 中写入 **`[sqlite] path = "../../shared/modelgate.db"`**（若尚未配置；相对路径相对 **systemd `WorkingDirectory`**，即 `releases/<sha>`），并把**上一版 release** 里的 `modelgate.db` **复制**到 `shared/`（仅当 `shared/modelgate.db` 尚不存在时），避免每次发版换目录导致**用户/API Key 数据丢失**。
 
-审计日志：**元数据在库里，请求/响应正文在 `[audit].log_dir` 磁盘目录**。CD 会创建 **`shared/audit_logs`**、**`shared/exports`**，并把示例配置里的 `log_dir = "./audit_logs"` / `export_dir = "./exports"` **改写为** `../shared/audit_logs` 与 `../shared/exports`（与 SQLite 同级持久化）。若 **`shared/audit_logs` 为空** 且上一版 **`current` 指向的 release** 里仍有 `audit_logs/`（或 `exports/`），会**一次性复制**过去，避免首次启用共享路径后历史详情丢失。
+审计日志：**元数据在库里，请求/响应正文在 `[audit].log_dir` 磁盘目录**。CD 会创建 **`shared/audit_logs`**、**`shared/exports`**，并把示例配置里的 `log_dir = "./audit_logs"` / `export_dir = "./exports"` **改写为** `../../shared/audit_logs` 与 `../../shared/exports`（与 SQLite 同级持久化）。若误写过 `../shared/...`（会落到 `releases/shared/`），发版脚本会**合并**到真正的 `shared/` 并修正配置。若 **`shared/audit_logs` 为空** 且上一版 **`current` 指向的 release** 里仍有 `audit_logs/`（或 `exports/`），会**一次性复制**过去，避免首次启用共享路径后历史详情丢失。
 
 ### 已有服务器：手工改为共享审计目录（不依赖发版）
 
