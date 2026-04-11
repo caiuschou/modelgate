@@ -138,14 +138,19 @@ jobs:
               exit 1
             fi
 
-            # Health check port: optional repo secret overrides everything; else MODELGATE_SERVER_PORT from unit;
-            # else [server].port in shared config; default 8000 (must match runtime — see src/config.rs).
+            # Health check port (must match runtime; see src/config.rs). Order: secret → systemd
+            # Environment= → /etc/modelgate/modelgate.env (EnvironmentFile in deploy/modelgate.service) →
+            # [server].port in shared config → 8000. systemd's merged env is not fully exposed via
+            # `systemctl show -p Environment`, so we read the env file explicitly.
             HEALTH_PORT="${{ secrets.HEALTHCHECK_PORT }}"
             if [ -z "${HEALTH_PORT}" ]; then
               ENV_LINE=$(systemctl show "${SERVICE_NAME}" -p Environment --value 2>/dev/null || true)
               if [ -n "${ENV_LINE}" ]; then
                 HEALTH_PORT=$(printf '%s\n' "${ENV_LINE}" | tr ' ' '\n' | sed -n '/^MODELGATE_SERVER_PORT=/s/^MODELGATE_SERVER_PORT=//p' | sed -n '1p' | tr -d '"' || true)
               fi
+            fi
+            if [ -z "${HEALTH_PORT}" ] && [ -f /etc/modelgate/modelgate.env ]; then
+              HEALTH_PORT=$(grep -E '^[[:space:]]*(export[[:space:]]+)?MODELGATE_SERVER_PORT=' /etc/modelgate/modelgate.env 2>/dev/null | sed -n '1s/^[^=]*=//p' | tr -d " \"'" || true)
             fi
             if [ -z "${HEALTH_PORT}" ] && [ -f "${CONFIG}" ]; then
               HEALTH_PORT=$(awk '/^\[server\]/{s=1;next} /^\[/{if(s)exit} s&&/^[[:space:]]*port[[:space:]]*=/{gsub(/^[[:space:]]*port[[:space:]]*=[[:space:]]*/,""); gsub(/[^0-9].*$/,""); print; exit}' "${CONFIG}" || true)
@@ -156,13 +161,14 @@ jobs:
 
             _n=0
             while [ "${_n}" -lt 45 ]; do
-              if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
+              if curl -fsS --connect-timeout 2 "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1 \
+                || curl -fsS --connect-timeout 2 -g "http://[::1]:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
                 exit 0
               fi
               _n=$((_n + 1))
               sleep 1
             done
-            echo "Health check failed: http://127.0.0.1:${HEALTH_PORT}/healthz" >&2
+            echo "Health check failed (tried 127.0.0.1 and ::1): port ${HEALTH_PORT}" >&2
             journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
             systemctl --no-pager --full status "${SERVICE_NAME}" || true
             exit 1
