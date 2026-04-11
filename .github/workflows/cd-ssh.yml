@@ -129,11 +129,39 @@ jobs:
 
             # Restart service
             systemctl daemon-reload || true
-            systemctl restart "${SERVICE_NAME}"
-            sleep 2
-            journalctl -u "${SERVICE_NAME}" -n 20 --no-pager || true
-            systemctl --no-pager --full status "${SERVICE_NAME}" || true
+            if ! systemctl restart "${SERVICE_NAME}"; then
+              echo "systemctl restart failed: ${SERVICE_NAME}" >&2
+              journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
+              systemctl --no-pager --full status "${SERVICE_NAME}" || true
+              exit 1
+            fi
 
-            # Basic health check (adjust port if needed)
-            curl -fsS "http://127.0.0.1:8000/healthz" >/dev/null
+            # Health check port: optional repo secret overrides everything; else MODELGATE_SERVER_PORT from unit;
+            # else [server].port in shared config; default 8000 (must match runtime — see src/config.rs).
+            HEALTH_PORT="${{ secrets.HEALTHCHECK_PORT }}"
+            if [ -z "${HEALTH_PORT}" ]; then
+              ENV_LINE=$(systemctl show "${SERVICE_NAME}" -p Environment --value 2>/dev/null || true)
+              if [ -n "${ENV_LINE}" ]; then
+                HEALTH_PORT=$(printf '%s\n' "${ENV_LINE}" | tr ' ' '\n' | sed -n 's/^MODELGATE_SERVER_PORT=//p' | head -1 | tr -d '"' || true)
+              fi
+            fi
+            if [ -z "${HEALTH_PORT}" ] && [ -f "${CONFIG}" ]; then
+              HEALTH_PORT=$(awk '/^\[server\]/{s=1;next} /^\[/{if(s)exit} s&&/^[[:space:]]*port[[:space:]]*=/{gsub(/^[[:space:]]*port[[:space:]]*=[[:space:]]*/,""); gsub(/[^0-9].*$/,""); print; exit}' "${CONFIG}" || true)
+            fi
+            if [ -z "${HEALTH_PORT}" ]; then
+              HEALTH_PORT=8000
+            fi
+
+            _n=0
+            while [ "${_n}" -lt 45 ]; do
+              if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
+                exit 0
+              fi
+              _n=$((_n + 1))
+              sleep 1
+            done
+            echo "Health check failed: http://127.0.0.1:${HEALTH_PORT}/healthz" >&2
+            journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
+            systemctl --no-pager --full status "${SERVICE_NAME}" || true
+            exit 1
 
