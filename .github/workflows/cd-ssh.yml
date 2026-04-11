@@ -50,6 +50,8 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
           command_timeout: 10m
+          debug: true
+          request_pty: true
           script: |
             # No pipefail: pipelines with `head`/`grep` can SIGPIPE under pipefail and abort `set -e` mid-deploy.
             set -eu
