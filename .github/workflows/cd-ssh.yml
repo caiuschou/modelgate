@@ -87,12 +87,22 @@ jobs:
               cp "${RELEASE_DIR}/config.example.toml" "${DEPLOY_ROOT}/shared/config.toml"
             fi
             CONFIG="${DEPLOY_ROOT}/shared/config.toml"
-            # sed -i / >> need write permission; shared/config.toml is often root-owned from manual edits while chown below only touches logs dirs
+            # sed -i needs write; file may be modelgate-owned while SSH_USER is another account — try chown, then sudo -n
+            deploy_step "config: align ownership to deploy user for sed (${_DEPLOY_USER})"
+            if [ -f "${CONFIG}" ]; then
+              _cfg_u="$(stat -c '%U' "${CONFIG}" 2>/dev/null || echo unknown)"
+              if [ "${_cfg_u}" != "${_DEPLOY_USER}" ]; then
+                if ! chown "${_DEPLOY_USER}:${_DEPLOY_GROUP}" "${CONFIG}" 2>/dev/null; then
+                  sudo -n chown "${_DEPLOY_USER}:${_DEPLOY_GROUP}" "${CONFIG}" 2>/dev/null || true
+                fi
+              fi
+            fi
             deploy_step "config: check shared config.toml writable (user=${_DEPLOY_USER})"
             if [ -f "${CONFIG}" ] && [ ! -w "${CONFIG}" ]; then
-              echo "[deploy] ERROR: config is not writable; first sed -i in [logging] patch fails here. ls -la:" >&2
+              echo "[deploy] ERROR: config not writable by ${_DEPLOY_USER}; sed -i will fail. ls -la:" >&2
               ls -la "${CONFIG}" >&2 || true
-              echo "[deploy] Fix on server: sudo chown ${_DEPLOY_USER}:${_DEPLOY_GROUP} ${CONFIG}" >&2
+              echo "[deploy] On server as root: chown ${_DEPLOY_USER}:${_DEPLOY_GROUP} ${CONFIG}" >&2
+              echo "[deploy] (Repo helper: deploy/fix-shared-config-owner.sh DEPLOY_ROOT ${_DEPLOY_USER})" >&2
               exit 1
             fi
             deploy_step "config: strip CRLF from shared config.toml"
