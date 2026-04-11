@@ -55,6 +55,8 @@ jobs:
             # No pipefail: pipelines with `head`/`grep` can SIGPIPE under pipefail and abort `set -e` mid-deploy.
             set -eu
             deploy_step() { echo "[deploy] $*" >&2; }
+            _DEPLOY_USER="$(id -un)"
+            _DEPLOY_GROUP="$(id -gn)"
             APP_NAME="modelgate"
             SERVICE_NAME="${{ secrets.SERVICE_NAME }}"
             DEPLOY_ROOT="${{ secrets.DEPLOY_ROOT }}"
@@ -85,6 +87,14 @@ jobs:
               cp "${RELEASE_DIR}/config.example.toml" "${DEPLOY_ROOT}/shared/config.toml"
             fi
             CONFIG="${DEPLOY_ROOT}/shared/config.toml"
+            # sed -i / >> need write permission; shared/config.toml is often root-owned from manual edits while chown below only touches logs dirs
+            deploy_step "config: check shared config.toml writable (user=${_DEPLOY_USER})"
+            if [ -f "${CONFIG}" ] && [ ! -w "${CONFIG}" ]; then
+              echo "[deploy] ERROR: config is not writable; first sed -i in [logging] patch fails here. ls -la:" >&2
+              ls -la "${CONFIG}" >&2 || true
+              echo "[deploy] Fix on server: sudo chown ${_DEPLOY_USER}:${_DEPLOY_GROUP} ${CONFIG}" >&2
+              exit 1
+            fi
             deploy_step "config: strip CRLF from shared config.toml"
             if [ -f "${CONFIG}" ]; then
               sed -i 's/\r$//' "${CONFIG}" || true
