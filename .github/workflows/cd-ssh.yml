@@ -137,22 +137,24 @@ jobs:
             fi
             # SQLite: default modelgate.db is per-release cwd; pin DB under shared/ so data survives deploys
             deploy_step "config: patch [sqlite] (path under shared/)"
-            if [ -f "${CONFIG}" ] && ! grep -q '^\[sqlite\]' "${CONFIG}"; then
-              printf '\n[sqlite]\npath = "../../shared/modelgate.db"\n' >> "${CONFIG}"
-            fi
             if [ -f "${CONFIG}" ]; then
-              sed -i 's|^path = "\.\./shared/modelgate\.db"|path = "../../shared/modelgate.db"|' "${CONFIG}"
+              if grep -q '^\[sqlite\]' "${CONFIG}"; then
+                true
+              else
+                printf '\n[sqlite]\npath = "../../shared/modelgate.db"\n' >> "${CONFIG}" || true
+              fi
+              sed -i 's|^path = "\.\./shared/modelgate\.db"|path = "../../shared/modelgate.db"|' "${CONFIG}" || true
             fi
             # Audit: list metadata is in SQLite but bodies live on disk; pin dirs under shared/ like the DB
             deploy_step "config: patch [audit] (log_dir, export_dir)"
             if [ -f "${CONFIG}" ]; then
-              if ! grep -q '^\[audit\]' "${CONFIG}"; then
-                printf '\n[audit]\nlog_dir = "../../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../../shared/exports"\n' >> "${CONFIG}"
+              if grep -q '^\[audit\]' "${CONFIG}"; then
+                sed -i 's|log_dir = "./audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}" || true
+                sed -i 's|export_dir = "./exports"|export_dir = "../../shared/exports"|g' "${CONFIG}" || true
+                sed -i 's|log_dir = "\.\./shared/audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}" || true
+                sed -i 's|export_dir = "\.\./shared/exports"|export_dir = "../../shared/exports"|g' "${CONFIG}" || true
               else
-                sed -i 's|log_dir = "./audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}"
-                sed -i 's|export_dir = "./exports"|export_dir = "../../shared/exports"|g' "${CONFIG}"
-                sed -i 's|log_dir = "\.\./shared/audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}"
-                sed -i 's|export_dir = "\.\./shared/exports"|export_dir = "../../shared/exports"|g' "${CONFIG}"
+                printf '\n[audit]\nlog_dir = "../../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../../shared/exports"\n' >> "${CONFIG}" || true
               fi
             fi
             deploy_step "chown shared logs/audit_logs/exports"
