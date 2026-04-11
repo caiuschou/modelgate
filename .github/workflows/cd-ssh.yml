@@ -49,8 +49,10 @@ jobs:
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
+          command_timeout: 10m
           script: |
-            set -euo pipefail
+            # No pipefail: pipelines with `head`/`grep` can SIGPIPE under pipefail and abort `set -e` mid-deploy.
+            set -eu
             APP_NAME="modelgate"
             SERVICE_NAME="${{ secrets.SERVICE_NAME }}"
             DEPLOY_ROOT="${{ secrets.DEPLOY_ROOT }}"
@@ -142,7 +144,7 @@ jobs:
             if [ -z "${HEALTH_PORT}" ]; then
               ENV_LINE=$(systemctl show "${SERVICE_NAME}" -p Environment --value 2>/dev/null || true)
               if [ -n "${ENV_LINE}" ]; then
-                HEALTH_PORT=$(printf '%s\n' "${ENV_LINE}" | tr ' ' '\n' | sed -n 's/^MODELGATE_SERVER_PORT=//p' | head -1 | tr -d '"' || true)
+                HEALTH_PORT=$(printf '%s\n' "${ENV_LINE}" | tr ' ' '\n' | sed -n '/^MODELGATE_SERVER_PORT=/s/^MODELGATE_SERVER_PORT=//p' | sed -n '1p' | tr -d '"' || true)
               fi
             fi
             if [ -z "${HEALTH_PORT}" ] && [ -f "${CONFIG}" ]; then
