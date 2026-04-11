@@ -345,7 +345,7 @@ export function LogListPage() {
   const page = Math.floor(offset / limit) + 1
   const pageCount = Math.max(1, Math.ceil(total / limit))
 
-  const apiKeyRows = apiKeysRes?.data ?? []
+  const apiKeyRows = useMemo(() => apiKeysRes?.data ?? [], [apiKeysRes?.data])
 
   const tokenIdNumeric = useMemo(() => {
     const t = tokenId.trim()
