@@ -85,12 +85,13 @@ jobs:
               cp "${RELEASE_DIR}/config.example.toml" "${DEPLOY_ROOT}/shared/config.toml"
             fi
             CONFIG="${DEPLOY_ROOT}/shared/config.toml"
+            deploy_step "config: strip CRLF from shared config.toml"
             if [ -f "${CONFIG}" ]; then
               sed -i 's/\r$//' "${CONFIG}" || true
             fi
-            deploy_step "patch config: logging, sqlite, audit paths"
             # Rolling tracing logs + trace-level filter when RUST_LOG unset.
             # systemd WorkingDirectory is $DEPLOY_ROOT/current → releases/<sha>: use ../../shared/... (not ../shared/, which resolves under releases/).
+            deploy_step "config: patch [logging] (tracing_log_dir, default_filter)"
             if [ -f "${CONFIG}" ]; then
               if ! grep -q '^\[logging\]' "${CONFIG}"; then
                 printf '\n[logging]\ntracing_log_dir = "../../shared/logs"\ndefault_filter = "trace"\n' >> "${CONFIG}"
@@ -106,6 +107,7 @@ jobs:
               sed -i 's|tracing_log_dir = "\.\./shared/|tracing_log_dir = "../../shared/|g' "${CONFIG}"
             fi
             # SQLite: default modelgate.db is per-release cwd; pin DB under shared/ so data survives deploys
+            deploy_step "config: patch [sqlite] (path under shared/)"
             if [ -f "${CONFIG}" ] && ! grep -q '^\[sqlite\]' "${CONFIG}"; then
               printf '\n[sqlite]\npath = "../../shared/modelgate.db"\n' >> "${CONFIG}"
             fi
@@ -113,6 +115,7 @@ jobs:
               sed -i 's|^path = "\.\./shared/modelgate\.db"|path = "../../shared/modelgate.db"|' "${CONFIG}"
             fi
             # Audit: list metadata is in SQLite but bodies live on disk; pin dirs under shared/ like the DB
+            deploy_step "config: patch [audit] (log_dir, export_dir)"
             if [ -f "${CONFIG}" ]; then
               if ! grep -q '^\[audit\]' "${CONFIG}"; then
                 printf '\n[audit]\nlog_dir = "../../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../../shared/exports"\n' >> "${CONFIG}"
