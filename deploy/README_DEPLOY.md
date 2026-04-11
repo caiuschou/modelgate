@@ -35,7 +35,24 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now modelgate
 ```
 
-3) 配置敏感环境变量（不要放进仓库）
+3) 部署用户可读 `journalctl`（排障 / 与 CD 探活失败对照）
+
+若 SSH 部署用户（如 `modelgate`）执行 `journalctl -u modelgate` 时出现 **「No journal files were opened due to insufficient permissions」**，需要把该用户加入 **`systemd-journal`** 组（Debian/Ubuntu 常见；无需给 sudo）：
+
+```bash
+# 在服务器上以 root 执行（或 clone 仓库后）：
+sudo bash deploy/grant-deploy-user-journal.sh modelgate
+```
+
+然后 **重新登录 SSH**（或 `newgrp systemd-journal`），再执行：
+
+```bash
+journalctl -u modelgate -b --no-pager -n 50
+```
+
+手工等价命令：`sudo usermod -aG systemd-journal modelgate`。
+
+4) 配置敏感环境变量（不要放进仓库）
 
 创建 `/etc/modelgate/modelgate.env`：
 
