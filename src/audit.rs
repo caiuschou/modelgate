@@ -323,9 +323,20 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
         ));
     }
 
-    let dir_canon = log_root.canonicalize().map_err(|_| {
-        io::Error::new(io::ErrorKind::NotFound, "audit log directory not available")
-    })?;
+    let dir_canon = match log_root.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(
+                log_dir = %log_dir,
+                error = %e,
+                "audit read: cannot canonicalize [audit].log_dir — create the directory or fix the path (WorkingDirectory is releases/<sha>, use ../../shared/audit_logs)"
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "audit log directory not available",
+            ));
+        }
+    };
 
     let candidates: Vec<PathBuf> = if stored.is_absolute() {
         vec![stored.to_path_buf()]
@@ -334,7 +345,7 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
     };
 
     let mut file_canon: Option<PathBuf> = None;
-    for c in candidates {
+    for c in &candidates {
         if let Ok(p) = c.canonicalize() {
             if p.starts_with(&dir_canon) {
                 file_canon = Some(p);
@@ -343,8 +354,27 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
         }
     }
 
-    let file_canon = file_canon
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "audit body file missing"))?;
+    let file_canon = match file_canon {
+        Some(p) => p,
+        None => {
+            let tried: Vec<String> = candidates
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect();
+            warn!(
+                log_dir = %log_dir,
+                stored_raw = %stored_path.trim(),
+                normalized = %normalized.as_str(),
+                dir_canon = %dir_canon.display(),
+                ?tried,
+                "audit read: body file missing or not under log_dir (DB path vs disk; retention; wrong release cwd)"
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "audit body file missing",
+            ));
+        }
+    };
 
     fs::read(file_canon)
 }

@@ -114,6 +114,25 @@ sudo systemctl restart modelgate
 
 第二个参数可省略，默认 **`DEPLOY_ROOT=/opt/modelgate`**；若你的 **`DEPLOY_ROOT`** 不同，传入实际路径。
 
+### 控制台「无法加载正文（文件不存在或已清理）」/ API 404
+
+对应后端 **`GET /api/v1/logs/request/{id}/body?part=...`** 返回 **404**（正文文件读不到）。
+
+**常见原因：**
+
+1. **`[audit].log_dir` 与进程工作目录不匹配** — systemd 的 `WorkingDirectory` 一般是 **`…/releases/<sha>`**，持久化目录应配 **`../../shared/audit_logs`**（不要用少一层的 `../shared/...`，否则会写到 `releases/shared/`）。
+2. **历史数据在 `releases/shared/audit_logs`**，而配置已指向 **`shared/audit_logs`** — 需合并目录或跑一次带合并逻辑的发版（见上文 CD / `migrate-audit-dirs-to-shared.sh`）。
+3. **SQLite 里路径与磁盘不一致** — 升级后应跑迁移 **`0018_audit_normalize_body_paths.sql`**（应用启动会自动执行）；旧行若仍带错误前缀，新版本读正文时会规范化路径。
+4. **文件从未写入或已被删** — 上游失败、仅流式未完成等可能没有落盘文件。
+
+**排障：** 确认 `shared/audit_logs` 下是否存在对应 `YYYYMMDD/<request_id>-{request|response}.json`；**新版本**在读取失败时会在日志中打 **`audit read:`** 的 `warn`（含 `log_dir`、`normalized`、`tried`），执行：
+
+```bash
+journalctl -u modelgate -b --no-pager | rg "audit read"
+```
+
+（无 `rg` 可用 `grep "audit read"`。）
+
 ## GitHub Actions 工作流
 
 - `CI`: `.github/workflows/ci.yml`（fmt/clippy/test/build）
