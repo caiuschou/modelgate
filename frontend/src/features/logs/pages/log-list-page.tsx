@@ -25,6 +25,8 @@ import {
 import { rememberLogModel } from '@/features/logs/log-recent-models'
 import { formatLatencySeconds } from '@/features/logs/format-latency'
 import { defaultLogListRange } from '@/features/logs/log-list-range'
+import { useMyApiKeys } from '@/features/api-keys/hooks/use-api-keys'
+import type { ApiKeySummary } from '@/features/api-keys/types'
 import { formatCostUsd } from '@/lib/format-cost'
 import { cn } from '@/lib/utils'
 
@@ -32,6 +34,12 @@ const PAGE_SIZE = 20
 
 /** Ensures the refresh icon spins long enough to perceive on fast LAN responses. */
 const REFRESH_SPIN_MIN_MS = 280
+
+function formatLogFilterKeyOptionLabel(k: ApiKeySummary): string {
+  const status = k.revoked ? '（已撤销）' : k.disabled ? '（已停用）' : ''
+  const tail = k.preview ? ` · ${k.preview}` : ` (#${k.id})`
+  return `${k.name}${status}${tail}`
+}
 
 type AppliedFilterKey =
   | 'keyword'
@@ -63,7 +71,9 @@ function statusBadgeClass(code: number | null): string {
 
 export function LogListPage() {
   const modelFieldId = useId()
+  const tokenFieldId = useId()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { data: apiKeysRes, isPending: apiKeysLoading } = useMyApiKeys()
   const defaults = useMemo(() => defaultLogListRange(), [])
   const searchParamsKey = searchParams.toString()
 
@@ -267,6 +277,31 @@ export function LogListPage() {
   const page = Math.floor(offset / limit) + 1
   const pageCount = Math.max(1, Math.ceil(total / limit))
 
+  const apiKeyRows = apiKeysRes?.data ?? []
+
+  const tokenIdNumeric = useMemo(() => {
+    const t = tokenId.trim()
+    const n = Number(t)
+    return Number.isFinite(n) ? n : null
+  }, [tokenId])
+
+  const tokenChipLabel = useMemo(() => {
+    if (!tokenId.trim()) return ''
+    if (tokenIdNumeric != null) {
+      const row = apiKeyRows.find((k) => k.id === tokenIdNumeric)
+      if (row) return `密钥：${row.name}`
+    }
+    return `密钥 ID：${tokenId.trim()}`
+  }, [tokenId, tokenIdNumeric, apiKeyRows])
+
+  const showOrphanTokenOption = useMemo(() => {
+    const d = draftTokenId.trim()
+    if (!d) return false
+    const n = Number(d)
+    if (Number.isFinite(n) && apiKeyRows.some((k) => k.id === n)) return false
+    return true
+  }, [draftTokenId, apiKeyRows])
+
   const activeChips = useMemo(() => {
     const chips: { key: AppliedFilterKey; label: string }[] = []
     if (keyword.trim()) {
@@ -286,9 +321,18 @@ export function LogListPage() {
     if (statusCode.trim()) {
       chips.push({ key: 'status_code', label: `HTTP ${statusCode.trim()}` })
     }
-    if (tokenId.trim()) chips.push({ key: 'token_id', label: `密钥 ID：${tokenId.trim()}` })
+    if (tokenId.trim()) chips.push({ key: 'token_id', label: tokenChipLabel })
     return chips
-  }, [keyword, model, appId, threadId, finishReason, statusCode, tokenId])
+  }, [
+    keyword,
+    model,
+    appId,
+    threadId,
+    finishReason,
+    statusCode,
+    tokenId,
+    tokenChipLabel,
+  ])
 
   const statusPresets = [
     { label: '全部', value: '' },
@@ -398,7 +442,7 @@ export function LogListPage() {
                 className={cn('size-4 transition-transform', advancedOpen && 'rotate-180')}
                 aria-hidden
               />
-              更多条件（应用、会话、Finish、状态码、密钥 ID）
+              更多条件（应用、会话、Finish、状态码、密钥）
             </Button>
 
             {advancedOpen && (
@@ -492,14 +536,42 @@ export function LogListPage() {
                     ))}
                   </div>
                 </div>
-                <label className="text-sm sm:col-span-2 lg:col-span-4">
-                  <span className="text-muted-foreground">密钥 ID (token_id)</span>
-                  <Input
-                    className="mt-1 max-w-md font-mono text-sm"
+                <label htmlFor={tokenFieldId} className="text-sm sm:col-span-2 lg:col-span-4">
+                  <span className="text-muted-foreground">密钥</span>
+                  <select
+                    id={tokenFieldId}
+                    name="log-token-id"
+                    className={cn(
+                      'mt-1 max-w-md w-full font-mono text-sm',
+                      'h-8 rounded-lg border border-input bg-transparent px-2.5 py-1 outline-none transition-colors',
+                      'focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50',
+                      'disabled:cursor-not-allowed disabled:opacity-50',
+                      'md:text-sm dark:bg-input/30',
+                    )}
                     value={draftTokenId}
                     onChange={(e) => setDraftTokenId(e.target.value)}
-                    placeholder="与审计日志中的 token_id 一致"
-                  />
+                  >
+                    <option value="">全部</option>
+                    {showOrphanTokenOption ? (
+                      <option value={draftTokenId.trim()}>
+                        {Number.isFinite(Number(draftTokenId.trim()))
+                          ? `ID ${draftTokenId.trim()}（不在当前列表）`
+                          : `「${draftTokenId.trim()}」（不在当前列表）`}
+                      </option>
+                    ) : null}
+                    {apiKeyRows.map((k) => (
+                      <option key={k.id} value={String(k.id)}>
+                        {formatLogFilterKeyOptionLabel(k)}
+                      </option>
+                    ))}
+                  </select>
+                  {apiKeysLoading ? (
+                    <p className="mt-1 text-xs text-muted-foreground">正在加载密钥列表…</p>
+                  ) : apiKeyRows.length === 0 ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      暂无密钥，请先在「API 密钥」中创建。
+                    </p>
+                  ) : null}
                 </label>
               </div>
             )}

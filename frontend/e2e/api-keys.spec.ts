@@ -186,8 +186,6 @@ test.describe('API 密钥页（已登录）', () => {
     await page.getByRole('link', { name: '相关日志' }).click()
     await expect(page).toHaveURL(new RegExp(`token_id=${activeKey!.id}`))
     await expect(page.getByRole('heading', { name: '日志中心' })).toBeVisible()
-    await expect(page.getByPlaceholder('与审计日志中的 token_id 一致')).toHaveValue(
-      String(activeKey!.id),
-    )
+    await expect(page.getByLabel('密钥')).toHaveValue(String(activeKey!.id))
   })
 })
