@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use rand::{distributions::Alphanumeric, Rng};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -35,6 +36,9 @@ pub struct AuditRecord {
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
+    /// Streaming chat: ms from first reasoning delta to first non-empty content delta.
+    #[serde(default)]
+    pub reasoning_phase_ms: Option<i64>,
     pub app_id: Option<String>,
     /// 调用方会话/线程标识（可选；可由请求头 `X-Thread-Id` 传入）
     #[serde(default)]
@@ -59,6 +63,7 @@ pub struct AuditStreamCompletionUpdate {
     pub cost: Option<f64>,
     pub finish_reason: Option<String>,
     pub latency_ms: i64,
+    pub reasoning_phase_ms: Option<i64>,
     pub metadata: serde_json::Value,
     pub error_message: Option<String>,
 }
@@ -112,6 +117,8 @@ pub struct AuditListItem {
     pub total_tokens: Option<i64>,
     pub cost: Option<f64>,
     pub latency_ms: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_phase_ms: Option<i64>,
     pub app_id: Option<String>,
     pub thread_id: Option<String>,
     pub finish_reason: Option<String>,
@@ -220,12 +227,19 @@ pub fn generate_request_id() -> String {
     format!("{ts}_{random}")
 }
 
+/// Subdirectory under `log_dir`: UTC calendar day `YYYYMMDD` (easy to prune old days).
+fn audit_day_dir_name(unix_secs: i64) -> String {
+    DateTime::<Utc>::from_timestamp(unix_secs, 0)
+        .map(|dt| dt.format("%Y%m%d").to_string())
+        .unwrap_or_else(|| "19700101".to_string())
+}
+
 /// Read an audit body file after resolving `stored_path` under `log_dir`. Rejects `..`
 /// segments and paths over `max_bytes`.
 ///
 /// `save_body_to_file` stores paths relative to the process working directory, typically
-/// `<log_dir>/<bucket>/<request_id>-{request|response}.json` (the `log_dir` segment appears in
-/// `stored_path`). Callers may also store paths relative to `log_dir` only (e.g. `685/id.json`).
+/// `<log_dir>/<YYYYMMDD>/<request_id>-{request|response}.json` (the `log_dir` segment may appear in
+/// `stored_path`). Callers may also store paths relative to `log_dir` only (e.g. `20260411/id.json`).
 /// We try `log_dir.join(stored)` first, then `stored` as-is relative to cwd.
 pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec<u8>> {
     let log_root = Path::new(log_dir);
@@ -278,8 +292,8 @@ pub async fn create_stream_response_body_file(
     request_id: &str,
 ) -> io::Result<(String, tokio::fs::File)> {
     let now = now_unix_secs();
-    let month_bucket = now / (30 * 24 * 3600);
-    let dir = Path::new(&cfg.log_dir).join(format!("{month_bucket}"));
+    let day_dir = audit_day_dir_name(now);
+    let dir = Path::new(&cfg.log_dir).join(&day_dir);
     tokio::fs::create_dir_all(&dir).await?;
     let file_path = dir.join(format!("{request_id}-response.json"));
     let file = tokio::fs::File::create(&file_path).await?;
@@ -293,8 +307,8 @@ pub fn save_body_to_file(
     body: &[u8],
 ) -> std::io::Result<String> {
     let now = now_unix_secs();
-    let month_bucket = now / (30 * 24 * 3600);
-    let dir = Path::new(&cfg.log_dir).join(format!("{month_bucket}"));
+    let day_dir = audit_day_dir_name(now);
+    let dir = Path::new(&cfg.log_dir).join(&day_dir);
     fs::create_dir_all(&dir)?;
     let file = dir.join(format!("{request_id}-{body_type}.json"));
     fs::write(&file, body)?;
@@ -409,8 +423,8 @@ mod read_body_tests {
     #[test]
     fn read_relative_file_under_log_dir() {
         let tmp = std::env::temp_dir().join(format!("mg_audit_rel_{}", now_unix_millis()));
-        fs::create_dir_all(tmp.join("0")).unwrap();
-        let rel = "0/xyz-request.json";
+        fs::create_dir_all(tmp.join("20260411")).unwrap();
+        let rel = "20260411/xyz-request.json";
         fs::write(tmp.join(rel), br#"{"ok":true}"#).unwrap();
         let got = read_audit_body_bytes(&tmp.to_string_lossy(), rel).unwrap();
         assert_eq!(got, br#"{"ok":true}"#.as_slice());

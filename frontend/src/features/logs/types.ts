@@ -13,6 +13,8 @@ export interface AuditLogListItem {
   total_tokens: number | null
   cost: number | null
   latency_ms: number | null
+  /** Streaming: ms from first reasoning delta to first non-empty content delta. */
+  reasoning_phase_ms?: number | null
   app_id: string | null
   thread_id: string | null
   finish_reason: string | null

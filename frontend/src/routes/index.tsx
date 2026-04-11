@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Navigate, Outlet, createBrowserRouter } from 'react-router-dom'
 import { EmptyState } from '@/components/shared/empty-state'
 import { AppLayout } from '@/components/layout/app-layout'
+import { DocumentTitleSync } from '@/lib/document-title'
 import { DashboardPage } from '@/features/dashboard/pages/dashboard-page'
 import { LoginPage } from '@/features/auth/pages/login-page'
 import { RegisterPage } from '@/features/auth/pages/register-page'
@@ -99,54 +100,96 @@ function AuthGuardOutlet() {
   )
 }
 
+function RootLayout() {
+  return (
+    <>
+      <DocumentTitleSync />
+      <Outlet />
+    </>
+  )
+}
+
 export const router = createBrowserRouter([
-  { path: '/login', element: <LoginPage /> },
-  { path: '/register', element: <RegisterPage /> },
-  ...(ADMIN_RECHARGE_SEGMENT
-    ? [{ path: `/${ADMIN_RECHARGE_SEGMENT}`, element: <AdminRechargePage /> }]
-    : []),
   {
-    path: '/',
-    element: <AppLayout />,
+    element: <RootLayout />,
     children: [
-      { index: true, element: <FeaturesHomeGate /> },
-      { path: 'models', element: <ModelsCatalogPage /> },
+      { path: '/login', element: <LoginPage />, handle: { pageTitle: '登录' } },
+      { path: '/register', element: <RegisterPage />, handle: { pageTitle: '注册' } },
+      ...(ADMIN_RECHARGE_SEGMENT
+        ? [
+            {
+              path: `/${ADMIN_RECHARGE_SEGMENT}`,
+              element: <AdminRechargePage />,
+              handle: { pageTitle: '管理充值' },
+            },
+          ]
+        : []),
       {
-        element: <AuthGuardOutlet />,
+        path: '/',
+        element: <AppLayout />,
         children: [
-          { path: 'dashboard', element: <DashboardPage /> },
-          { path: 'teams', element: <TeamsPage /> },
-          { path: 'teams/:teamId/members', element: <TeamMembersPage /> },
-          { path: 'invite', element: <AcceptInvitePage /> },
-          { path: 'api-keys', element: <ApiKeysPage /> },
-          { path: 'api-keys/:id', element: <ApiKeyDetailPage /> },
-          { path: 'byok-profiles', element: <ByokProfilesPage /> },
-          { path: 'byok-profiles/:id', element: <ByokProfileDetailPage /> },
+          { index: true, element: <FeaturesHomeGate />, handle: { pageTitle: '首页' } },
+          { path: 'models', element: <ModelsCatalogPage />, handle: { pageTitle: 'Models' } },
           {
-            path: 'users',
-            element: (
-              <AdminGuard>
-                <PlaceholderPage title="用户管理" />
-              </AdminGuard>
-            ),
+            element: <AuthGuardOutlet />,
+            children: [
+              { path: 'dashboard', element: <DashboardPage />, handle: { pageTitle: '控制台' } },
+              { path: 'teams', element: <TeamsPage />, handle: { pageTitle: '团队' } },
+              {
+                path: 'teams/:teamId/members',
+                element: <TeamMembersPage />,
+                handle: { pageTitle: '团队成员' },
+              },
+              { path: 'invite', element: <AcceptInvitePage />, handle: { pageTitle: '邀请' } },
+              { path: 'api-keys', element: <ApiKeysPage />, handle: { pageTitle: 'API 密钥' } },
+              {
+                path: 'api-keys/:id',
+                element: <ApiKeyDetailPage />,
+                handle: { pageTitle: 'API 密钥详情' },
+              },
+              {
+                path: 'byok-profiles',
+                element: <ByokProfilesPage />,
+                handle: { pageTitle: 'BYOK' },
+              },
+              {
+                path: 'byok-profiles/:id',
+                element: <ByokProfileDetailPage />,
+                handle: { pageTitle: 'BYOK 详情' },
+              },
+              {
+                path: 'users',
+                element: (
+                  <AdminGuard>
+                    <PlaceholderPage title="用户管理" />
+                  </AdminGuard>
+                ),
+                handle: { pageTitle: '用户管理' },
+              },
+              { path: 'logs', element: <LogListPage />, handle: { pageTitle: '日志' } },
+              {
+                path: 'logs/:requestId',
+                element: <LogDetailPage />,
+                handle: { pageTitle: '日志详情' },
+              },
+              { path: 'analytics', element: <AnalyticsPage />, handle: { pageTitle: '统计分析' } },
+              { path: 'billing', element: <BillingPage />, handle: { pageTitle: '充值中心' } },
+              { path: 'account/password', element: <Navigate to="/dashboard" replace /> },
+              {
+                path: 'settings',
+                element: (
+                  <AdminGuard>
+                    <PlaceholderPage title="系统设置" />
+                  </AdminGuard>
+                ),
+                handle: { pageTitle: '系统设置' },
+              },
+              { path: '*', element: <NotFoundPage />, handle: { pageTitle: '页面未找到' } },
+            ],
           },
-          { path: 'logs', element: <LogListPage /> },
-          { path: 'logs/:requestId', element: <LogDetailPage /> },
-          { path: 'analytics', element: <AnalyticsPage /> },
-          { path: 'billing', element: <BillingPage /> },
-          { path: 'account/password', element: <Navigate to="/dashboard" replace /> },
-          {
-            path: 'settings',
-            element: (
-              <AdminGuard>
-                <PlaceholderPage title="系统设置" />
-              </AdminGuard>
-            ),
-          },
-          { path: '*', element: <NotFoundPage /> },
         ],
       },
+      { path: '*', element: <NotFoundPage />, handle: { pageTitle: '页面未找到' } },
     ],
   },
-  { path: '*', element: <NotFoundPage /> },
 ])

@@ -5,7 +5,7 @@ use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 16] = [
+const MIGRATIONS: [(&str, &str); 17] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -69,6 +69,10 @@ const MIGRATIONS: [(&str, &str); 16] = [
     (
         "0016_audit_thread_id.sql",
         include_str!("../migrations/0016_audit_thread_id.sql"),
+    ),
+    (
+        "0017_audit_reasoning_phase_ms.sql",
+        include_str!("../migrations/0017_audit_reasoning_phase_ms.sql"),
     ),
 ];
 
@@ -1298,9 +1302,10 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 request_id, user_id, token_id, channel_id, model, request_type,
                 request_body_path, response_body_path, status_code, error_message,
                 prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms,
+                reasoning_phase_ms,
                 app_id, thread_id, finish_reason, metadata, created_at, team_id
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
             )",
         )?;
 
@@ -1323,6 +1328,7 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 record.total_tokens,
                 record.cost,
                 record.latency_ms,
+                record.reasoning_phase_ms,
                 record.app_id,
                 record.thread_id,
                 record.finish_reason,
@@ -1353,9 +1359,10 @@ pub fn update_audit_log_stream_completion(
             cost = ?6,
             finish_reason = ?7,
             latency_ms = ?8,
-            metadata = ?9,
-            error_message = COALESCE(?10, error_message)
-         WHERE request_id = ?11",
+            reasoning_phase_ms = ?9,
+            metadata = ?10,
+            error_message = COALESCE(?11, error_message)
+         WHERE request_id = ?12",
         params![
             update.response_body_path,
             update.prompt_tokens,
@@ -1365,6 +1372,7 @@ pub fn update_audit_log_stream_completion(
             update.cost,
             update.finish_reason,
             update.latency_ms,
+            update.reasoning_phase_ms,
             metadata,
             update.error_message,
             update.request_id,
@@ -1418,7 +1426,7 @@ pub fn query_audit_logs(
         "SELECT
             request_id, user_id, team_id, token_id, channel_id, model, request_type,
             status_code, error_message, prompt_tokens, completion_tokens, cached_prompt_tokens,
-            total_tokens, cost, latency_ms, app_id, thread_id, finish_reason, created_at
+            total_tokens, cost, latency_ms, reasoning_phase_ms, app_id, thread_id, finish_reason, created_at
          FROM audit_logs
          {where_sql}
          ORDER BY created_at DESC
@@ -1446,10 +1454,11 @@ pub fn query_audit_logs(
             total_tokens: row.get(12)?,
             cost: row.get(13)?,
             latency_ms: row.get(14)?,
-            app_id: row.get(15)?,
-            thread_id: row.get(16)?,
-            finish_reason: row.get(17)?,
-            created_at: row.get(18)?,
+            reasoning_phase_ms: row.get(15)?,
+            app_id: row.get(16)?,
+            thread_id: row.get(17)?,
+            finish_reason: row.get(18)?,
+            created_at: row.get(19)?,
         })
     })?;
 
@@ -1485,12 +1494,13 @@ pub fn get_audit_log_by_request_id(
             request_id, user_id, token_id, channel_id, model, request_type,
             request_body_path, response_body_path, status_code, error_message,
             prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms,
+            reasoning_phase_ms,
             app_id, thread_id, finish_reason, metadata, created_at, team_id
          FROM audit_logs
          WHERE request_id = ?1";
 
     let record = conn.query_row(sql, params![request_id], |row| {
-        let metadata_str: Option<String> = row.get(19)?;
+        let metadata_str: Option<String> = row.get(20)?;
         let metadata = metadata_str.and_then(|raw| serde_json::from_str(&raw).ok());
         Ok(AuditRecord {
             request_id: row.get(0)?,
@@ -1509,12 +1519,13 @@ pub fn get_audit_log_by_request_id(
             total_tokens: row.get(13)?,
             cost: row.get(14)?,
             latency_ms: row.get(15)?,
-            app_id: row.get(16)?,
-            thread_id: row.get(17)?,
-            finish_reason: row.get(18)?,
+            reasoning_phase_ms: row.get(16)?,
+            app_id: row.get(17)?,
+            thread_id: row.get(18)?,
+            finish_reason: row.get(19)?,
             metadata,
-            created_at: row.get(20)?,
-            team_id: row.get(21)?,
+            created_at: row.get(21)?,
+            team_id: row.get(22)?,
         })
     })?;
 
@@ -2393,6 +2404,7 @@ mod tests {
                     total_tokens: Some(5),
                     cost: Some(0.02),
                     latency_ms: Some(50),
+                    reasoning_phase_ms: None,
                     app_id: None,
                     thread_id: None,
                     finish_reason: None,
@@ -2417,6 +2429,7 @@ mod tests {
                     total_tokens: Some(10),
                     cost: None,
                     latency_ms: Some(200),
+                    reasoning_phase_ms: None,
                     app_id: None,
                     thread_id: None,
                     finish_reason: None,
@@ -2485,6 +2498,7 @@ mod tests {
                 total_tokens: Some(150),
                 cost: Some(0.001),
                 latency_ms: Some(10),
+                reasoning_phase_ms: None,
                 app_id: None,
                 thread_id: None,
                 finish_reason: None,
@@ -2556,6 +2570,7 @@ mod tests {
                 total_tokens: Some(4),
                 cost: Some(0.07),
                 latency_ms: Some(12),
+                reasoning_phase_ms: None,
                 app_id: None,
                 thread_id: None,
                 finish_reason: None,

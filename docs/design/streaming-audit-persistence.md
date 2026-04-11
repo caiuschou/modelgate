@@ -33,7 +33,7 @@
 **默认：原始 SSE 文本**
 
 - 与客户端收到的字节序列一致（含 `data:` 行、空行、`[DONE]` 等，以实际供应商为准）。
-- 文件命名与目录规则与现有一致：`audit_config.log_dir` 下按月桶目录 + `{request_id}-response.json` **或** 为区分语义使用 `{request_id}-response.sse`（需与现有 `save_body_to_file` 的 `body_type` 参数扩展约定二选一，避免破坏已有工具链）。
+- 文件命名与目录规则与现有一致：`audit_config.log_dir` 下按 **UTC 自然日** 目录 `YYYYMMDD` + `{request_id}-response.json` **或** 为区分语义使用 `{request_id}-response.sse`（需与现有 `save_body_to_file` 的 `body_type` 参数扩展约定二选一，避免破坏已有工具链）。
 - `metadata` 中增加或保留明确标记，例如：`"stream": true`、`"response_body_format": "text/event-stream"`，供详情 UI 选择展示模式（纯文本 / 可选将来 SSE 分行视图）。
 
 **不在首版范围**

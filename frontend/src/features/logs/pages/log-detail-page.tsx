@@ -34,6 +34,7 @@ import {
   parseUsageFromBody,
   type UsageData,
 } from '@/features/logs/parse-log-usage'
+import { formatLatencySeconds } from '@/features/logs/format-latency'
 import type { AuditLogRecord } from '@/features/logs/types'
 import { formatCostUsd } from '@/lib/format-cost'
 
@@ -610,9 +611,22 @@ export function LogDetailPage() {
                 <dd className="mt-0.5 font-mono text-sm">{data.finish_reason ?? '—'}</dd>
               </div>
               <div>
-                <dt className="text-xs text-muted-foreground">耗时 (ms)</dt>
-                <dd className="mt-0.5 font-mono text-sm">{data.latency_ms ?? '—'}</dd>
+                <dt className="text-xs text-muted-foreground">耗时 (s)</dt>
+                <dd className="mt-0.5 font-mono text-sm">
+                  {formatLatencySeconds(data.latency_ms)}
+                </dd>
               </div>
+              {data.reasoning_phase_ms != null &&
+              Number.isFinite(data.reasoning_phase_ms) ? (
+                <div>
+                  <dt className="text-xs text-muted-foreground">
+                    推理→首条正文 (s)
+                  </dt>
+                  <dd className="mt-0.5 font-mono text-sm">
+                    {formatLatencySeconds(data.reasoning_phase_ms)}
+                  </dd>
+                </div>
+              ) : null}
               <div>
                 <dt className="text-xs text-muted-foreground">成本</dt>
                 <dd className="mt-0.5 font-mono text-sm">

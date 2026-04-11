@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { AuditLogTimestamp } from '@/features/logs/components/audit-log-timestamp'
 import { LogDateField } from '@/features/logs/components/log-date-field'
+import { LogListLatencyTooltipCell } from '@/features/logs/components/log-list-latency-tooltip-cell'
 import { LogListUsageTooltipCell } from '@/features/logs/components/log-list-usage-tooltip-cell'
 import { LogModelPicker } from '@/features/logs/components/log-model-picker'
 import {
@@ -22,6 +23,7 @@ import {
   urlHasAdvancedFilters,
 } from '@/features/logs/log-list-filters'
 import { rememberLogModel } from '@/features/logs/log-recent-models'
+import { formatLatencySeconds } from '@/features/logs/format-latency'
 import { defaultLogListRange } from '@/features/logs/log-list-range'
 import { formatCostUsd } from '@/lib/format-cost'
 import { cn } from '@/lib/utils'
@@ -585,7 +587,7 @@ export function LogListPage() {
                   finish
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium text-right">
-                  耗时 ms
+                  耗时 (s)
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium">
                   操作
@@ -642,7 +644,9 @@ export function LogListPage() {
                     {row.finish_reason ?? '—'}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
-                    {row.latency_ms ?? '—'}
+                    <LogListLatencyTooltipCell row={row}>
+                      {formatLatencySeconds(row.latency_ms)}
+                    </LogListLatencyTooltipCell>
                   </td>
                   <td className="px-3 py-2">
                     <Link

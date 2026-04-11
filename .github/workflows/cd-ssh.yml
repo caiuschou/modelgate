@@ -59,6 +59,7 @@ jobs:
 
             mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared"
             mkdir -p "${DEPLOY_ROOT}/shared/logs"
+            mkdir -p "${DEPLOY_ROOT}/shared/audit_logs" "${DEPLOY_ROOT}/shared/exports"
             mkdir -p "${RELEASE_DIR}"
             tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
             # Free /tmp (often a small tmpfs); leftover tarballs caused "No space left on device" on extract
@@ -87,16 +88,40 @@ jobs:
             if [ -f "${CONFIG}" ] && ! grep -q '^\[sqlite\]' "${CONFIG}"; then
               printf '\n[sqlite]\npath = "../shared/modelgate.db"\n' >> "${CONFIG}"
             fi
-            chown -R modelgate:modelgate "${DEPLOY_ROOT}/shared/logs" 2>/dev/null || true
+            # Audit: list metadata is in SQLite but bodies live on disk; pin dirs under shared/ like the DB
+            if [ -f "${CONFIG}" ]; then
+              if ! grep -q '^\[audit\]' "${CONFIG}"; then
+                printf '\n[audit]\nlog_dir = "../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../shared/exports"\n' >> "${CONFIG}"
+              else
+                sed -i 's|log_dir = "./audit_logs"|log_dir = "../shared/audit_logs"|g' "${CONFIG}"
+                sed -i 's|export_dir = "./exports"|export_dir = "../shared/exports"|g' "${CONFIG}"
+              fi
+            fi
+            chown -R modelgate:modelgate "${DEPLOY_ROOT}/shared/logs" "${DEPLOY_ROOT}/shared/audit_logs" "${DEPLOY_ROOT}/shared/exports" 2>/dev/null || true
 
             ln -sfn "${DEPLOY_ROOT}/shared/config.toml" "${RELEASE_DIR}/config.toml"
 
             # Migrate DB from previous current release before switching symlink (first time shared DB is empty)
             SHARED_DB="${DEPLOY_ROOT}/shared/modelgate.db"
+            SHARED_AUDIT="${DEPLOY_ROOT}/shared/audit_logs"
+            SHARED_EXPORT="${DEPLOY_ROOT}/shared/exports"
             PREV_CURRENT=$(readlink -f "${DEPLOY_ROOT}/current" 2>/dev/null || true)
             if [ ! -f "${SHARED_DB}" ] && [ -n "${PREV_CURRENT}" ] && [ -f "${PREV_CURRENT}/modelgate.db" ]; then
               cp -a "${PREV_CURRENT}/modelgate.db" "${SHARED_DB}"
               chown modelgate:modelgate "${SHARED_DB}" 2>/dev/null || true
+            fi
+            # One-time copy of per-release audit body files / exports when moving to shared paths
+            if [ -n "${PREV_CURRENT}" ] && [ -d "${PREV_CURRENT}/audit_logs" ]; then
+              if [ -z "$(ls -A "${SHARED_AUDIT}" 2>/dev/null)" ]; then
+                cp -a "${PREV_CURRENT}/audit_logs/." "${SHARED_AUDIT}/"
+                chown -R modelgate:modelgate "${SHARED_AUDIT}" 2>/dev/null || true
+              fi
+            fi
+            if [ -n "${PREV_CURRENT}" ] && [ -d "${PREV_CURRENT}/exports" ]; then
+              if [ -z "$(ls -A "${SHARED_EXPORT}" 2>/dev/null)" ]; then
+                cp -a "${PREV_CURRENT}/exports/." "${SHARED_EXPORT}/"
+                chown -R modelgate:modelgate "${SHARED_EXPORT}" 2>/dev/null || true
+              fi
             fi
 
             # Point "current" to this release

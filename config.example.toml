@@ -40,6 +40,10 @@ tracing_log_dir = ""
 path = "modelgate.db"
 
 # 审计日志与导出目录；详见 docs/product/audit-log.md
+# 列表元数据在 SQLite，请求/响应体在 log_dir 下文件；SSH 发版请与库文件一并放到持久目录，例如：
+#   log_dir = "../shared/audit_logs"
+#   export_dir = "../shared/exports"
+# （与 [sqlite].path 同级 ../shared/），避免换 release 工作目录后「日志详情」正文丢失。
 [audit]
 log_dir = "./audit_logs"
 retention_days = 90

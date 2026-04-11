@@ -222,7 +222,7 @@ async fn audit_middleware(
 
 ### 6.3 请求/响应体写文件
 
-- 存储目录：`{log_dir}/{YYYY}/{MM}/{request_id}-{type}.json`
+- 存储目录：`{log_dir}/{YYYYMMDD}/{request_id}-{type}.json`（`YYYYMMDD` 为 UTC 自然日，便于按日清理）
 - 只保存路径到数据库
 - 对于大请求体，建议限制单条最大大小并按需截断
 

@@ -295,6 +295,7 @@ pub async fn chat_completions(
                     total_tokens: None,
                     cost: None,
                     latency_ms: Some(start.elapsed().as_millis() as i64),
+                    reasoning_phase_ms: None,
                     app_id: app_id.clone(),
                     thread_id: thread_id.clone(),
                     finish_reason: None,
@@ -357,6 +358,7 @@ pub async fn chat_completions(
                 total_tokens: None,
                 cost: None,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
+                reasoning_phase_ms: None,
                 app_id: app_id.clone(),
                 thread_id: thread_id.clone(),
                 finish_reason: None,
@@ -411,12 +413,18 @@ pub async fn chat_completions(
             };
             let mut usage_state: UsageTokensCostFinish =
                 (None, None, None, None, None, None, None);
+            let mut phase_timings = SseReasoningPhaseTimings::default();
             let mut upstream_stream = upstream_resp.bytes_stream();
             let mut buf: Vec<u8> = Vec::new();
             while let Some(item) = upstream_stream.next().await {
                 match item {
                     Ok(chunk) => {
-                        feed_sse_usage_lines(&mut buf, chunk.as_ref(), &mut usage_state);
+                        feed_sse_lines(
+                            &mut buf,
+                            chunk.as_ref(),
+                            &mut usage_state,
+                            &mut phase_timings,
+                        );
                         if let Some((_path, ref mut f)) = file_pair.as_mut() {
                             if let Err(e) = f.write_all(chunk.as_ref()).await {
                                 error!(
@@ -434,9 +442,15 @@ pub async fn chat_completions(
                             error = %e,
                             "upstream stream read failed"
                         );
+                        flush_sse_lines(
+                            &mut buf,
+                            &mut usage_state,
+                            &mut phase_timings,
+                        );
                         if let Some((path, mut f)) = file_pair.take() {
                             let _ = f.flush().await;
                             let _ = f.shutdown().await;
+                            let reasoning_phase_ms = phase_timings.finish_ms();
                             enqueue_stream_audit_completion(
                                 &st,
                                 StreamAuditCompletionJob {
@@ -444,6 +458,7 @@ pub async fn chat_completions(
                                     response_body_path: path,
                                     usage: usage_state.clone(),
                                     latency_ms: start.elapsed().as_millis() as i64,
+                                    reasoning_phase_ms,
                                     stream_completed: false,
                                     stream_aborted: true,
                                     error_message: Some("Upstream stream read failed".into()),
@@ -462,7 +477,12 @@ pub async fn chat_completions(
                     }
                 }
             }
-            flush_sse_usage_tail(&mut buf, &mut usage_state);
+            flush_sse_lines(
+                &mut buf,
+                &mut usage_state,
+                &mut phase_timings,
+            );
+            let reasoning_phase_ms = phase_timings.finish_ms();
             if let Some((path, mut f)) = file_pair.take() {
                 let _ = f.flush().await;
                 let _ = f.shutdown().await;
@@ -473,6 +493,7 @@ pub async fn chat_completions(
                         response_body_path: path,
                         usage: usage_state.clone(),
                         latency_ms: start.elapsed().as_millis() as i64,
+                        reasoning_phase_ms,
                         stream_completed: true,
                         stream_aborted: false,
                         error_message: None,
@@ -549,6 +570,7 @@ pub async fn chat_completions(
                 total_tokens: usage.2,
                 cost: usage.3,
                 latency_ms: Some(start.elapsed().as_millis() as i64),
+                reasoning_phase_ms: None,
                 app_id: app_id.clone(),
                 thread_id: thread_id.clone(),
                 finish_reason: usage.4,
@@ -604,22 +626,6 @@ pub async fn chat_completions(
     }
 }
 
-fn feed_sse_usage_lines(buf: &mut Vec<u8>, chunk: &[u8], usage: &mut UsageTokensCostFinish) {
-    buf.extend_from_slice(chunk);
-    while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
-        let line: Vec<u8> = buf.drain(..=pos).collect();
-        parse_sse_data_line_merge_usage(&line, usage);
-    }
-}
-
-fn flush_sse_usage_tail(buf: &mut Vec<u8>, usage: &mut UsageTokensCostFinish) {
-    if buf.is_empty() {
-        return;
-    }
-    let line = std::mem::take(buf);
-    parse_sse_data_line_merge_usage(&line, usage);
-}
-
 fn parse_sse_data_line_merge_usage(line: &[u8], usage: &mut UsageTokensCostFinish) {
     let s = String::from_utf8_lossy(line);
     let t = s.trim_end();
@@ -656,6 +662,95 @@ fn merge_usage_tokens(usage: &mut UsageTokensCostFinish, chunk: &[u8]) {
     if cp.is_some() {
         usage.6 = cp;
     }
+}
+
+#[derive(Default)]
+struct SseReasoningPhaseTimings {
+    first_reasoning: Option<std::time::Instant>,
+    first_content: Option<std::time::Instant>,
+}
+
+impl SseReasoningPhaseTimings {
+    fn finish_ms(&self) -> Option<i64> {
+        match (self.first_reasoning, self.first_content) {
+            (Some(a), Some(b)) if b >= a => Some(b.duration_since(a).as_millis() as i64),
+            _ => None,
+        }
+    }
+}
+
+fn parse_sse_data_line_reasoning_phase(line: &[u8], timings: &mut SseReasoningPhaseTimings) {
+    let s = String::from_utf8_lossy(line);
+    let t = s.trim_end();
+    let Some(rest) = t.strip_prefix("data: ") else {
+        return;
+    };
+    let rest = rest.trim();
+    if rest.is_empty() || rest == "[DONE]" {
+        return;
+    }
+    let Ok(v) = serde_json::from_str::<Value>(rest) else {
+        return;
+    };
+    let Some(choices) = v.get("choices").and_then(|c| c.as_array()) else {
+        return;
+    };
+    let Some(ch0) = choices.first() else {
+        return;
+    };
+    let Some(delta) = ch0.get("delta") else {
+        return;
+    };
+    let now = std::time::Instant::now();
+    if timings.first_reasoning.is_none() {
+        let r = delta
+            .get("reasoning_content")
+            .and_then(|v| v.as_str())
+            .or_else(|| delta.get("reasoning").and_then(|v| v.as_str()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if r.is_some() {
+            timings.first_reasoning = Some(now);
+        }
+    }
+    if timings.first_content.is_none() {
+        let has_content = match delta.get("content") {
+            Some(Value::String(s)) => !s.trim().is_empty(),
+            Some(Value::Array(arr)) => !arr.is_empty(),
+            Some(Value::Null) | None => false,
+            Some(_) => true,
+        };
+        if has_content {
+            timings.first_content = Some(now);
+        }
+    }
+}
+
+fn feed_sse_lines(
+    buf: &mut Vec<u8>,
+    chunk: &[u8],
+    usage: &mut UsageTokensCostFinish,
+    phase: &mut SseReasoningPhaseTimings,
+) {
+    buf.extend_from_slice(chunk);
+    while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+        let line: Vec<u8> = buf.drain(..=pos).collect();
+        parse_sse_data_line_merge_usage(&line, usage);
+        parse_sse_data_line_reasoning_phase(&line, phase);
+    }
+}
+
+fn flush_sse_lines(
+    buf: &mut Vec<u8>,
+    usage: &mut UsageTokensCostFinish,
+    phase: &mut SseReasoningPhaseTimings,
+) {
+    if buf.is_empty() {
+        return;
+    }
+    let line = std::mem::take(buf);
+    parse_sse_data_line_merge_usage(&line, usage);
+    parse_sse_data_line_reasoning_phase(&line, phase);
 }
 
 fn parse_model_from_request(body: &[u8]) -> Option<String> {
@@ -702,6 +797,7 @@ struct StreamAuditCompletionJob {
     response_body_path: String,
     usage: UsageTokensCostFinish,
     latency_ms: i64,
+    reasoning_phase_ms: Option<i64>,
     stream_completed: bool,
     stream_aborted: bool,
     error_message: Option<String>,
@@ -776,6 +872,7 @@ async fn enqueue_stream_audit_completion(
         response_body_path,
         usage,
         latency_ms,
+        reasoning_phase_ms,
         stream_completed,
         stream_aborted,
         error_message,
@@ -806,6 +903,7 @@ async fn enqueue_stream_audit_completion(
         cost: usage.3,
         finish_reason: usage.4,
         latency_ms,
+        reasoning_phase_ms,
         metadata,
         error_message,
     };
@@ -1104,5 +1202,28 @@ mod parse_usage_cost_tests {
         let t = parse_usage_cost_and_finish(b"not json {{{");
         assert!(t.0.is_none() && t.1.is_none() && t.2.is_none() && t.3.is_none());
         assert!(t.4.is_none() && t.5.is_none() && t.6.is_none());
+    }
+}
+
+#[cfg(test)]
+mod sse_reasoning_phase_tests {
+    use super::{parse_sse_data_line_reasoning_phase, SseReasoningPhaseTimings};
+
+    #[test]
+    fn records_duration_between_reasoning_and_content_deltas() {
+        let mut t = SseReasoningPhaseTimings::default();
+        parse_sse_data_line_reasoning_phase(
+            br#"data: {"choices":[{"delta":{"reasoning_content":"x"}}]}"#,
+            &mut t,
+        );
+        assert!(t.first_reasoning.is_some());
+        assert!(t.first_content.is_none());
+        parse_sse_data_line_reasoning_phase(
+            br#"data: {"choices":[{"delta":{"content":"hi"}}]}"#,
+            &mut t,
+        );
+        assert!(t.first_content.is_some());
+        let ms = t.finish_ms().expect("reasoning span");
+        assert!(ms >= 0);
     }
 }

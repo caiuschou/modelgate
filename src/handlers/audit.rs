@@ -275,6 +275,7 @@ mod tests {
                     total_tokens: Some(30),
                     cost: Some(0.01),
                     latency_ms: Some(100),
+                    reasoning_phase_ms: None,
                     app_id: Some("demo-app".into()),
                     thread_id: None,
                     finish_reason: Some("stop".into()),
@@ -296,8 +297,8 @@ mod tests {
                 channel_id: None,
                 model: Some("gpt-test".into()),
                 request_type: Some("chat".into()),
-                request_body_path: Some(format!("0/{request_id}-request.json")),
-                response_body_path: Some(format!("0/{request_id}-response.json")),
+                request_body_path: Some(format!("20200101/{request_id}-request.json")),
+                response_body_path: Some(format!("20200101/{request_id}-response.json")),
                 status_code: Some(200),
                 error_message: None,
                 prompt_tokens: Some(10),
@@ -306,6 +307,7 @@ mod tests {
                 total_tokens: Some(30),
                 cost: Some(0.01),
                 latency_ms: Some(100),
+                reasoning_phase_ms: None,
                 app_id: Some("demo-app".into()),
                 thread_id: None,
                 finish_reason: Some("stop".into()),
@@ -506,14 +508,14 @@ mod tests {
             std::process::id(),
             crate::audit::now_unix_millis()
         ));
-        std::fs::create_dir_all(audit_root.join("0")).expect("audit test subdir");
+        std::fs::create_dir_all(audit_root.join("20200101")).expect("audit test subdir");
         std::fs::write(
-            audit_root.join("0").join("req_1-request.json"),
+            audit_root.join("20200101").join("req_1-request.json"),
             br#"{"model":"gpt-test"}"#,
         )
         .expect("write req body fixture");
         std::fs::write(
-            audit_root.join("0").join("req_1-response.json"),
+            audit_root.join("20200101").join("req_1-response.json"),
             br#"{"id":"chat"}"#,
         )
         .expect("write resp body fixture");
