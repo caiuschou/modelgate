@@ -79,33 +79,68 @@ jobs:
             if [ -f "${CONFIG}" ]; then
               sed -i 's/\r$//' "${CONFIG}" || true
             fi
-            # Rolling tracing logs + trace-level filter when RUST_LOG unset (WorkingDirectory = release → ../shared/logs)
+            # Rolling tracing logs + trace-level filter when RUST_LOG unset.
+            # systemd WorkingDirectory is $DEPLOY_ROOT/current → releases/<sha>: use ../../shared/... (not ../shared/, which resolves under releases/).
             if [ -f "${CONFIG}" ]; then
               if ! grep -q '^\[logging\]' "${CONFIG}"; then
-                printf '\n[logging]\ntracing_log_dir = "../shared/logs"\ndefault_filter = "trace"\n' >> "${CONFIG}"
+                printf '\n[logging]\ntracing_log_dir = "../../shared/logs"\ndefault_filter = "trace"\n' >> "${CONFIG}"
               else
                 if grep -q 'tracing_log_dir = ""' "${CONFIG}"; then
-                  sed -i 's|tracing_log_dir = ""|tracing_log_dir = "../shared/logs"|' "${CONFIG}"
+                  sed -i 's|tracing_log_dir = ""|tracing_log_dir = "../../shared/logs"|' "${CONFIG}"
                 fi
                 if ! grep -qE '^default_filter[[:space:]]*=' "${CONFIG}"; then
                   sed -i '/^\[logging\]/a default_filter = "trace"' "${CONFIG}"
                 fi
               fi
+              # Fix older CD that wrote ../shared/ (wrong when cwd is releases/<sha>)
+              sed -i 's|tracing_log_dir = "\.\./shared/|tracing_log_dir = "../../shared/|g' "${CONFIG}"
             fi
             # SQLite: default modelgate.db is per-release cwd; pin DB under shared/ so data survives deploys
             if [ -f "${CONFIG}" ] && ! grep -q '^\[sqlite\]' "${CONFIG}"; then
-              printf '\n[sqlite]\npath = "../shared/modelgate.db"\n' >> "${CONFIG}"
+              printf '\n[sqlite]\npath = "../../shared/modelgate.db"\n' >> "${CONFIG}"
+            fi
+            if [ -f "${CONFIG}" ]; then
+              sed -i 's|^path = "\.\./shared/modelgate\.db"|path = "../../shared/modelgate.db"|' "${CONFIG}"
             fi
             # Audit: list metadata is in SQLite but bodies live on disk; pin dirs under shared/ like the DB
             if [ -f "${CONFIG}" ]; then
               if ! grep -q '^\[audit\]' "${CONFIG}"; then
-                printf '\n[audit]\nlog_dir = "../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../shared/exports"\n' >> "${CONFIG}"
+                printf '\n[audit]\nlog_dir = "../../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../../shared/exports"\n' >> "${CONFIG}"
               else
-                sed -i 's|log_dir = "./audit_logs"|log_dir = "../shared/audit_logs"|g' "${CONFIG}"
-                sed -i 's|export_dir = "./exports"|export_dir = "../shared/exports"|g' "${CONFIG}"
+                sed -i 's|log_dir = "./audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}"
+                sed -i 's|export_dir = "./exports"|export_dir = "../../shared/exports"|g' "${CONFIG}"
+                sed -i 's|log_dir = "\.\./shared/audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}"
+                sed -i 's|export_dir = "\.\./shared/exports"|export_dir = "../../shared/exports"|g' "${CONFIG}"
               fi
             fi
             chown -R modelgate:modelgate "${DEPLOY_ROOT}/shared/logs" "${DEPLOY_ROOT}/shared/audit_logs" "${DEPLOY_ROOT}/shared/exports" 2>/dev/null || true
+
+            # Data was mistakenly written to $DEPLOY_ROOT/releases/shared/ when paths used ../shared/ — merge into real shared/
+            RS_BUG="${DEPLOY_ROOT}/releases/shared"
+            SH_OK="${DEPLOY_ROOT}/shared"
+            if [ -d "${RS_BUG}" ]; then
+              if [ -f "${RS_BUG}/modelgate.db" ]; then
+                if [ ! -f "${SH_OK}/modelgate.db" ] || [ "${RS_BUG}/modelgate.db" -nt "${SH_OK}/modelgate.db" ]; then
+                  cp -a "${RS_BUG}/modelgate.db" "${SH_OK}/modelgate.db"
+                  chown modelgate:modelgate "${SH_OK}/modelgate.db" 2>/dev/null || true
+                fi
+              fi
+              if [ -d "${RS_BUG}/audit_logs" ] && [ -n "$(ls -A "${RS_BUG}/audit_logs" 2>/dev/null)" ]; then
+                mkdir -p "${SH_OK}/audit_logs"
+                cp -a "${RS_BUG}/audit_logs/." "${SH_OK}/audit_logs/"
+                chown -R modelgate:modelgate "${SH_OK}/audit_logs" 2>/dev/null || true
+              fi
+              if [ -d "${RS_BUG}/exports" ] && [ -n "$(ls -A "${RS_BUG}/exports" 2>/dev/null)" ]; then
+                mkdir -p "${SH_OK}/exports"
+                cp -a "${RS_BUG}/exports/." "${SH_OK}/exports/"
+                chown -R modelgate:modelgate "${SH_OK}/exports" 2>/dev/null || true
+              fi
+              if [ -d "${RS_BUG}/logs" ] && [ -n "$(ls -A "${RS_BUG}/logs" 2>/dev/null)" ]; then
+                mkdir -p "${SH_OK}/logs"
+                cp -a "${RS_BUG}/logs/." "${SH_OK}/logs/"
+                chown -R modelgate:modelgate "${SH_OK}/logs" 2>/dev/null || true
+              fi
+            fi
 
             ln -sfn "${DEPLOY_ROOT}/shared/config.toml" "${RELEASE_DIR}/config.toml"
 

@@ -29,7 +29,7 @@ api_key = "sk-your-openai-key-here"
 # master_key_hex = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 # 可选：按日滚动的 tracing 日志目录（如 modelgate.log.YYYY-MM-DD）；留空则只输出到 stderr（如 systemd journal）
-# SSH 部署时常设为 `../shared/logs`（相对 release 目录，便于持久化）
+# SSH 部署（systemd WorkingDirectory = …/current → releases/<sha>）时常设为 `../../shared/logs`（便于持久化到发版根 shared/）
 # 环境变量覆盖：TRACING_LOG_DIR
 #
 # default_filter：tracing 级别（仅当未设置环境变量 RUST_LOG 时生效）。服务器落盘排障可设为 trace（日志量大）。
@@ -39,15 +39,15 @@ tracing_log_dir = ""
 default_filter = "info"
 
 # SQLite 数据库文件路径；默认进程当前工作目录下的 modelgate.db（本地开发足够）
-# SSH 部署建议：`path = "../shared/modelgate.db"`，避免随发版目录切换丢失数据
+# SSH 部署建议：`path = "../../shared/modelgate.db"`，避免随发版目录切换丢失数据
 [sqlite]
 path = "modelgate.db"
 
 # 审计日志与导出目录；详见 docs/product/audit-log.md
 # 列表元数据在 SQLite，请求/响应体在 log_dir 下文件；SSH 发版请与库文件一并放到持久目录，例如：
-#   log_dir = "../shared/audit_logs"
-#   export_dir = "../shared/exports"
-# （与 [sqlite].path 同级 ../shared/），避免换 release 工作目录后「日志详情」正文丢失。
+#   log_dir = "../../shared/audit_logs"
+#   export_dir = "../../shared/exports"
+# （与 [sqlite].path 同级 ../../shared/），避免换 release 工作目录后「日志详情」正文丢失。
 [audit]
 log_dir = "./audit_logs"
 retention_days = 90

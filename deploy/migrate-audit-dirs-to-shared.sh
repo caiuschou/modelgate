@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time: point [audit] log_dir / export_dir at ../shared/... and copy existing
+# One-time: point [audit] log_dir / export_dir at ../../shared/... (cwd = releases/<sha>) and copy existing
 # per-release data (same layout as .github/workflows/cd-ssh.yml).
 #
 # Usage (on the server, as root or with write access to DEPLOY_ROOT):
@@ -21,6 +21,16 @@ if [[ ! -d "${DEPLOY_ROOT}" ]]; then
 fi
 
 mkdir -p "${SHARED_AUDIT}" "${SHARED_EXPORT}"
+
+RS_BUG="${DEPLOY_ROOT}/releases/shared"
+if [[ -d "${RS_BUG}/audit_logs" ]] && [[ -n "$(ls -A "${RS_BUG}/audit_logs" 2>/dev/null)" ]]; then
+  echo "Migrating ${RS_BUG}/audit_logs -> ${SHARED_AUDIT}"
+  cp -a "${RS_BUG}/audit_logs/." "${SHARED_AUDIT}/"
+fi
+if [[ -d "${RS_BUG}/exports" ]] && [[ -n "$(ls -A "${RS_BUG}/exports" 2>/dev/null)" ]]; then
+  echo "Migrating ${RS_BUG}/exports -> ${SHARED_EXPORT}"
+  cp -a "${RS_BUG}/exports/." "${SHARED_EXPORT}/"
+fi
 
 PREV_CURRENT=""
 if [[ -L "${CURRENT_LINK}" ]] || [[ -d "${CURRENT_LINK}" ]]; then
@@ -48,11 +58,13 @@ sed -i 's/\r$//' "${CONFIG}" || true
 
 if ! grep -q '^\[audit\]' "${CONFIG}"; then
   echo "Appending [audit] with shared paths to ${CONFIG}"
-  printf '\n[audit]\nlog_dir = "../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../shared/exports"\n' >> "${CONFIG}"
+  printf '\n[audit]\nlog_dir = "../../shared/audit_logs"\nretention_days = 90\nbatch_size = 50\nflush_interval_seconds = 5\nexport_dir = "../../shared/exports"\n' >> "${CONFIG}"
 else
   echo "Updating [audit] paths in ${CONFIG}"
-  sed -i 's|log_dir = "./audit_logs"|log_dir = "../shared/audit_logs"|g' "${CONFIG}"
-  sed -i 's|export_dir = "./exports"|export_dir = "../shared/exports"|g' "${CONFIG}"
+  sed -i 's|log_dir = "./audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}"
+  sed -i 's|export_dir = "./exports"|export_dir = "../../shared/exports"|g' "${CONFIG}"
+  sed -i 's|log_dir = "\.\./shared/audit_logs"|log_dir = "../../shared/audit_logs"|g' "${CONFIG}"
+  sed -i 's|export_dir = "\.\./shared/exports"|export_dir = "../../shared/exports"|g' "${CONFIG}"
 fi
 
 if command -v chown >/dev/null 2>&1; then
