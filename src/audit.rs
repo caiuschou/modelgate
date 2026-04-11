@@ -357,10 +357,7 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
     let file_canon = match file_canon {
         Some(p) => p,
         None => {
-            let tried: Vec<String> = candidates
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect();
+            let tried: Vec<String> = candidates.iter().map(|p| p.display().to_string()).collect();
             warn!(
                 log_dir = %log_dir,
                 stored_raw = %stored_path.trim(),
