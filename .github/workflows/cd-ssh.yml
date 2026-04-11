@@ -139,11 +139,11 @@ jobs:
               exit 1
             fi
 
-            # Health check port (must match runtime; see src/config.rs). Order: secret → systemd
+            # Health check port (must match runtime; see src/config.rs). Order: optional var/secret → systemd
             # Environment= → /etc/modelgate/modelgate.env (EnvironmentFile in deploy/modelgate.service) →
             # [server].port in shared config → 8000. systemd's merged env is not fully exposed via
             # `systemctl show -p Environment`, so we read the env file explicitly.
-            HEALTH_PORT="${{ secrets.HEALTHCHECK_PORT }}"
+            HEALTH_PORT="${{ vars.HEALTHCHECK_PORT || secrets.HEALTHCHECK_PORT }}"
             if [ -z "${HEALTH_PORT}" ]; then
               ENV_LINE=$(systemctl show "${SERVICE_NAME}" -p Environment --value 2>/dev/null || true)
               if [ -n "${ENV_LINE}" ]; then
@@ -166,11 +166,12 @@ jobs:
               SERVER_HOST=$(awk '/^\[server\]/{s=1;next} /^\[/{if(s)exit} s&&/^[[:space:]]*host[[:space:]]*=/{sub(/^[[:space:]]*host[[:space:]]*=[[:space:]]*/,""); gsub(/[[:space:]]*#.*$/,""); gsub(/^"/,""); gsub(/"$/,""); gsub(/^'\''/,""); gsub(/'\''$/,""); print; exit}' "${CONFIG}" || true)
             fi
 
-            # Optional full URL (e.g. https://api.example.com/healthz via nginx) when localhost check is unsuitable.
-            HEALTHCHECK_URL="${{ secrets.HEALTHCHECK_URL }}"
+            # Optional full URL via Variable HEALTHCHECK_URL or Secret (same name). If neither is set, expands to
+            # empty → only localhost probes below (no GitHub config required).
+            HEALTHCHECK_URL="${{ vars.HEALTHCHECK_URL || secrets.HEALTHCHECK_URL }}"
 
-            # Set repo secret SKIP_HEALTHCHECK=true only while debugging a broken unit (journalctl on the server).
-            if [ "${{ secrets.SKIP_HEALTHCHECK }}" = "true" ]; then
+            # Optional var or secret SKIP_HEALTHCHECK=true only while debugging (see journalctl on the server).
+            if [ "${{ vars.SKIP_HEALTHCHECK || secrets.SKIP_HEALTHCHECK }}" = "true" ]; then
               echo "SKIP_HEALTHCHECK=true — skipping HTTP probe (remove secret when service is healthy)" >&2
               exit 0
             fi
