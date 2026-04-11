@@ -307,18 +307,18 @@ function AuditBodyPanel(props: {
 }) {
   const { title, requestId, part, hasPath, emptyHint, streamSseNote } = props
   const q = useAuditLogBody(requestId, part, hasPath)
-  const formatted = q.data !== undefined ? formatBodyText(q.data) : ''
+  const formatted = q.data != null ? formatBodyText(q.data) : ''
 
   const parsedResponse = useMemo(
     () =>
-      part === 'response' && q.data !== undefined
+      part === 'response' && q.data != null
         ? parseChatCompletionResponseBody(q.data)
         : null,
     [part, q.data],
   )
   const parsedRequest = useMemo(
     () =>
-      part === 'request' && q.data !== undefined
+      part === 'request' && q.data != null
         ? parseChatCompletionRequestBody(q.data)
         : null,
     [part, q.data],
@@ -330,11 +330,11 @@ function AuditBodyPanel(props: {
       : requestHasStructuredDisplay(parsedRequest)
 
   const physicalLine = useMemo(
-    () => (q.data !== undefined ? auditBodyPhysicalLine(q.data) : null),
+    () => (q.data != null ? auditBodyPhysicalLine(q.data) : null),
     [q.data],
   )
   const semanticLine = useMemo(() => {
-    if (q.data === undefined) return null
+    if (q.data == null) return null
     return part === 'request'
       ? auditBodyRequestSemanticLine(q.data, parsedRequest)
       : auditBodyResponseSemanticLine(q.data, parsedResponse)
@@ -359,10 +359,16 @@ function AuditBodyPanel(props: {
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
               {!hasPath ? <span>无文件</span> : null}
               {hasPath && q.isLoading ? <span>加载中…</span> : null}
-              {hasPath && q.isError ? (
+              {hasPath && !q.isLoading && q.isError ? (
                 <span className="text-red-600">无法加载</span>
               ) : null}
-              {hasPath && q.data !== undefined && physicalLine ? (
+              {hasPath &&
+              !q.isLoading &&
+              q.isSuccess &&
+              q.data === null ? (
+                <span className="text-muted-foreground">正文不可用</span>
+              ) : null}
+              {hasPath && q.data != null && physicalLine ? (
                 <>
                   <span className="tabular-nums">{physicalLine}</span>
                   {semanticLine ? (
@@ -390,12 +396,17 @@ function AuditBodyPanel(props: {
           {hasPath && q.isLoading && (
             <p className="text-sm text-muted-foreground">加载中…</p>
           )}
-          {hasPath && q.isError && (
+          {hasPath && !q.isLoading && q.isError && (
             <p className="text-sm text-red-600" role="alert">
+              无法加载正文（请稍后重试）。
+            </p>
+          )}
+          {hasPath && !q.isLoading && q.isSuccess && q.data === null && (
+            <p className="text-sm text-muted-foreground" role="status">
               无法加载正文（文件不存在或已清理）。
             </p>
           )}
-          {hasPath && q.data !== undefined && (
+          {hasPath && q.data != null && (
             <>
               {showStructured && (
                 <div className="min-w-0 max-w-full space-y-3">

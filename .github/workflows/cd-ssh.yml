@@ -139,36 +139,8 @@ jobs:
               exit 1
             fi
 
-            # Health check port (must match runtime; see src/config.rs). Order: optional var/secret → systemd
-            # Environment= → /etc/modelgate/modelgate.env (EnvironmentFile in deploy/modelgate.service) →
-            # [server].port in shared config → 8000. systemd's merged env is not fully exposed via
-            # `systemctl show -p Environment`, so we read the env file explicitly.
-            HEALTH_PORT="${{ vars.HEALTHCHECK_PORT || secrets.HEALTHCHECK_PORT }}"
-            if [ -z "${HEALTH_PORT}" ]; then
-              ENV_LINE=$(systemctl show "${SERVICE_NAME}" -p Environment --value 2>/dev/null || true)
-              if [ -n "${ENV_LINE}" ]; then
-                HEALTH_PORT=$(printf '%s\n' "${ENV_LINE}" | tr ' ' '\n' | sed -n '/^MODELGATE_SERVER_PORT=/s/^MODELGATE_SERVER_PORT=//p' | sed -n '1p' | tr -d '"' || true)
-              fi
-            fi
-            if [ -z "${HEALTH_PORT}" ] && [ -f /etc/modelgate/modelgate.env ]; then
-              HEALTH_PORT=$(grep -E '^[[:space:]]*(export[[:space:]]+)?MODELGATE_SERVER_PORT=' /etc/modelgate/modelgate.env 2>/dev/null | sed -n '1s/^[^=]*=//p' | tr -d " \"'" || true)
-            fi
-            if [ -z "${HEALTH_PORT}" ] && [ -f "${CONFIG}" ]; then
-              HEALTH_PORT=$(awk '/^\[server\]/{s=1;next} /^\[/{if(s)exit} s&&/^[[:space:]]*port[[:space:]]*=/{gsub(/^[[:space:]]*port[[:space:]]*=[[:space:]]*/,""); gsub(/[^0-9].*$/,""); print; exit}' "${CONFIG}" || true)
-            fi
-            if [ -z "${HEALTH_PORT}" ]; then
-              HEALTH_PORT=8000
-            fi
-
-            # If [server].host is a specific address (not 0.0.0.0 / ::), the process may not listen on loopback.
-            SERVER_HOST=""
-            if [ -f "${CONFIG}" ]; then
-              SERVER_HOST=$(awk '/^\[server\]/{s=1;next} /^\[/{if(s)exit} s&&/^[[:space:]]*host[[:space:]]*=/{sub(/^[[:space:]]*host[[:space:]]*=[[:space:]]*/,""); gsub(/[[:space:]]*#.*$/,""); gsub(/^"/,""); gsub(/"$/,""); gsub(/^'\''/,""); gsub(/'\''$/,""); print; exit}' "${CONFIG}" || true)
-            fi
-
-            # Optional full URL via Variable HEALTHCHECK_URL or Secret (same name). If neither is set, expands to
-            # empty → only localhost probes below (no GitHub config required).
-            HEALTHCHECK_URL="${{ vars.HEALTHCHECK_URL || secrets.HEALTHCHECK_URL }}"
+            # Fixed loopback probe — same as `curl http://localhost:8000/healthz` on the host (default [server] port).
+            HEALTHCHECK_URL="http://127.0.0.1:8000/healthz"
 
             # Optional var or secret SKIP_HEALTHCHECK=true only while debugging (see journalctl on the server).
             if [ "${{ vars.SKIP_HEALTHCHECK || secrets.SKIP_HEALTHCHECK }}" = "true" ]; then
@@ -178,32 +150,13 @@ jobs:
 
             _n=0
             while [ "${_n}" -lt 45 ]; do
-              if [ -n "${HEALTHCHECK_URL}" ]; then
-                if curl -fsS --noproxy '*' --connect-timeout 5 "${HEALTHCHECK_URL}" >/dev/null 2>&1; then
-                  exit 0
-                fi
-              else
-                if curl -fsS --noproxy '*' --connect-timeout 2 "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1 \
-                  || curl -fsS --noproxy '*' --connect-timeout 2 -g "http://[::1]:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
-                  exit 0
-                fi
-                if [ -n "${SERVER_HOST}" ] \
-                  && [ "${SERVER_HOST}" != "0.0.0.0" ] \
-                  && [ "${SERVER_HOST}" != "::" ] \
-                  && [ "${SERVER_HOST}" != "::0" ]; then
-                  if curl -fsS --noproxy '*' --connect-timeout 2 "http://${SERVER_HOST}:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
-                    exit 0
-                  fi
-                fi
+              if curl -fsS --noproxy '*' --connect-timeout 2 "${HEALTHCHECK_URL}" >/dev/null 2>&1; then
+                exit 0
               fi
               _n=$((_n + 1))
               sleep 1
             done
-            if [ -n "${HEALTHCHECK_URL}" ]; then
-              echo "Health check failed: ${HEALTHCHECK_URL}" >&2
-            else
-              echo "Health check failed (tried 127.0.0.1, ::1, and host=${SERVER_HOST:-<empty>}): port ${HEALTH_PORT}" >&2
-            fi
+            echo "Health check failed: ${HEALTHCHECK_URL}" >&2
             journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
             systemctl --no-pager --full status "${SERVICE_NAME}" || true
             exit 1

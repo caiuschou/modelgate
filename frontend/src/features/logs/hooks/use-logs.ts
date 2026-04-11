@@ -81,13 +81,24 @@ export function useAuditLogBody(
   const sessionReady = useConsoleSessionReady()
   return useQuery({
     queryKey: ['logs', 'body', requestId, part],
-    queryFn: () =>
-      apiClient
-        .get(
-          apiPath(`api/v1/logs/request/${encodeURIComponent(requestId!)}/body`),
-          { searchParams: { part } },
-        )
-        .text(),
+    queryFn: async (): Promise<string | null> => {
+      const res = await apiClient.get(
+        apiPath(`api/v1/logs/request/${encodeURIComponent(requestId!)}/body`),
+        {
+          searchParams: { part },
+          throwHttpErrors: false,
+        },
+      )
+      // DB may still list a path while the file was rotated away — treat as empty, not a query error.
+      if (res.status === 404) {
+        return null
+      }
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || `${res.status} ${res.statusText}`)
+      }
+      return res.text()
+    },
     enabled: sessionReady && Boolean(requestId) && enabled,
     staleTime: 30_000,
     retry: false,

@@ -237,10 +237,10 @@ fn audit_day_dir_name(unix_secs: i64) -> String {
 /// Read an audit body file after resolving `stored_path` under `log_dir`. Rejects `..`
 /// segments and paths over `max_bytes`.
 ///
-/// `save_body_to_file` stores paths relative to the process working directory, typically
-/// `<log_dir>/<YYYYMMDD>/<request_id>-{request|response}.json` (the `log_dir` segment may appear in
-/// `stored_path`). Callers may also store paths relative to `log_dir` only (e.g. `20260411/id.json`).
-/// We try `log_dir.join(stored)` first, then `stored` as-is relative to cwd.
+/// Preferred stored form (written by [`save_body_to_file`] / [`create_stream_response_body_file`]) is
+/// **relative to `log_dir` only**: `YYYYMMDD/<request_id>-{request|response}.json`.
+/// Older rows may still hold cwd-relative or absolute paths; we try `log_dir.join(stored)`, then
+/// `stored` relative to cwd, and absolute paths must remain under `log_dir` after canonicalize.
 pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec<u8>> {
     let log_root = Path::new(log_dir);
     let stored = Path::new(stored_path.trim());
@@ -286,6 +286,11 @@ pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec
     fs::read(file_canon)
 }
 
+/// Path persisted in SQLite / API — always **relative to [`AuditConfig::log_dir`]**, not cwd.
+fn audit_body_stored_path(day_dir: &str, request_id: &str, body_type: &str) -> String {
+    format!("{day_dir}/{request_id}-{body_type}.json")
+}
+
 /// Create an empty response body file for streaming SSE (same layout as [`save_body_to_file`]).
 pub async fn create_stream_response_body_file(
     cfg: &AuditConfig,
@@ -297,7 +302,8 @@ pub async fn create_stream_response_body_file(
     tokio::fs::create_dir_all(&dir).await?;
     let file_path = dir.join(format!("{request_id}-response.json"));
     let file = tokio::fs::File::create(&file_path).await?;
-    Ok((path_to_string(&file_path), file))
+    let stored = audit_body_stored_path(&day_dir, request_id, "response");
+    Ok((stored, file))
 }
 
 pub fn save_body_to_file(
@@ -312,17 +318,13 @@ pub fn save_body_to_file(
     fs::create_dir_all(&dir)?;
     let file = dir.join(format!("{request_id}-{body_type}.json"));
     fs::write(&file, body)?;
-    Ok(path_to_string(&file))
+    Ok(audit_body_stored_path(&day_dir, request_id, body_type))
 }
 
 pub fn ensure_storage_dirs(cfg: &AuditConfig) -> std::io::Result<()> {
     fs::create_dir_all(&cfg.log_dir)?;
     fs::create_dir_all(&cfg.export_dir)?;
     Ok(())
-}
-
-fn path_to_string(path: &Path) -> String {
-    path.to_string_lossy().to_string()
 }
 
 pub async fn audit_writer_loop(
@@ -428,6 +430,28 @@ mod read_body_tests {
         fs::write(tmp.join(rel), br#"{"ok":true}"#).unwrap();
         let got = read_audit_body_bytes(&tmp.to_string_lossy(), rel).unwrap();
         assert_eq!(got, br#"{"ok":true}"#.as_slice());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn save_body_round_trips_through_read() {
+        let tmp = std::env::temp_dir().join(format!("mg_audit_save_{}", now_unix_millis()));
+        fs::create_dir_all(&tmp).unwrap();
+        let cfg = AuditConfig {
+            log_dir: tmp.to_string_lossy().into_owned(),
+            retention_days: 90,
+            batch_size: 50,
+            flush_interval_seconds: 5,
+            export_dir: tmp.join("exports").to_string_lossy().into_owned(),
+        };
+        let rid = "123_testreq";
+        let stored = save_body_to_file(&cfg, rid, "request", br#"{"model":"x"}"#).unwrap();
+        assert!(
+            !stored.contains(".."),
+            "stored path must be log_dir-relative only: {stored}"
+        );
+        let got = read_audit_body_bytes(&cfg.log_dir, &stored).unwrap();
+        assert_eq!(got, br#"{"model":"x"}"#.as_slice());
         let _ = fs::remove_dir_all(&tmp);
     }
 }

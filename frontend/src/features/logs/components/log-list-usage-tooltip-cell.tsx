@@ -230,7 +230,15 @@ export function LogListUsageTooltipCell({
         ) : null}
         {body.isError ? (
           <p className="mb-2 text-[11px] text-amber-800 dark:text-amber-200">
-            无法读取响应正文，明细不可用。
+            加载响应正文失败，明细暂不可用（请稍后重试）。
+          </p>
+        ) : null}
+        {body.isSuccess &&
+        body.data === null &&
+        detail.data?.response_body_path &&
+        !detail.isLoading ? (
+          <p className="mb-2 text-[11px] text-muted-foreground">
+            响应正文文件不可用（已清理或路径失效），以下为审计表汇总。
           </p>
         ) : null}
         <div className="space-y-2">
