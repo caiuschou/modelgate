@@ -62,6 +62,10 @@ jobs:
             DEPLOY_ROOT="${{ secrets.DEPLOY_ROOT }}"
             SHA="${{ github.sha }}"
             RELEASE_DIR="${DEPLOY_ROOT}/releases/${SHA}"
+            if [ -z "${DEPLOY_ROOT}" ]; then
+              echo "[deploy] ERROR: DEPLOY_ROOT secret is empty" >&2
+              exit 1
+            fi
 
             deploy_step "start sha=${SHA} release_dir=${RELEASE_DIR}"
 
@@ -111,17 +115,27 @@ jobs:
             fi
             # Rolling tracing logs + trace-level filter when RUST_LOG unset.
             # systemd WorkingDirectory is $DEPLOY_ROOT/current → releases/<sha>: use ../../shared/... (not ../shared/, which resolves under releases/).
+            # Use positive grep branches only (avoid `if ! grep` + set -e edge cases). sed -i needs parent dir writable for temp file.
             deploy_step "config: patch [logging] (tracing_log_dir, default_filter)"
             if [ -f "${CONFIG}" ]; then
-              if ! grep -q '^\[logging\]' "${CONFIG}"; then
-                printf '\n[logging]\ntracing_log_dir = "../../shared/logs"\ndefault_filter = "trace"\n' >> "${CONFIG}"
-              else
+              _cfgdir="$(dirname "${CONFIG}")"
+              if [ ! -w "${_cfgdir}" ]; then
+                echo "[deploy] ERROR: directory not writable (sed -i temp files): ${_cfgdir}" >&2
+                ls -ld "${_cfgdir}" >&2 || true
+                exit 1
+              fi
+              export LC_ALL=C
+              if grep -q '^\[logging\]' "${CONFIG}"; then
                 if grep -q 'tracing_log_dir = ""' "${CONFIG}"; then
                   sed -i 's|tracing_log_dir = ""|tracing_log_dir = "../../shared/logs"|' "${CONFIG}"
                 fi
-                if ! grep -qE '^default_filter[[:space:]]*=' "${CONFIG}"; then
+                if grep -qE '^default_filter[[:space:]]*=' "${CONFIG}"; then
+                  :
+                else
                   sed -i '/^\[logging\]/a default_filter = "trace"' "${CONFIG}"
                 fi
+              else
+                printf '\n[logging]\ntracing_log_dir = "../../shared/logs"\ndefault_filter = "trace"\n' >> "${CONFIG}"
               fi
               # Fix older CD that wrote ../shared/ (wrong when cwd is releases/<sha>)
               sed -i 's|tracing_log_dir = "\.\./shared/|tracing_log_dir = "../../shared/|g' "${CONFIG}"
