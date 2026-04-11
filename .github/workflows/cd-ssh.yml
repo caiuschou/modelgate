@@ -169,6 +169,12 @@ jobs:
             # Optional full URL (e.g. https://api.example.com/healthz via nginx) when localhost check is unsuitable.
             HEALTHCHECK_URL="${{ secrets.HEALTHCHECK_URL }}"
 
+            # Set repo secret SKIP_HEALTHCHECK=true only while debugging a broken unit (journalctl on the server).
+            if [ "${{ secrets.SKIP_HEALTHCHECK }}" = "true" ]; then
+              echo "SKIP_HEALTHCHECK=true — skipping HTTP probe (remove secret when service is healthy)" >&2
+              exit 0
+            fi
+
             _n=0
             while [ "${_n}" -lt 45 ]; do
               if [ -n "${HEALTHCHECK_URL}" ]; then
