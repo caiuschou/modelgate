@@ -159,16 +159,29 @@ jobs:
               HEALTH_PORT=8000
             fi
 
+            # Optional full URL (e.g. https://api.example.com/healthz via nginx) when localhost check is unsuitable.
+            HEALTHCHECK_URL="${{ secrets.HEALTHCHECK_URL }}"
+
             _n=0
             while [ "${_n}" -lt 45 ]; do
-              if curl -fsS --connect-timeout 2 "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1 \
-                || curl -fsS --connect-timeout 2 -g "http://[::1]:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
-                exit 0
+              if [ -n "${HEALTHCHECK_URL}" ]; then
+                if curl -fsS --noproxy '*' --connect-timeout 5 "${HEALTHCHECK_URL}" >/dev/null 2>&1; then
+                  exit 0
+                fi
+              else
+                if curl -fsS --noproxy '*' --connect-timeout 2 "http://127.0.0.1:${HEALTH_PORT}/healthz" >/dev/null 2>&1 \
+                  || curl -fsS --noproxy '*' --connect-timeout 2 -g "http://[::1]:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
+                  exit 0
+                fi
               fi
               _n=$((_n + 1))
               sleep 1
             done
-            echo "Health check failed (tried 127.0.0.1 and ::1): port ${HEALTH_PORT}" >&2
+            if [ -n "${HEALTHCHECK_URL}" ]; then
+              echo "Health check failed: ${HEALTHCHECK_URL}" >&2
+            else
+              echo "Health check failed (tried 127.0.0.1 and ::1): port ${HEALTH_PORT}" >&2
+            fi
             journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
             systemctl --no-pager --full status "${SERVICE_NAME}" || true
             exit 1
