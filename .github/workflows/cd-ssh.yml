@@ -54,24 +54,33 @@ jobs:
           script: |
             # No pipefail: pipelines with `head`/`grep` can SIGPIPE under pipefail and abort `set -e` mid-deploy.
             set -eu
+            deploy_step() { echo "[deploy] $*" >&2; }
             APP_NAME="modelgate"
             SERVICE_NAME="${{ secrets.SERVICE_NAME }}"
             DEPLOY_ROOT="${{ secrets.DEPLOY_ROOT }}"
             SHA="${{ github.sha }}"
             RELEASE_DIR="${DEPLOY_ROOT}/releases/${SHA}"
 
+            deploy_step "start sha=${SHA} release_dir=${RELEASE_DIR}"
+
+            deploy_step "mkdir deploy + shared dirs"
             mkdir -p "${DEPLOY_ROOT}/releases" "${DEPLOY_ROOT}/shared"
             mkdir -p "${DEPLOY_ROOT}/shared/logs"
             mkdir -p "${DEPLOY_ROOT}/shared/audit_logs" "${DEPLOY_ROOT}/shared/exports"
             mkdir -p "${RELEASE_DIR}"
+
+            deploy_step "extract tarball /tmp/${APP_NAME}-${SHA}.tar.gz -> ${RELEASE_DIR}"
             tar -C "${RELEASE_DIR}" -xzf "/tmp/${APP_NAME}-${SHA}.tar.gz"
             # Free /tmp (often a small tmpfs); leftover tarballs caused "No space left on device" on extract
+            deploy_step "remove tarball from /tmp"
             rm -f "/tmp/${APP_NAME}-${SHA}.tar.gz"
 
             # Ensure executable bit
+            deploy_step "chmod +x release binary"
             chmod +x "${RELEASE_DIR}/modelgate"
 
             # Initialize shared config once; keep it across releases
+            deploy_step "ensure shared config.toml (seed from example if missing)"
             if [ ! -f "${DEPLOY_ROOT}/shared/config.toml" ]; then
               cp "${RELEASE_DIR}/config.example.toml" "${DEPLOY_ROOT}/shared/config.toml"
             fi
@@ -79,6 +88,7 @@ jobs:
             if [ -f "${CONFIG}" ]; then
               sed -i 's/\r$//' "${CONFIG}" || true
             fi
+            deploy_step "patch config: logging, sqlite, audit paths"
             # Rolling tracing logs + trace-level filter when RUST_LOG unset.
             # systemd WorkingDirectory is $DEPLOY_ROOT/current → releases/<sha>: use ../../shared/... (not ../shared/, which resolves under releases/).
             if [ -f "${CONFIG}" ]; then
@@ -113,11 +123,13 @@ jobs:
                 sed -i 's|export_dir = "\.\./shared/exports"|export_dir = "../../shared/exports"|g' "${CONFIG}"
               fi
             fi
+            deploy_step "chown shared logs/audit_logs/exports"
             chown -R modelgate:modelgate "${DEPLOY_ROOT}/shared/logs" "${DEPLOY_ROOT}/shared/audit_logs" "${DEPLOY_ROOT}/shared/exports" 2>/dev/null || true
 
             # Data was mistakenly written to $DEPLOY_ROOT/releases/shared/ when paths used ../shared/ — merge into real shared/
             RS_BUG="${DEPLOY_ROOT}/releases/shared"
             SH_OK="${DEPLOY_ROOT}/shared"
+            deploy_step "merge mistaken releases/shared data into shared/ (if present)"
             if [ -d "${RS_BUG}" ]; then
               if [ -f "${RS_BUG}/modelgate.db" ]; then
                 if [ ! -f "${SH_OK}/modelgate.db" ] || [ "${RS_BUG}/modelgate.db" -nt "${SH_OK}/modelgate.db" ]; then
@@ -142,12 +154,14 @@ jobs:
               fi
             fi
 
+            deploy_step "symlink shared config.toml into release dir"
             ln -sfn "${DEPLOY_ROOT}/shared/config.toml" "${RELEASE_DIR}/config.toml"
 
             # Migrate DB from previous current release before switching symlink (first time shared DB is empty)
             SHARED_DB="${DEPLOY_ROOT}/shared/modelgate.db"
             SHARED_AUDIT="${DEPLOY_ROOT}/shared/audit_logs"
             SHARED_EXPORT="${DEPLOY_ROOT}/shared/exports"
+            deploy_step "migrate DB/audit/exports from previous current (if needed)"
             PREV_CURRENT=$(readlink -f "${DEPLOY_ROOT}/current" 2>/dev/null || true)
             if [ ! -f "${SHARED_DB}" ] && [ -n "${PREV_CURRENT}" ] && [ -f "${PREV_CURRENT}/modelgate.db" ]; then
               cp -a "${PREV_CURRENT}/modelgate.db" "${SHARED_DB}"
@@ -168,9 +182,11 @@ jobs:
             fi
 
             # Point "current" to this release
+            deploy_step "update current symlink -> ${RELEASE_DIR}"
             ln -sfn "${RELEASE_DIR}" "${DEPLOY_ROOT}/current"
 
             # Restart service
+            deploy_step "systemctl daemon-reload + restart ${SERVICE_NAME}"
             systemctl daemon-reload || true
             if ! systemctl restart "${SERVICE_NAME}"; then
               echo "systemctl restart failed: ${SERVICE_NAME}" >&2
@@ -188,10 +204,15 @@ jobs:
               exit 0
             fi
 
+            deploy_step "healthcheck loop GET ${HEALTHCHECK_URL} (max 45s)"
             _n=0
             while [ "${_n}" -lt 45 ]; do
               if curl -fsS --noproxy '*' --connect-timeout 2 "${HEALTHCHECK_URL}" >/dev/null 2>&1; then
+                deploy_step "healthcheck OK after ${_n}s"
                 exit 0
+              fi
+              if [ "${_n}" -eq 0 ] || [ $((_n % 15)) -eq 0 ]; then
+                deploy_step "healthcheck still waiting (${_n}/45)..."
               fi
               _n=$((_n + 1))
               sleep 1
