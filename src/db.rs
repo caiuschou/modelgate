@@ -5,7 +5,7 @@ use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
 
-const MIGRATIONS: [(&str, &str); 17] = [
+const MIGRATIONS: [(&str, &str); 18] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -73,6 +73,10 @@ const MIGRATIONS: [(&str, &str); 17] = [
     (
         "0017_audit_reasoning_phase_ms.sql",
         include_str!("../migrations/0017_audit_reasoning_phase_ms.sql"),
+    ),
+    (
+        "0018_audit_normalize_body_paths.sql",
+        include_str!("../migrations/0018_audit_normalize_body_paths.sql"),
     ),
 ];
 

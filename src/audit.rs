@@ -227,6 +227,31 @@ pub fn generate_request_id() -> String {
     format!("{ts}_{random}")
 }
 
+/// Strips accidental `.../audit_logs/` prefixes so stored paths stay **relative to [`AuditConfig::log_dir`]**
+/// only (e.g. `YYYYMMDD/<request_id>-request.json`). Some deployments incorrectly persisted paths that
+/// repeated `log_dir` in SQLite.
+pub(crate) fn normalize_audit_body_stored_path(s: &str) -> &str {
+    const MARKER: &str = "/audit_logs/";
+    match s.find(MARKER) {
+        Some(i) => &s[i + MARKER.len()..],
+        None => s,
+    }
+}
+
+fn normalize_audit_path_opt(p: &mut Option<String>) {
+    if let Some(s) = p {
+        let n = normalize_audit_body_stored_path(s);
+        if n != s.as_str() {
+            *s = n.to_string();
+        }
+    }
+}
+
+pub(crate) fn normalize_audit_record_paths(r: &mut AuditRecord) {
+    normalize_audit_path_opt(&mut r.request_body_path);
+    normalize_audit_path_opt(&mut r.response_body_path);
+}
+
 /// Subdirectory under `log_dir`: UTC calendar day `YYYYMMDD` (easy to prune old days).
 fn audit_day_dir_name(unix_secs: i64) -> String {
     DateTime::<Utc>::from_timestamp(unix_secs, 0)
@@ -243,7 +268,8 @@ fn audit_day_dir_name(unix_secs: i64) -> String {
 /// `stored` relative to cwd, and absolute paths must remain under `log_dir` after canonicalize.
 pub fn read_audit_body_bytes(log_dir: &str, stored_path: &str) -> io::Result<Vec<u8>> {
     let log_root = Path::new(log_dir);
-    let stored = Path::new(stored_path.trim());
+    let trimmed = normalize_audit_body_stored_path(stored_path.trim());
+    let stored = Path::new(trimmed);
     if stored.as_os_str().is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -342,13 +368,18 @@ pub async fn audit_writer_loop(
         tokio::select! {
             msg = receiver.recv() => {
                 match msg {
-                    Some(AuditMessage::Record(record)) => {
+                    Some(AuditMessage::Record(mut record)) => {
+                        normalize_audit_record_paths(&mut record);
                         buffer.push(record);
                         if buffer.len() >= config.batch_size {
                             should_flush = true;
                         }
                     }
-                    Some(AuditMessage::StreamCompletion(update)) => {
+                    Some(AuditMessage::StreamCompletion(mut update)) => {
+                        let n = normalize_audit_body_stored_path(&update.response_body_path);
+                        if n != update.response_body_path.as_str() {
+                            update.response_body_path = n.to_string();
+                        }
                         if !buffer.is_empty() {
                             if let Ok(mut conn) = db.get() {
                                 if let Err(err) = crate::db::insert_audit_logs(&mut conn, &buffer) {
@@ -419,6 +450,32 @@ mod read_body_tests {
         fs::create_dir_all(&tmp).unwrap();
         let err = read_audit_body_bytes(&tmp.to_string_lossy(), "../outside").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn normalize_strips_redundant_audit_logs_prefix() {
+        assert_eq!(
+            normalize_audit_body_stored_path(
+                "../../shared/audit_logs/20260411/abc-request.json"
+            ),
+            "20260411/abc-request.json"
+        );
+        assert_eq!(
+            normalize_audit_body_stored_path("20260411/abc-request.json"),
+            "20260411/abc-request.json"
+        );
+    }
+
+    #[test]
+    fn read_accepts_db_style_prefixed_path() {
+        let tmp = std::env::temp_dir().join(format!("mg_audit_prefix_{}", now_unix_millis()));
+        fs::create_dir_all(tmp.join("20260411")).unwrap();
+        let rel = "20260411/xyz-request.json";
+        fs::write(tmp.join(rel), br#"{"ok":true}"#).unwrap();
+        let dirty = "../../shared/audit_logs/20260411/xyz-request.json";
+        let got = read_audit_body_bytes(&tmp.to_string_lossy(), dirty).unwrap();
+        assert_eq!(got, br#"{"ok":true}"#.as_slice());
         let _ = fs::remove_dir_all(&tmp);
     }
 
