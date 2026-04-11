@@ -50,7 +50,6 @@ jobs:
           port: ${{ secrets.SSH_PORT }}
           script_stop: true
           command_timeout: 10m
-          debug: true
           request_pty: true
           script: |
             # No pipefail: pipelines with `head`/`grep` can SIGPIPE under pipefail and abort `set -e` mid-deploy.
@@ -161,6 +160,12 @@ jobs:
               HEALTH_PORT=8000
             fi
 
+            # If [server].host is a specific address (not 0.0.0.0 / ::), the process may not listen on loopback.
+            SERVER_HOST=""
+            if [ -f "${CONFIG}" ]; then
+              SERVER_HOST=$(awk '/^\[server\]/{s=1;next} /^\[/{if(s)exit} s&&/^[[:space:]]*host[[:space:]]*=/{sub(/^[[:space:]]*host[[:space:]]*=[[:space:]]*/,""); gsub(/[[:space:]]*#.*$/,""); gsub(/^"/,""); gsub(/"$/,""); gsub(/^'\''/,""); gsub(/'\''$/,""); print; exit}' "${CONFIG}" || true)
+            fi
+
             # Optional full URL (e.g. https://api.example.com/healthz via nginx) when localhost check is unsuitable.
             HEALTHCHECK_URL="${{ secrets.HEALTHCHECK_URL }}"
 
@@ -175,6 +180,14 @@ jobs:
                   || curl -fsS --noproxy '*' --connect-timeout 2 -g "http://[::1]:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
                   exit 0
                 fi
+                if [ -n "${SERVER_HOST}" ] \
+                  && [ "${SERVER_HOST}" != "0.0.0.0" ] \
+                  && [ "${SERVER_HOST}" != "::" ] \
+                  && [ "${SERVER_HOST}" != "::0" ]; then
+                  if curl -fsS --noproxy '*' --connect-timeout 2 "http://${SERVER_HOST}:${HEALTH_PORT}/healthz" >/dev/null 2>&1; then
+                    exit 0
+                  fi
+                fi
               fi
               _n=$((_n + 1))
               sleep 1
@@ -182,7 +195,7 @@ jobs:
             if [ -n "${HEALTHCHECK_URL}" ]; then
               echo "Health check failed: ${HEALTHCHECK_URL}" >&2
             else
-              echo "Health check failed (tried 127.0.0.1 and ::1): port ${HEALTH_PORT}" >&2
+              echo "Health check failed (tried 127.0.0.1, ::1, and host=${SERVER_HOST:-<empty>}): port ${HEALTH_PORT}" >&2
             fi
             journalctl -u "${SERVICE_NAME}" -n 80 --no-pager || true
             systemctl --no-pager --full status "${SERVICE_NAME}" || true
