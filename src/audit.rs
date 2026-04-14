@@ -73,6 +73,18 @@ pub struct AuditStreamCompletionUpdate {
 pub enum AuditMessage {
     Record(AuditRecord),
     StreamCompletion(AuditStreamCompletionUpdate),
+    /// Set `request_body_path` after the accept-phase row was flushed (same `request_id`).
+    RequestBodyPath {
+        request_id: String,
+        path: String,
+    },
+    /// Terminal state for requests that fail after [`AuditRecord`] accept-phase insert (quota, IP, …).
+    Rejected {
+        request_id: String,
+        status_code: i64,
+        error_message: String,
+        latency_ms: i64,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -460,6 +472,63 @@ pub async fn audit_writer_loop(
                             }
                             Err(err) => {
                                 error!(error = %err, "failed to get sqlite connection for stream completion");
+                            }
+                        }
+                    }
+                    Some(AuditMessage::RequestBodyPath { request_id, path }) => {
+                        let path =
+                            normalize_storage_entry_path(&config.log_dir, &path);
+                        if !buffer.is_empty() {
+                            if let Ok(mut conn) = db.get() {
+                                if let Err(err) = crate::db::insert_audit_logs(&mut conn, &buffer) {
+                                    error!(error = %err, "audit flush before request body path update failed");
+                                }
+                            }
+                            buffer.clear();
+                        }
+                        match db.get() {
+                            Ok(mut conn) => {
+                                if let Err(err) = crate::db::update_audit_log_request_body_path(
+                                    &mut conn,
+                                    &request_id,
+                                    &path,
+                                ) {
+                                    error!(error = %err, %request_id, "audit request body path update failed");
+                                }
+                            }
+                            Err(err) => {
+                                error!(error = %err, "failed to get sqlite connection for request body path update");
+                            }
+                        }
+                    }
+                    Some(AuditMessage::Rejected {
+                        request_id,
+                        status_code,
+                        error_message,
+                        latency_ms,
+                    }) => {
+                        if !buffer.is_empty() {
+                            if let Ok(mut conn) = db.get() {
+                                if let Err(err) = crate::db::insert_audit_logs(&mut conn, &buffer) {
+                                    error!(error = %err, "audit flush before rejected update failed");
+                                }
+                            }
+                            buffer.clear();
+                        }
+                        match db.get() {
+                            Ok(mut conn) => {
+                                if let Err(err) = crate::db::update_audit_log_rejected(
+                                    &mut conn,
+                                    &request_id,
+                                    status_code,
+                                    &error_message,
+                                    latency_ms,
+                                ) {
+                                    error!(error = %err, %request_id, "audit rejected update failed");
+                                }
+                            }
+                            Err(err) => {
+                                error!(error = %err, "failed to get sqlite connection for rejected update");
                             }
                         }
                     }

@@ -1417,6 +1417,65 @@ pub fn update_audit_log_stream_completion(
     Ok(rows)
 }
 
+pub fn update_audit_log_request_body_path(
+    conn: &mut Connection,
+    request_id: &str,
+    path: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE audit_logs SET request_body_path = ?1 WHERE request_id = ?2",
+        params![path, request_id],
+    )
+}
+
+/// Marks an accept-phase audit row as failed (quota, IP, BYOK resolve, …) and applies hourly rollup.
+pub fn update_audit_log_rejected(
+    conn: &mut Connection,
+    request_id: &str,
+    status_code: i64,
+    error_message: &str,
+    latency_ms: i64,
+) -> rusqlite::Result<()> {
+    let rows = conn.execute(
+        "UPDATE audit_logs SET status_code = ?1, error_message = ?2, latency_ms = ?3 WHERE request_id = ?4",
+        params![status_code, error_message, latency_ms, request_id],
+    )?;
+    if rows == 0 {
+        return Ok(());
+    }
+    let snapshot = conn.query_row(
+        "SELECT user_id, team_id, created_at, status_code, prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms
+         FROM audit_logs WHERE request_id = ?1",
+        params![request_id],
+        |row| {
+            Ok((
+                row.get::<_, Option<i64>>(0)?,
+                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+                row.get::<_, Option<i64>>(7)?,
+                row.get::<_, Option<f64>>(8)?,
+                row.get::<_, Option<i64>>(9)?,
+            ))
+        },
+    );
+    if let Ok((uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat)) = snapshot {
+        if let Err(e) = apply_audit_hourly_rollup_from_audit_row(
+            conn, uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat,
+        ) {
+            tracing::error!(
+                error = %e,
+                %request_id,
+                "audit_hourly_rollup rejected update failed"
+            );
+        }
+    }
+    Ok(())
+}
+
 pub fn query_audit_logs(
     conn: &Connection,
     query: &AuditListQuery,
@@ -1686,6 +1745,15 @@ fn hour_bucket_start(created_at: i64) -> i64 {
 
 /// Skip rollup on initial insert for streaming chat (finalized via `update_audit_log_stream_completion`).
 fn audit_record_skip_rollup_on_insert(record: &AuditRecord) -> bool {
+    if record
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("accept_phase"))
+        .and_then(|v| v.as_bool())
+        == Some(true)
+    {
+        return true;
+    }
     record
         .metadata
         .as_ref()

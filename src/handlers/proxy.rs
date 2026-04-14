@@ -1,4 +1,6 @@
-use actix_web::{http::StatusCode as ActixStatusCode, web, HttpRequest, HttpResponse};
+use actix_web::{
+    http::StatusCode as ActixStatusCode, web, HttpRequest, HttpResponse, ResponseError,
+};
 use async_stream::stream;
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -191,45 +193,82 @@ pub async fn chat_completions(
     let user_id = auth_row.user_id;
     let key_team_id = auth_row.team_id;
 
+    let audit_created_at = crate::audit::now_unix_secs();
+    send_accept_phase_audit(
+        &state,
+        request_id.clone(),
+        user_id,
+        token_id,
+        key_team_id,
+        model.clone(),
+        app_id.clone(),
+        thread_id.clone(),
+        is_stream,
+        &req,
+        audit_created_at,
+    )
+    .await;
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
 
-    state
-        .user_service
-        .ensure_monthly_quota(token_id, now)
-        .map_err(ApiError::from)?;
+    if let Err(e) = state.user_service.ensure_monthly_quota(token_id, now) {
+        let err = ApiError::from(e);
+        audit_mark_rejected_api_error(&state, &request_id, &err, start).await;
+        return Err(err);
+    }
 
-    state
-        .user_service
-        .ensure_monthly_spend_quota(token_id, now)
-        .map_err(ApiError::from)?;
+    if let Err(e) = state.user_service.ensure_monthly_spend_quota(token_id, now) {
+        let err = ApiError::from(e);
+        audit_mark_rejected_api_error(&state, &request_id, &err, start).await;
+        return Err(err);
+    }
 
-    api_key_policy::check_model_allowlist(auth_row.model_allowlist.as_deref(), model.as_deref())
-        .map_err(|m| ApiError::Forbidden(m.into()))?;
+    if let Err(m) =
+        api_key_policy::check_model_allowlist(auth_row.model_allowlist.as_deref(), model.as_deref())
+    {
+        let err = ApiError::Forbidden(m.into());
+        audit_mark_rejected_api_error(&state, &request_id, &err, start).await;
+        return Err(err);
+    }
 
     if let Some(ip) = api_key_policy::client_ip(&req) {
-        api_key_policy::check_ip_allowlist(auth_row.ip_allowlist.as_deref(), ip)
-            .map_err(|m| ApiError::Forbidden(m.into()))?;
+        if let Err(m) = api_key_policy::check_ip_allowlist(auth_row.ip_allowlist.as_deref(), ip) {
+            let err = ApiError::Forbidden(m.into());
+            audit_mark_rejected_api_error(&state, &request_id, &err, start).await;
+            return Err(err);
+        }
     } else if auth_row
         .ip_allowlist
         .as_ref()
         .map(|s| !s.is_empty())
         .unwrap_or(false)
     {
-        return Err(ApiError::Forbidden(
-            "cannot determine client IP for this API key policy".into(),
-        ));
+        let err = ApiError::Forbidden("cannot determine client IP for this API key policy".into());
+        audit_mark_rejected_api_error(&state, &request_id, &err, start).await;
+        return Err(err);
     }
 
-    state
-        .user_service
-        .touch_api_key_last_used(token_id, now)
-        .map_err(ApiError::from)?;
+    if let Err(e) = state.user_service.touch_api_key_last_used(token_id, now) {
+        let err = ApiError::from(e);
+        audit_mark_rejected_api_error(&state, &request_id, &err, start).await;
+        return Err(err);
+    }
 
-    let resolved = resolve_chat_upstream(&req, &state, &auth_row)?;
-    billing::check_can_start_chat(&state, user_id, resolved.is_byok)?;
+    let resolved = match resolve_chat_upstream(&req, &state, &auth_row) {
+        Ok(r) => r,
+        Err(e) => {
+            audit_mark_rejected_api_error(&state, &request_id, &e, start).await;
+            return Err(e);
+        }
+    };
+
+    if let Err(e) = billing::check_can_start_chat(&state, user_id, resolved.is_byok) {
+        audit_mark_rejected_api_error(&state, &request_id, &e, start).await;
+        return Err(e);
+    }
     let chat_slot = key_concurrency::acquire_chat_slot(
         &state.key_concurrency,
         token_id,
@@ -251,6 +290,9 @@ pub async fn chat_completions(
     let upstream_url = upstream::build_chat_completions_url(&resolved.base_url);
     let request_body_path =
         crate::audit::save_body_to_file(&state.audit_config, &request_id, "request", &body).ok();
+    if let Some(ref p) = request_body_path {
+        enqueue_audit_request_body_path(&state, request_id.clone(), p.clone()).await;
+    }
 
     let req_builder = state
         .http
@@ -307,7 +349,7 @@ pub async fn chat_completions(
                         client_request_headers_json.clone(),
                         serde_json::json!({}),
                     )),
-                    created_at: crate::audit::now_unix_secs(),
+                    created_at: audit_created_at,
                     team_id: key_team_id,
                 },
             )
@@ -370,7 +412,7 @@ pub async fn chat_completions(
                     client_request_headers_json.clone(),
                     upstream_response_headers_json.clone(),
                 )),
-                created_at: crate::audit::now_unix_secs(),
+                created_at: audit_created_at,
                 team_id: key_team_id,
             },
         )
@@ -528,20 +570,33 @@ pub async fn chat_completions(
             .streaming(stream))
     } else {
         let _chat_slot = chat_slot;
-        let bytes = upstream_resp.bytes().await.map_err(|e| {
-            error!(
-                %request_id,
-                user_id,
-                token_id,
-                model = model.as_deref(),
-                upstream_status = status_i64,
-                ?app_id,
-                ?thread_id,
-                error = %e,
-                "upstream response read failed"
-            );
-            ApiError::InternalError("Failed to read upstream response".into())
-        })?;
+        let bytes = match upstream_resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                error!(
+                    %request_id,
+                    user_id,
+                    token_id,
+                    model = model.as_deref(),
+                    upstream_status = status_i64,
+                    ?app_id,
+                    ?thread_id,
+                    error = %e,
+                    "upstream response read failed"
+                );
+                audit_mark_rejected_raw(
+                    &state,
+                    &request_id,
+                    500,
+                    format!("Failed to read upstream response: {e}"),
+                    start,
+                )
+                .await;
+                return Err(ApiError::InternalError(
+                    "Failed to read upstream response".into(),
+                ));
+            }
+        };
         let response_body_path =
             crate::audit::save_body_to_file(&state.audit_config, &request_id, "response", &bytes)
                 .ok();
@@ -582,7 +637,7 @@ pub async fn chat_completions(
                     client_request_headers_json,
                     upstream_response_headers_json,
                 )),
-                created_at: crate::audit::now_unix_secs(),
+                created_at: audit_created_at,
                 team_id: key_team_id,
             },
         )
@@ -851,6 +906,122 @@ fn parse_usage_cost_and_finish(body: &[u8]) -> UsageTokensCostFinish {
         upstream_usd,
         cached_prompt_tokens,
     )
+}
+
+fn accept_phase_audit_metadata(req: &HttpRequest, is_stream: bool) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    m.insert("accept_phase".to_string(), true.into());
+    m.insert("stream".to_string(), is_stream.into());
+    m.insert("is_byok".to_string(), false.into());
+    m.insert(
+        "request_headers".to_string(),
+        actix_request_headers_json(req),
+    );
+    m.insert("response_headers".to_string(), serde_json::json!({}));
+    serde_json::Value::Object(m)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send_accept_phase_audit(
+    state: &web::Data<AppState>,
+    request_id: String,
+    user_id: i64,
+    token_id: i64,
+    key_team_id: Option<i64>,
+    model: Option<String>,
+    app_id: Option<String>,
+    thread_id: Option<String>,
+    is_stream: bool,
+    req: &HttpRequest,
+    created_at: i64,
+) {
+    send_audit_record(
+        state,
+        crate::audit::AuditRecord {
+            request_id,
+            user_id: Some(user_id),
+            token_id: Some(token_id),
+            channel_id: None,
+            model,
+            request_type: Some("chat".to_string()),
+            request_body_path: None,
+            response_body_path: None,
+            status_code: None,
+            error_message: None,
+            prompt_tokens: None,
+            completion_tokens: None,
+            cached_prompt_tokens: None,
+            total_tokens: None,
+            cost: None,
+            latency_ms: None,
+            reasoning_phase_ms: None,
+            app_id,
+            thread_id,
+            finish_reason: None,
+            metadata: Some(accept_phase_audit_metadata(req, is_stream)),
+            created_at,
+            team_id: key_team_id,
+        },
+    )
+    .await;
+}
+
+async fn enqueue_audit_request_body_path(
+    state: &web::Data<AppState>,
+    request_id: String,
+    path: String,
+) {
+    if let Err(err) = state
+        .audit_sender
+        .send(crate::audit::AuditMessage::RequestBodyPath { request_id, path })
+        .await
+    {
+        error!(error = %err, "failed to enqueue audit request body path");
+    }
+}
+
+async fn audit_enqueue_rejected(
+    state: &web::Data<AppState>,
+    request_id: &str,
+    status_code: i64,
+    error_message: String,
+    latency_ms: i64,
+) {
+    if let Err(err) = state
+        .audit_sender
+        .send(crate::audit::AuditMessage::Rejected {
+            request_id: request_id.to_string(),
+            status_code,
+            error_message,
+            latency_ms,
+        })
+        .await
+    {
+        error!(error = %err, "failed to enqueue audit rejected update");
+    }
+}
+
+async fn audit_mark_rejected_api_error(
+    state: &web::Data<AppState>,
+    request_id: &str,
+    err: &ApiError,
+    start: std::time::Instant,
+) {
+    let status_code = ResponseError::status_code(err).as_u16() as i64;
+    let error_message = err.to_string();
+    let latency_ms = start.elapsed().as_millis() as i64;
+    audit_enqueue_rejected(state, request_id, status_code, error_message, latency_ms).await;
+}
+
+async fn audit_mark_rejected_raw(
+    state: &web::Data<AppState>,
+    request_id: &str,
+    status_code: i64,
+    error_message: String,
+    start: std::time::Instant,
+) {
+    let latency_ms = start.elapsed().as_millis() as i64;
+    audit_enqueue_rejected(state, request_id, status_code, error_message, latency_ms).await;
 }
 
 async fn send_audit_record(state: &web::Data<AppState>, record: crate::audit::AuditRecord) {
