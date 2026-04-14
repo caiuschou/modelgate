@@ -68,11 +68,11 @@ test('log center v2 shows session row and links to classic list with thread filt
 
   await page.goto('/logs/v2')
   await expect(
-    page.getByRole('columnheader', { name: '最后活动' }),
+    page.getByRole('columnheader', { name: '活动时间' }),
   ).toBeVisible({ timeout: 25_000 })
   const dataRow = page.getByRole('row').filter({ hasText: threadId })
   await expect(dataRow).toBeVisible({ timeout: 25_000 })
-  // 列：展开 · 最后活动 · 会话 · 请求数 · …
+  // 列：展开 · 活动时间 · 会话 · 请求数 · …
   await expect(dataRow.getByRole('cell').nth(3)).toHaveText(
     String(thread!.request_count),
   )
@@ -80,11 +80,15 @@ test('log center v2 shows session row and links to classic list with thread filt
   await dataRow
     .getByRole('button', { name: '展开该会话下的请求' })
     .click()
-  await expect(page.getByRole('link', { name: '详情' })).toBeVisible({
+  await expect(
+    page.getByRole('link', { name: '查看请求详情' }),
+  ).toBeVisible({
     timeout: 15_000,
   })
 
-  await dataRow.getByRole('link', { name: '请求列表' }).click()
+  await dataRow
+    .getByRole('link', { name: '在经典列表中查看该会话的请求' })
+    .click()
   await expect(page).toHaveURL(/\/logs\?/)
   const url = new URL(page.url())
   expect(url.searchParams.get('thread_id')).toBe(threadId)
@@ -156,7 +160,7 @@ test('list shows audit row after chat completion and opens detail', async ({
   await expect(dataRow).toContainText(appId)
   await expect(dataRow).toContainText(threadId)
 
-  await dataRow.getByRole('link', { name: '详情' }).click()
+  await dataRow.getByRole('link', { name: '查看请求详情' }).click()
 
   await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
   await expect(
@@ -213,7 +217,11 @@ test('detail page shows request and response body from audit files', async ({
   await expect(page.getByRole('row').filter({ hasText: model })).toBeVisible({
     timeout: 20_000,
   })
-  await page.getByRole('row').filter({ hasText: model }).getByRole('link', { name: '详情' }).click()
+  await page
+    .getByRole('row')
+    .filter({ hasText: model })
+    .getByRole('link', { name: '查看请求详情' })
+    .click()
 
   await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
   const requestSection = page.getByTestId('audit-body-request')

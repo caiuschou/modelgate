@@ -2,8 +2,16 @@ import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } fr
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, Info, RefreshCw, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import {
+  ChevronDown,
+  ChevronRight,
+  FileText,
+  Info,
+  List,
+  RefreshCw,
+  X,
+} from 'lucide-react'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -31,7 +39,11 @@ import {
   urlHasAdvancedFilters,
 } from '@/features/logs/log-list-filters'
 import { rememberLogModel } from '@/features/logs/log-recent-models'
-import { formatLatencySeconds } from '@/features/logs/format-latency'
+import {
+  formatCumulativeLatencyMs,
+  formatLatencySeconds,
+} from '@/features/logs/format-latency'
+import { formatThreadActivitySpan } from '@/features/logs/format-thread-activity-span'
 import {
   defaultLogListRange,
   normalizeLogListTimeRange,
@@ -91,6 +103,61 @@ function formatListToken(n: number | null | undefined): string {
 function formatSessionTokenField(v: number | undefined | null): string {
   if (v == null || Number.isNaN(v)) return '—'
   return v.toLocaleString()
+}
+
+/** v2 会话行：合并「首次 / 最后一次」请求时间；时间与标签字号统一。 */
+const activityTimeClassName =
+  'text-sm cursor-default underline decoration-dotted decoration-muted-foreground/50 underline-offset-2'
+
+function AuditThreadActivityCell({ row }: { row: AuditThreadListItem }) {
+  const same = row.first_seen_at === row.last_seen_at
+  const spanSec = Math.max(0, row.last_seen_at - row.first_seen_at)
+  const spanLabel = formatThreadActivitySpan(spanSec)
+  const spanLine = (
+    <span
+      className="text-[11px] tabular-nums text-muted-foreground/85"
+      title="本会话末次与首次请求时间的墙钟间隔（与会话内各请求累计耗时不同）"
+    >
+      跨度 · {spanLabel}
+    </span>
+  )
+  return (
+    <td className="px-3 py-2 align-middle text-sm text-muted-foreground">
+      {same ? (
+        <div className="flex flex-col gap-1">
+          <AuditLogTimestamp
+            unixSeconds={row.last_seen_at}
+            className={activityTimeClassName}
+          />
+          {spanLine}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-0.5">
+            <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+              <span className="shrink-0 text-xs font-medium text-muted-foreground/90">
+                末
+              </span>
+              <AuditLogTimestamp
+                unixSeconds={row.last_seen_at}
+                className={activityTimeClassName}
+              />
+            </div>
+            <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+              <span className="shrink-0 text-xs font-medium text-muted-foreground/80">
+                首
+              </span>
+              <AuditLogTimestamp
+                unixSeconds={row.first_seen_at}
+                className={activityTimeClassName}
+              />
+            </div>
+          </div>
+          {spanLine}
+        </div>
+      )}
+    </td>
+  )
 }
 
 /** Session list: stacked 合计 / 输入·输出 / 缓存 — avoids one unreadable slash line. */
@@ -217,13 +284,22 @@ function AuditLogTableRow({
     </td>
   )
   const actionCell = (
-    <td className={pad}>
-      <Link
-        to={`/logs/${encodeURIComponent(row.request_id)}`}
-        className="text-primary underline-offset-4 hover:underline"
-      >
-        详情
-      </Link>
+    <td className={cn(pad, 'w-12 text-center')}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Link
+            to={`/logs/${encodeURIComponent(row.request_id)}`}
+            aria-label="查看请求详情"
+            className={cn(
+              buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+              'inline-flex text-primary',
+            )}
+          >
+            <FileText className="size-4" aria-hidden />
+          </Link>
+        </TooltipTrigger>
+        <TooltipContent side="left">详情</TooltipContent>
+      </Tooltip>
     </td>
   )
 
@@ -327,9 +403,7 @@ function AuditThreadTableGroup({
             )}
           </Button>
         </td>
-        <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-          <AuditLogTimestamp unixSeconds={row.last_seen_at} />
-        </td>
+        <AuditThreadActivityCell row={row} />
         <td
           className="max-w-[min(100vw,24rem)] truncate px-3 py-2 font-mono text-xs"
           title={row.thread_id}
@@ -339,9 +413,9 @@ function AuditThreadTableGroup({
         <td className="px-3 py-2 text-right tabular-nums">{row.request_count}</td>
         <td
           className="px-3 py-2 text-right tabular-nums"
-          title="各次请求耗时（毫秒）之和"
+          title="各次请求 latency_ms 之和；展示为 ms / 秒 / 分 / 时 等"
         >
-          {formatLatencySeconds(row.total_latency_ms)}
+          {formatCumulativeLatencyMs(row.total_latency_ms)}
         </td>
         <td className="max-w-[14rem] px-3 py-2 align-top">
           <AuditThreadSessionUsageCell row={row} />
@@ -356,21 +430,27 @@ function AuditThreadTableGroup({
             '0'
           )}
         </td>
-        <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-          <AuditLogTimestamp unixSeconds={row.first_seen_at} />
-        </td>
-        <td className="px-3 py-2">
-          <Link
-            to={requestListHref}
-            className="text-primary underline-offset-4 hover:underline"
-          >
-            请求列表
-          </Link>
+        <td className="px-3 py-2 text-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link
+                to={requestListHref}
+                aria-label="在经典列表中查看该会话的请求"
+                className={cn(
+                  buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
+                  'inline-flex text-primary',
+                )}
+              >
+                <List className="size-4" aria-hidden />
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent side="left">请求列表</TooltipContent>
+          </Tooltip>
         </td>
       </tr>
       {expanded ? (
         <tr className="border-b border-border/80 bg-muted/20">
-          <td colSpan={10} className="px-3 py-2 align-top">
+          <td colSpan={9} className="px-3 py-2 align-top">
             {childList.isLoading ? (
               <p className="text-xs text-muted-foreground">加载中…</p>
             ) : childList.isError ? (
@@ -425,8 +505,11 @@ function AuditThreadTableGroup({
                           >
                             耗时 (s)
                           </th>
-                          <th scope="col" className="px-2 py-1.5 font-medium">
-                            操作
+                          <th
+                            scope="col"
+                            className="w-10 px-2 py-1.5 text-center font-medium"
+                          >
+                            <span className="sr-only">操作</span>
                           </th>
                         </tr>
                       </thead>
@@ -445,7 +528,7 @@ function AuditThreadTableGroup({
                 {childList.data.total > THREAD_CHILD_LIMIT ? (
                   <p className="border-t border-border/80 px-2 py-1.5 text-[11px] text-muted-foreground">
                     仅显示前 {THREAD_CHILD_LIMIT} 条，共 {childList.data.total}{' '}
-                    条；完整列表请使用「请求列表」。
+                    条；完整列表请使用该会话行中的列表图标打开经典视图。
                   </p>
                 ) : null}
               </div>
@@ -582,6 +665,8 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   const isLoading = listVariant === 'v1' ? listV1.isLoading : listV2.isLoading
   const isError = listVariant === 'v1' ? listV1.isError : listV2.isError
   const isFetching = listVariant === 'v1' ? listV1.isFetching : listV2.isFetching
+  /** Background refetch (e.g. WS thread rollup) should not spin the header refresh icon. */
+  const listHasCachedData = Boolean(data)
   const exportMutation = useExportAuditLogs()
 
   const refreshBusyRef = useRef(false)
@@ -603,7 +688,8 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
     }
   }, [listV1, listV2])
 
-  const listFetchSpin = isFetching || manualRefreshSpin
+  const listFetchSpin =
+    manualRefreshSpin || (isFetching && !listHasCachedData)
 
   const applyFilters = useCallback(
     (override?: { statusCode?: string }) => {
@@ -1219,8 +1305,11 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 <th scope="col" className="px-3 py-2 font-medium text-right">
                   耗时 (s)
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  操作
+                <th
+                  scope="col"
+                  className="w-12 px-3 py-2 text-center font-medium"
+                >
+                  <span className="sr-only">操作</span>
                 </th>
               </tr>
             </thead>
@@ -1244,8 +1333,12 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                   className="w-10 px-2 py-2"
                   aria-label="展开"
                 />
-                <th scope="col" className="px-3 py-2 font-medium">
-                  最后活动
+                <th
+                  scope="col"
+                  className="px-3 py-2 font-medium"
+                  title="末次与首次请求时间，及二者墙钟间隔（跨度）；列表按末次排序"
+                >
+                  活动时间
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium">
                   会话 (thread)
@@ -1256,9 +1349,9 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 <th
                   scope="col"
                   className="px-3 py-2 text-right font-medium"
-                  title="本会话下各次请求的 latency_ms 之和（缺失计 0）"
+                  title="本会话下各次请求的 latency_ms 之和（缺失计 0）；自动使用 ms / 秒 / 分 / 时 / 天"
                 >
-                  累计耗时 (s)
+                  累计耗时
                 </th>
                 <th
                   scope="col"
@@ -1277,11 +1370,11 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 >
                   失败
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  首次活动
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  操作
+                <th
+                  scope="col"
+                  className="w-12 px-3 py-2 text-center font-medium"
+                >
+                  <span className="sr-only">操作</span>
                 </th>
               </tr>
             </thead>
