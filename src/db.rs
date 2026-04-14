@@ -1695,6 +1695,13 @@ fn build_audit_where_clause(
         args.push(Value::Integer(v));
     }
 
+    // Hide in-flight accept-phase rows (API key accepted; response not yet written). Those use
+    // metadata.accept_phase and status_code IS NULL until REPLACE / Rejected / stream completion.
+    where_clauses.push(
+        "NOT (status_code IS NULL AND COALESCE(json_extract(metadata, '$.accept_phase'), 0) = 1)"
+            .to_string(),
+    );
+
     let where_sql = if where_clauses.is_empty() {
         String::new()
     } else {
