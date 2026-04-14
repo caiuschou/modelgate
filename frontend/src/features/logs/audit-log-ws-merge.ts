@@ -9,11 +9,14 @@ import type {
 /** Strip detail-only fields so list rows stay aligned with `GET /logs/request` list items. */
 export function auditRecordToListItem(r: AuditLogRecord): AuditLogListItem {
   const {
-    request_body_path: _rp,
-    response_body_path: _sp,
-    metadata: _m,
+    request_body_path,
+    response_body_path,
+    metadata,
     ...rest
   } = r
+  void request_body_path
+  void response_body_path
+  void metadata
   return rest
 }
 
