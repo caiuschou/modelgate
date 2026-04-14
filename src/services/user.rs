@@ -349,7 +349,7 @@ mod tests {
     use super::*;
     use crate::audit::{
         AuditAnalyticsModelSlice, AuditAnalyticsResponse, AuditAnalyticsSummary,
-        AuditAnalyticsTimeBucket, AuditListItem, AuditListQuery, AuditRecord,
+        AuditAnalyticsTimeBucket, AuditListItem, AuditListQuery, AuditRecord, AuditThreadListItem,
     };
     use crate::db::ApiKeyAuthRow;
     use crate::services::error::RepositoryError;
@@ -385,6 +385,13 @@ mod tests {
             _query: &AuditListQuery,
             _scope: crate::db::AuditConsoleScope,
         ) -> Result<(Vec<AuditListItem>, i64), RepositoryError> {
+            Ok((Vec::new(), 0))
+        }
+        fn query_audit_threads(
+            &self,
+            _query: &AuditListQuery,
+            _scope: crate::db::AuditConsoleScope,
+        ) -> Result<(Vec<AuditThreadListItem>, i64), RepositoryError> {
             Ok((Vec::new(), 0))
         }
         fn query_audit_analytics(

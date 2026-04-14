@@ -1,11 +1,12 @@
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
+use std::time::Duration;
 use tracing::debug;
 
-use crate::audit::{AuditListItem, AuditListQuery, AuditRecord};
+use crate::audit::{AuditListItem, AuditListQuery, AuditRecord, AuditThreadListItem};
 
-const MIGRATIONS: [(&str, &str); 18] = [
+const MIGRATIONS: [(&str, &str); 19] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -78,6 +79,10 @@ const MIGRATIONS: [(&str, &str); 18] = [
         "0018_audit_normalize_body_paths.sql",
         include_str!("../migrations/0018_audit_normalize_body_paths.sql"),
     ),
+    (
+        "0019_audit_threads.sql",
+        include_str!("../migrations/0019_audit_threads.sql"),
+    ),
 ];
 
 /// How the console scopes audit listing / detail access.
@@ -94,8 +99,20 @@ pub enum AuditConsoleScope {
 
 pub type DbConn = Pool<SqliteConnectionManager>;
 
+/// WAL + busy timeout on every pooled connection so concurrent readers/writers (API handlers,
+/// background audit flush) do not immediately fail with `SQLITE_BUSY` / "database is locked".
+fn configure_sqlite_connection(conn: &mut Connection) -> rusqlite::Result<()> {
+    conn.busy_timeout(Duration::from_secs(5))?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;",
+    )?;
+    Ok(())
+}
+
 pub fn create_db_pool(path: &str) -> Result<DbConn, r2d2::Error> {
-    let manager = SqliteConnectionManager::file(path);
+    let manager = SqliteConnectionManager::file(path).with_init(configure_sqlite_connection);
     r2d2::Pool::builder().max_size(16).build(manager)
 }
 
@@ -1294,6 +1311,30 @@ pub fn insert_api_key_audit(
     Ok(())
 }
 
+/// Maintains [`audit_threads`] in the same transaction as audit row inserts.
+fn touch_audit_thread(
+    conn: &Connection,
+    user_id: i64,
+    team_id: Option<i64>,
+    thread_id: &str,
+    at: i64,
+) -> rusqlite::Result<()> {
+    let thread_id = thread_id.trim();
+    if thread_id.is_empty() {
+        return Ok(());
+    }
+    let team_scope = team_id.unwrap_or(0);
+    conn.execute(
+        "INSERT INTO audit_threads (user_id, team_scope, thread_id, first_seen_at, last_seen_at, request_count)
+         VALUES (?1, ?2, ?3, ?4, ?4, 1)
+         ON CONFLICT(user_id, team_scope, thread_id) DO UPDATE SET
+           last_seen_at = excluded.last_seen_at,
+           request_count = audit_threads.request_count + 1",
+        params![user_id, team_scope, thread_id, at],
+    )?;
+    Ok(())
+}
+
 pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusqlite::Result<()> {
     if records.is_empty() {
         return Ok(());
@@ -1315,6 +1356,11 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
 
         for record in records {
             let metadata = record.metadata.as_ref().map(|v| v.to_string());
+            let already_had_row: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM audit_logs WHERE request_id = ?1)",
+                params![&record.request_id],
+                |row| row.get(0),
+            )?;
             stmt.execute(params![
                 record.request_id,
                 record.user_id,
@@ -1340,6 +1386,11 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
                 record.created_at,
                 record.team_id,
             ])?;
+            if !already_had_row {
+                if let (Some(uid), Some(tid)) = (record.user_id, record.thread_id.as_ref()) {
+                    touch_audit_thread(&tx, uid, record.team_id, tid, record.created_at)?;
+                }
+            }
             if let Err(e) = apply_audit_hourly_rollup_from_record(&tx, record) {
                 tracing::error!(error = %e, request_id = %record.request_id, "audit_hourly_rollup insert failed");
             }
@@ -1598,69 +1649,95 @@ pub fn get_audit_log_by_request_id(
     Ok(record)
 }
 
-fn build_audit_where_clause(
+fn audit_column(alias: &str, name: &str) -> String {
+    if alias.is_empty() {
+        name.to_string()
+    } else {
+        format!("{alias}.{name}")
+    }
+}
+
+fn audit_metadata_accept_expr(alias: &str) -> String {
+    if alias.is_empty() {
+        "json_extract(metadata, '$.accept_phase')".to_string()
+    } else {
+        format!("json_extract({alias}.metadata, '$.accept_phase')")
+    }
+}
+
+/// When `include_scope` is false, caller must constrain rows elsewhere (e.g. `EXISTS` correlation).
+pub(crate) fn audit_log_where_parts(
     query: &AuditListQuery,
     scope: AuditConsoleScope,
-) -> (String, Vec<Value>) {
+    alias: &str,
+    include_scope: bool,
+) -> (Vec<String>, Vec<Value>) {
     let mut where_clauses: Vec<String> = Vec::new();
     let mut args: Vec<Value> = Vec::new();
+    let c = |name: &str| audit_column(alias, name);
 
-    match scope {
-        AuditConsoleScope::Personal(user_id) => {
-            where_clauses.push("user_id = ?".to_string());
-            args.push(Value::Integer(user_id));
-            where_clauses.push("team_id IS NULL".to_string());
-        }
-        AuditConsoleScope::Team(team_id) => {
-            where_clauses.push("team_id = ?".to_string());
-            args.push(Value::Integer(team_id));
-        }
-        AuditConsoleScope::UserOwnedTraffic(user_id) => {
-            where_clauses.push("user_id = ?".to_string());
-            args.push(Value::Integer(user_id));
+    if include_scope {
+        match scope {
+            AuditConsoleScope::Personal(user_id) => {
+                where_clauses.push(format!("{} = ?", c("user_id")));
+                args.push(Value::Integer(user_id));
+                where_clauses.push(format!("{} IS NULL", c("team_id")));
+            }
+            AuditConsoleScope::Team(team_id) => {
+                where_clauses.push(format!("{} = ?", c("team_id")));
+                args.push(Value::Integer(team_id));
+            }
+            AuditConsoleScope::UserOwnedTraffic(user_id) => {
+                where_clauses.push(format!("{} = ?", c("user_id")));
+                args.push(Value::Integer(user_id));
+            }
         }
     }
     if let Some(token_id) = query.token_id {
-        where_clauses.push("token_id = ?".to_string());
+        where_clauses.push(format!("{} = ?", c("token_id")));
         args.push(Value::Integer(token_id));
     }
     if let Some(start_time) = query.start_time {
-        where_clauses.push("created_at >= ?".to_string());
+        where_clauses.push(format!("{} >= ?", c("created_at")));
         args.push(Value::Integer(start_time));
     }
     if let Some(end_time) = query.end_time {
-        where_clauses.push("created_at <= ?".to_string());
+        where_clauses.push(format!("{} <= ?", c("created_at")));
         args.push(Value::Integer(end_time));
     }
     if let Some(status_code) = query.status_code {
-        where_clauses.push("status_code = ?".to_string());
+        where_clauses.push(format!("{} = ?", c("status_code")));
         args.push(Value::Integer(status_code));
     }
     if let Some(channel_id) = &query.channel_id {
-        where_clauses.push("channel_id = ?".to_string());
+        where_clauses.push(format!("{} = ?", c("channel_id")));
         args.push(Value::Text(channel_id.clone()));
     }
     if let Some(model) = &query.model {
-        where_clauses.push("model = ?".to_string());
+        where_clauses.push(format!("{} = ?", c("model")));
         args.push(Value::Text(model.clone()));
     }
     if let Some(keyword) = &query.keyword {
         let like_kw = format!("%{keyword}%");
-        where_clauses
-            .push("(request_id LIKE ? OR error_message LIKE ? OR model LIKE ?)".to_string());
+        where_clauses.push(format!(
+            "({} LIKE ? OR {} LIKE ? OR {} LIKE ?)",
+            c("request_id"),
+            c("error_message"),
+            c("model")
+        ));
         args.push(Value::Text(like_kw.clone()));
         args.push(Value::Text(like_kw.clone()));
         args.push(Value::Text(like_kw));
     }
     if let Some(app_id) = &query.app_id {
         if !app_id.is_empty() {
-            where_clauses.push("app_id = ?".to_string());
+            where_clauses.push(format!("{} = ?", c("app_id")));
             args.push(Value::Text(app_id.clone()));
         }
     }
     if let Some(thread_id) = &query.thread_id {
         if !thread_id.is_empty() {
-            where_clauses.push("thread_id = ?".to_string());
+            where_clauses.push(format!("{} = ?", c("thread_id")));
             args.push(Value::Text(thread_id.clone()));
         }
     }
@@ -1672,43 +1749,145 @@ fn build_audit_where_clause(
             .collect();
         if !parts.is_empty() {
             let placeholders: Vec<&str> = parts.iter().map(|_| "?").collect();
-            where_clauses.push(format!("finish_reason IN ({})", placeholders.join(", ")));
+            where_clauses.push(format!(
+                "{} IN ({})",
+                c("finish_reason"),
+                placeholders.join(", ")
+            ));
             for p in parts {
                 args.push(Value::Text(p));
             }
         }
     }
     if let Some(v) = query.min_prompt_tokens {
-        where_clauses.push("prompt_tokens >= ?".to_string());
+        where_clauses.push(format!("{} >= ?", c("prompt_tokens")));
         args.push(Value::Integer(v));
     }
     if let Some(v) = query.max_prompt_tokens {
-        where_clauses.push("prompt_tokens <= ?".to_string());
+        where_clauses.push(format!("{} <= ?", c("prompt_tokens")));
         args.push(Value::Integer(v));
     }
     if let Some(v) = query.min_completion_tokens {
-        where_clauses.push("completion_tokens >= ?".to_string());
+        where_clauses.push(format!("{} >= ?", c("completion_tokens")));
         args.push(Value::Integer(v));
     }
     if let Some(v) = query.max_completion_tokens {
-        where_clauses.push("completion_tokens <= ?".to_string());
+        where_clauses.push(format!("{} <= ?", c("completion_tokens")));
         args.push(Value::Integer(v));
     }
 
-    // Hide in-flight accept-phase rows (API key accepted; response not yet written). Those use
-    // metadata.accept_phase and status_code IS NULL until REPLACE / Rejected / stream completion.
-    where_clauses.push(
-        "NOT (status_code IS NULL AND COALESCE(json_extract(metadata, '$.accept_phase'), 0) = 1)"
-            .to_string(),
-    );
+    let meta_expr = audit_metadata_accept_expr(alias);
+    where_clauses.push(format!(
+        "NOT ({} IS NULL AND COALESCE({}, 0) = 1)",
+        c("status_code"),
+        meta_expr
+    ));
 
-    let where_sql = if where_clauses.is_empty() {
+    (where_clauses, args)
+}
+
+fn build_audit_where_clause(
+    query: &AuditListQuery,
+    scope: AuditConsoleScope,
+) -> (String, Vec<Value>) {
+    let (parts, args) = audit_log_where_parts(query, scope, "", true);
+    let where_sql = if parts.is_empty() {
         String::new()
     } else {
-        format!("WHERE {}", where_clauses.join(" AND "))
+        format!("WHERE {}", parts.join(" AND "))
     };
-
     (where_sql, args)
+}
+
+fn audit_thread_outer_scope_parts(scope: AuditConsoleScope) -> (Vec<String>, Vec<Value>) {
+    let mut where_clauses: Vec<String> = Vec::new();
+    let mut args: Vec<Value> = Vec::new();
+    match scope {
+        AuditConsoleScope::Personal(user_id) => {
+            where_clauses.push("at.user_id = ?".to_string());
+            args.push(Value::Integer(user_id));
+            where_clauses.push("at.team_scope = 0".to_string());
+        }
+        AuditConsoleScope::Team(team_id) => {
+            where_clauses.push("at.team_scope = ?".to_string());
+            args.push(Value::Integer(team_id));
+        }
+        AuditConsoleScope::UserOwnedTraffic(user_id) => {
+            where_clauses.push("at.user_id = ?".to_string());
+            args.push(Value::Integer(user_id));
+        }
+    }
+    (where_clauses, args)
+}
+
+/// Session/thread summary rows: one per `audit_threads` entry that has at least one matching `audit_logs` row under the same filters as [`query_audit_logs`].
+pub fn query_audit_threads(
+    conn: &Connection,
+    query: &AuditListQuery,
+    scope: AuditConsoleScope,
+) -> rusqlite::Result<(Vec<AuditThreadListItem>, i64)> {
+    let (outer_parts, outer_args) = audit_thread_outer_scope_parts(scope);
+    let (inner_parts, inner_args) = audit_log_where_parts(query, scope, "al", false);
+    debug_assert!(
+        !inner_parts.is_empty(),
+        "audit log filter parts should always include accept_phase guard"
+    );
+
+    let exists_inner = inner_parts.join(" AND ");
+    let exists_sql = format!(
+        "EXISTS (SELECT 1 FROM audit_logs al WHERE al.user_id = at.user_id \
+         AND COALESCE(al.team_id, 0) = at.team_scope AND al.thread_id = at.thread_id AND {exists_inner})"
+    );
+
+    let mut all_parts = outer_parts;
+    all_parts.push(exists_sql);
+    let where_sql = format!("WHERE {}", all_parts.join(" AND "));
+
+    let mut all_args = outer_args;
+    all_args.extend(inner_args);
+
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let offset = query.offset.unwrap_or(0);
+
+    let list_sql = format!(
+        "SELECT at.thread_id, at.user_id, at.team_scope, at.first_seen_at, at.last_seen_at, at.request_count
+         FROM audit_threads at
+         {where_sql}
+         ORDER BY at.last_seen_at DESC
+         LIMIT ? OFFSET ?"
+    );
+
+    let mut list_args = all_args.clone();
+    list_args.push(Value::Integer(limit as i64));
+    list_args.push(Value::Integer(offset as i64));
+
+    let mut stmt = conn.prepare(&list_sql)?;
+    let rows = stmt.query_map(params_from_iter(list_args.iter()), |row| {
+        let team_scope: i64 = row.get(2)?;
+        Ok(AuditThreadListItem {
+            thread_id: row.get(0)?,
+            user_id: row.get(1)?,
+            team_id: if team_scope == 0 {
+                None
+            } else {
+                Some(team_scope)
+            },
+            first_seen_at: row.get(3)?,
+            last_seen_at: row.get(4)?,
+            request_count: row.get(5)?,
+        })
+    })?;
+
+    let mut records = Vec::new();
+    for r in rows {
+        records.push(r?);
+    }
+
+    let count_sql = format!("SELECT COUNT(1) FROM audit_threads at {where_sql}");
+    let total = conn.query_row(&count_sql, params_from_iter(all_args.iter()), |row| {
+        row.get(0)
+    })?;
+    Ok((records, total))
 }
 
 /// True when analytics can use `audit_hourly_rollups` (no extra filters beyond time + scope).
@@ -2454,6 +2633,160 @@ mod tests {
         run_migrations(&conn).expect("migration");
 
         assert!(find_user_id(&conn, "nobody").is_err());
+    }
+
+    #[test]
+    fn insert_audit_logs_updates_audit_threads() {
+        use crate::audit::AuditRecord;
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 10_000_000_i64;
+        let row = |rid: &str, ts: i64| AuditRecord {
+            request_id: rid.into(),
+            user_id: Some(7),
+            token_id: Some(1),
+            channel_id: None,
+            model: Some("m-a".into()),
+            request_type: Some("chat".into()),
+            request_body_path: None,
+            response_body_path: None,
+            status_code: Some(200),
+            error_message: None,
+            prompt_tokens: Some(1),
+            completion_tokens: Some(4),
+            cached_prompt_tokens: None,
+            total_tokens: Some(5),
+            cost: Some(0.02),
+            latency_ms: Some(50),
+            reasoning_phase_ms: None,
+            app_id: None,
+            thread_id: Some("thread-a".into()),
+            finish_reason: None,
+            metadata: None,
+            created_at: ts,
+            team_id: None,
+        };
+        insert_audit_logs(&mut conn, &[row("q1", t0), row("q2", t0 + 5)]).expect("insert audit");
+
+        let row: (i64, i64, i64) = conn
+            .query_row(
+                "SELECT first_seen_at, last_seen_at, request_count FROM audit_threads WHERE user_id = 7 AND team_scope = 0 AND thread_id = 'thread-a'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .expect("audit_threads row");
+        assert_eq!(row.0, t0);
+        assert_eq!(row.1, t0 + 5);
+        assert_eq!(row.2, 2);
+    }
+
+    #[test]
+    fn query_audit_threads_lists_matching_sessions() {
+        use crate::audit::{AuditListQuery, AuditRecord};
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 10_000_000_i64;
+        let row = |rid: &str, ts: i64| AuditRecord {
+            request_id: rid.into(),
+            user_id: Some(7),
+            token_id: Some(1),
+            channel_id: None,
+            model: Some("m-a".into()),
+            request_type: Some("chat".into()),
+            request_body_path: None,
+            response_body_path: None,
+            status_code: Some(200),
+            error_message: None,
+            prompt_tokens: Some(1),
+            completion_tokens: Some(4),
+            cached_prompt_tokens: None,
+            total_tokens: Some(5),
+            cost: Some(0.02),
+            latency_ms: Some(50),
+            reasoning_phase_ms: None,
+            app_id: None,
+            thread_id: Some("thread-a".into()),
+            finish_reason: None,
+            metadata: Some(serde_json::json!({})),
+            created_at: ts,
+            team_id: None,
+        };
+        insert_audit_logs(&mut conn, &[row("q1", t0), row("q2", t0 + 5)]).expect("insert audit");
+
+        let filter = AuditListQuery {
+            start_time: Some(t0 - 10),
+            end_time: Some(t0 + 10_000),
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            thread_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: Some(20),
+            offset: Some(0),
+        };
+        let (threads, total) =
+            query_audit_threads(&conn, &filter, AuditConsoleScope::Personal(7)).expect("threads");
+        assert_eq!(total, 1);
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].thread_id, "thread-a");
+        assert_eq!(threads[0].request_count, 2);
+    }
+
+    #[test]
+    fn insert_audit_logs_replace_same_request_id_does_not_double_count_thread() {
+        use crate::audit::AuditRecord;
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 10_000_000_i64;
+        let row = AuditRecord {
+            request_id: "same-req".into(),
+            user_id: Some(7),
+            token_id: Some(1),
+            channel_id: None,
+            model: Some("m".into()),
+            request_type: Some("chat".into()),
+            request_body_path: None,
+            response_body_path: None,
+            status_code: Some(200),
+            error_message: None,
+            prompt_tokens: Some(1),
+            completion_tokens: Some(1),
+            cached_prompt_tokens: None,
+            total_tokens: Some(2),
+            cost: Some(0.01),
+            latency_ms: Some(10),
+            reasoning_phase_ms: None,
+            app_id: None,
+            thread_id: Some("t1".into()),
+            finish_reason: None,
+            metadata: None,
+            created_at: t0,
+            team_id: None,
+        };
+        insert_audit_logs(&mut conn, std::slice::from_ref(&row)).expect("first insert");
+        let mut updated = row;
+        updated.status_code = Some(500);
+        insert_audit_logs(&mut conn, &[updated]).expect("replace");
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT request_count FROM audit_threads WHERE user_id = 7 AND team_scope = 0 AND thread_id = 't1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]

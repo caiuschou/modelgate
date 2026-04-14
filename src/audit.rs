@@ -111,6 +111,26 @@ pub struct AuditListQuery {
     pub offset: Option<u32>,
 }
 
+/// One row per `(owner scope, thread_id)` from `audit_threads`, aligned with request-list filters.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditThreadListItem {
+    pub thread_id: String,
+    pub user_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub team_id: Option<i64>,
+    pub first_seen_at: i64,
+    pub last_seen_at: i64,
+    pub request_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AuditThreadListResponse {
+    pub data: Vec<AuditThreadListItem>,
+    pub total: i64,
+    pub limit: u32,
+    pub offset: u32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditListItem {
     pub request_id: String,

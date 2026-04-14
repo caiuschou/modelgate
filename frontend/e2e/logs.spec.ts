@@ -6,6 +6,7 @@ import {
   loginApiKey,
   waitForAuditDetailResponsePath,
   waitForAuditListRow,
+  waitForAuditThreadListRow,
 } from './helpers/api'
 import { loadE2eSessionCredentials } from './load-e2e-credentials'
 
@@ -37,6 +38,64 @@ test('log center v2 list heading is visible when authenticated', async ({
   await expect(
     page.getByRole('heading', { name: '日志中心（新版）' }),
   ).toBeVisible()
+  // 无数据时不渲染表头，仅校验筛选区常驻
+  await expect(page.getByRole('button', { name: '查询' })).toBeVisible()
+})
+
+test('log center v2 shows session row and links to classic list with thread filter', async ({
+  page,
+}) => {
+  const model = `e2e_v2_thread_${Date.now()}`
+  const threadId = `e2e_sess_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model, {
+    threadId,
+  })
+  expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
+
+  const end = unixNow() + 3600
+  const thread = await waitForAuditThreadListRow(backendBase, session, {
+    start_time: '0',
+    end_time: String(end),
+    limit: '20',
+    offset: '0',
+    thread_id: threadId,
+  })
+  expect(thread, 'threads API did not list session (flush timeout)').not.toBeNull()
+  expect(thread!.thread_id).toBe(threadId)
+  expect(thread!.request_count).toBeGreaterThanOrEqual(1)
+
+  await page.goto('/logs/v2')
+  await expect(
+    page.getByRole('columnheader', { name: '最后活动' }),
+  ).toBeVisible({ timeout: 25_000 })
+  const dataRow = page.getByRole('row').filter({ hasText: threadId })
+  await expect(dataRow).toBeVisible({ timeout: 25_000 })
+  // 列：展开 · 最后活动 · 会话 · 请求数 · …
+  await expect(dataRow.getByRole('cell').nth(3)).toHaveText(
+    String(thread!.request_count),
+  )
+
+  await dataRow
+    .getByRole('button', { name: '展开该会话下的请求' })
+    .click()
+  await expect(page.getByRole('link', { name: '详情' })).toBeVisible({
+    timeout: 15_000,
+  })
+
+  await dataRow.getByRole('link', { name: '请求列表' }).click()
+  await expect(page).toHaveURL(/\/logs\?/)
+  const url = new URL(page.url())
+  expect(url.searchParams.get('thread_id')).toBe(threadId)
+
+  await expect(page.getByRole('heading', { name: '日志中心' })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: '日志中心（新版）' }),
+  ).not.toBeVisible()
+  await expect(page.getByRole('row').filter({ hasText: model })).toBeVisible({
+    timeout: 20_000,
+  })
 })
 
 test('log list token cells show usage tooltip on hover', async ({ page }) => {

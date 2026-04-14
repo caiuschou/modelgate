@@ -3,7 +3,7 @@ use std::{fs, path::Path};
 
 use crate::audit::{
     now_unix_millis, AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord,
-    ExportRequest, ExportResponse, ExportStatusResponse,
+    AuditThreadListItem, ExportRequest, ExportResponse, ExportStatusResponse,
 };
 use crate::db::AuditConsoleScope;
 
@@ -16,6 +16,11 @@ pub trait AuditService: Send + Sync {
         query: &AuditListQuery,
         scope: AuditConsoleScope,
     ) -> Result<(Vec<AuditListItem>, i64), ServiceError>;
+    fn list_audit_threads(
+        &self,
+        query: &AuditListQuery,
+        scope: AuditConsoleScope,
+    ) -> Result<(Vec<AuditThreadListItem>, i64), ServiceError>;
     fn get_audit_log(
         &self,
         request_id: &str,
@@ -68,6 +73,16 @@ impl AuditService for DefaultAuditService {
     ) -> Result<(Vec<AuditListItem>, i64), ServiceError> {
         self.repo
             .query_audit_logs(query, scope)
+            .map_err(ServiceError::from)
+    }
+
+    fn list_audit_threads(
+        &self,
+        query: &AuditListQuery,
+        scope: AuditConsoleScope,
+    ) -> Result<(Vec<AuditThreadListItem>, i64), ServiceError> {
+        self.repo
+            .query_audit_threads(query, scope)
             .map_err(ServiceError::from)
     }
 
@@ -334,6 +349,13 @@ mod tests {
             } else {
                 Ok((Vec::new(), self.rows.len() as i64))
             }
+        }
+        fn query_audit_threads(
+            &self,
+            _query: &AuditListQuery,
+            _scope: crate::db::AuditConsoleScope,
+        ) -> Result<(Vec<crate::audit::AuditThreadListItem>, i64), RepositoryError> {
+            Ok((Vec::new(), 0))
         }
         fn query_audit_analytics(
             &self,

@@ -28,6 +28,23 @@ export interface AuditLogListResponse {
   offset: number
 }
 
+/** One row per session (`thread_id`) from `GET /api/v1/logs/threads`. */
+export interface AuditThreadListItem {
+  thread_id: string
+  user_id: number
+  team_id: number | null
+  first_seen_at: number
+  last_seen_at: number
+  request_count: number
+}
+
+export interface AuditThreadListResponse {
+  data: AuditThreadListItem[]
+  total: number
+  limit: number
+  offset: number
+}
+
 /** Full audit row returned by detail API (snake_case). */
 export interface AuditLogRecord extends AuditLogListItem {
   request_body_path: string | null

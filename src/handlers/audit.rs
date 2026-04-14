@@ -3,8 +3,8 @@ use serde::Deserialize;
 use tracing::debug;
 
 use crate::audit::{
-    AuditAnalyticsParams, AuditListQuery, AuditListResponse, ExportRequest, ExportResponse,
-    ExportStatusResponse,
+    AuditAnalyticsParams, AuditListQuery, AuditListResponse, AuditThreadListResponse,
+    ExportRequest, ExportResponse, ExportStatusResponse,
 };
 use crate::db::AuditConsoleScope;
 use crate::{errors::ApiError, session_auth, AppState};
@@ -80,6 +80,26 @@ pub async fn list_audit_logs(
     let (data, total) = state.audit_service.list_audit_logs(&query, scope)?;
 
     Ok(HttpResponse::Ok().json(AuditListResponse {
+        data,
+        total,
+        limit,
+        offset,
+    }))
+}
+
+pub async fn list_audit_threads(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    query: web::Query<AuditListQuery>,
+) -> Result<HttpResponse, ApiError> {
+    let (_, user_id) = auth_scope(&req, &state)?;
+    let scope = session_auth::audit_scope_for_request(&req, &state, user_id)?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let offset = query.offset.unwrap_or(0);
+
+    let (data, total) = state.audit_service.list_audit_threads(&query, scope)?;
+
+    Ok(HttpResponse::Ok().json(AuditThreadListResponse {
         data,
         total,
         limit,
@@ -288,6 +308,24 @@ mod tests {
                     thread_id: None,
                     finish_reason: Some("stop".into()),
                     created_at: query.start_time.unwrap_or(1),
+                }],
+                1,
+            ))
+        }
+
+        fn list_audit_threads(
+            &self,
+            query: &AuditListQuery,
+            _scope: crate::db::AuditConsoleScope,
+        ) -> Result<(Vec<crate::audit::AuditThreadListItem>, i64), ServiceError> {
+            Ok((
+                vec![crate::audit::AuditThreadListItem {
+                    thread_id: "thread-demo".into(),
+                    user_id: 100,
+                    team_id: None,
+                    first_seen_at: query.start_time.unwrap_or(1),
+                    last_seen_at: query.start_time.unwrap_or(1),
+                    request_count: 2,
                 }],
                 1,
             ))

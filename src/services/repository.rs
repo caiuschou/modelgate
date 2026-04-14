@@ -2,7 +2,9 @@ use rusqlite::ErrorCode;
 use serde::Serialize;
 use tracing::error;
 
-use crate::audit::{AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord};
+use crate::audit::{
+    AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord, AuditThreadListItem,
+};
 use crate::db::{self, AuditConsoleScope};
 
 use super::error::RepositoryError;
@@ -119,6 +121,11 @@ pub trait Repository: Send + Sync {
         query: &AuditListQuery,
         scope: AuditConsoleScope,
     ) -> Result<(Vec<AuditListItem>, i64), RepositoryError>;
+    fn query_audit_threads(
+        &self,
+        query: &AuditListQuery,
+        scope: AuditConsoleScope,
+    ) -> Result<(Vec<AuditThreadListItem>, i64), RepositoryError>;
     fn query_audit_analytics(
         &self,
         query: &AuditListQuery,
@@ -331,6 +338,19 @@ impl Repository for SqliteRepository {
             .map_err(|_| RepositoryError::PoolUnavailable)?;
         db::query_audit_logs(&conn, query, scope)
             .map_err(|_| RepositoryError::Internal("Failed to query audit logs".into()))
+    }
+
+    fn query_audit_threads(
+        &self,
+        query: &AuditListQuery,
+        scope: AuditConsoleScope,
+    ) -> Result<(Vec<AuditThreadListItem>, i64), RepositoryError> {
+        let conn = self
+            .db_pool
+            .get()
+            .map_err(|_| RepositoryError::PoolUnavailable)?;
+        db::query_audit_threads(&conn, query, scope)
+            .map_err(|_| RepositoryError::Internal("Failed to query audit threads".into()))
     }
 
     fn query_audit_analytics(

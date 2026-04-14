@@ -5,6 +5,7 @@ import { useTeamStore } from '@/stores/team-store'
 import type {
   AuditLogListResponse,
   AuditLogRecord,
+  AuditThreadListResponse,
   ExportCreateResponse,
 } from '@/features/logs/types'
 
@@ -19,10 +20,14 @@ function toSearchParams(
   return p
 }
 
-export function useAuditLogList(query: Record<string, string | number | undefined | null>) {
+export function useAuditLogList(
+  query: Record<string, string | number | undefined | null>,
+  options?: { enabled?: boolean },
+) {
   const sessionReady = useConsoleSessionReady()
   const search = toSearchParams(query)
   const teamId = useTeamStore((s) => s.currentTeamId)
+  const enabled = options?.enabled !== false
   return useQuery({
     queryKey: ['logs', 'list', teamId ?? 'personal', search.toString()],
     queryFn: async () => {
@@ -31,7 +36,27 @@ export function useAuditLogList(query: Record<string, string | number | undefine
       return apiClient.get(url).json<AuditLogListResponse>()
     },
     staleTime: 15_000,
-    enabled: sessionReady,
+    enabled: sessionReady && enabled,
+  })
+}
+
+export function useAuditThreadList(
+  query: Record<string, string | number | undefined | null>,
+  options?: { enabled?: boolean },
+) {
+  const sessionReady = useConsoleSessionReady()
+  const search = toSearchParams(query)
+  const teamId = useTeamStore((s) => s.currentTeamId)
+  const enabled = options?.enabled !== false
+  return useQuery({
+    queryKey: ['logs', 'threads', teamId ?? 'personal', search.toString()],
+    queryFn: async () => {
+      const path = apiPath('api/v1/logs/threads')
+      const url = search.toString() ? `${path}?${search}` : path
+      return apiClient.get(url).json<AuditThreadListResponse>()
+    },
+    staleTime: 15_000,
+    enabled: sessionReady && enabled,
   })
 }
 

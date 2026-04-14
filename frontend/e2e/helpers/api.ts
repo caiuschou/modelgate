@@ -223,6 +223,35 @@ export async function waitForAuditListRow(
   return null
 }
 
+/** Poll `GET /api/v1/logs/threads` until a row appears (session-centric list). */
+export async function waitForAuditThreadListRow(
+  backendBaseUrl: string,
+  token: string,
+  query: Record<string, string>,
+  timeoutMs = 25_000,
+): Promise<{ thread_id: string; request_count: number } | null> {
+  const qs = new URLSearchParams(query)
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const r = await fetch(`${backendBaseUrl}/api/v1/logs/threads?${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (r.ok) {
+      const body = (await r.json()) as {
+        data: { thread_id: string; request_count: number }[]
+      }
+      if (body.data?.length) {
+        return {
+          thread_id: body.data[0].thread_id,
+          request_count: body.data[0].request_count,
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  return null
+}
+
 export async function createTeam(
   consoleBaseUrl: string,
   token: string,

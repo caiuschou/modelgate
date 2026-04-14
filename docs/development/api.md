@@ -307,6 +307,12 @@
 
 **响应：** `{ "data": [ ... ], "total", "limit", "offset" }`
 
+**`GET /api/v1/logs/threads`**
+
+会话汇总列表（`audit_threads`）：**每行一个 `thread_id`**，Query 参数与 **`GET /api/v1/logs/request` 相同**。返回在时间范围内 **至少有一条** 满足相同筛选条件的请求审计行的会话；排序按 **`last_seen_at` 降序**。
+
+**响应字段（`data[]`）：** `thread_id`、`user_id`、`team_id`（个人为 `null`）、`first_seen_at`、`last_seen_at`、`request_count`（该会话累计请求次数，与维表一致）。
+
 ### 6.2 详情
 
 **`GET /api/v1/logs/request/{request_id}`**

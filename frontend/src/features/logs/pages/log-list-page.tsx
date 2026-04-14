@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ChevronDown, Info, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, Info, RefreshCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -21,6 +21,7 @@ import { LogModelPicker } from '@/features/logs/components/log-model-picker'
 import {
   downloadExportFile,
   useAuditLogList,
+  useAuditThreadList,
   useExportAuditLogs,
 } from '@/features/logs/hooks/use-logs'
 import {
@@ -42,7 +43,7 @@ import { useMyApiKeys } from '@/features/api-keys/hooks/use-api-keys'
 import type { ApiKeySummary } from '@/features/api-keys/types'
 import { formatCostUsd } from '@/lib/format-cost'
 import { cn } from '@/lib/utils'
-import type { AuditLogListItem } from '@/features/logs/types'
+import type { AuditLogListItem, AuditThreadListItem } from '@/features/logs/types'
 
 const PAGE_SIZE = 20
 
@@ -70,6 +71,18 @@ function delayMs(ms: number): Promise<void> {
   })
 }
 
+/** Classic `/logs` URL with this thread id and current range/filters (offset reset). */
+function hrefToClassicRequestListForThread(
+  threadId: string,
+  current: URLSearchParams,
+): string {
+  const next = new URLSearchParams(current)
+  next.set('thread_id', threadId)
+  next.set('offset', '0')
+  const q = next.toString()
+  return q ? `/logs?${q}` : '/logs'
+}
+
 function formatListToken(n: number | null | undefined): string {
   if (n == null) return '—'
   return n.toLocaleString()
@@ -92,43 +105,52 @@ export interface LogListPageProps {
 
 function AuditLogTableRow({
   row,
-  listVariant,
+  density = 'default',
 }: {
   row: AuditLogListItem
-  listVariant: LogListVariant
+  /** 嵌套在会话展开区时使用更紧凑的单元格（列与 v1 一致） */
+  density?: 'default' | 'compact'
 }) {
+  const compact = density === 'compact'
+  const pad = compact ? 'px-2 py-1.5' : 'px-3 py-2'
+  const mono = compact ? 'font-mono text-[11px]' : 'font-mono text-xs'
+  const badgeCls = (code: number) =>
+    compact
+      ? `inline-block rounded px-1.5 py-0.5 text-[11px] font-medium ${statusBadgeClass(code)}`
+      : `inline-block rounded px-2 py-0.5 text-xs font-medium ${statusBadgeClass(code)}`
+
   const timeCell = (
-    <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+    <td className={cn('whitespace-nowrap text-muted-foreground', pad)}>
       <AuditLogTimestamp unixSeconds={row.created_at} />
     </td>
   )
   const requestIdCell = (
-    <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs">
+    <td className={cn('max-w-[140px] truncate', pad, mono)}>
       {row.request_id}
     </td>
   )
   const threadCell = (
-    <td className="max-w-[160px] truncate px-3 py-2 font-mono text-xs">
+    <td className={cn('max-w-[160px] truncate', pad, mono)}>
       {row.thread_id ?? '—'}
     </td>
   )
-  const modelCell = <td className="px-3 py-2">{row.model ?? '—'}</td>
-  const appCell = <td className="px-3 py-2">{row.app_id ?? '—'}</td>
+  const modelCell = (
+    <td className={cn(pad, compact && 'text-xs')}>{row.model ?? '—'}</td>
+  )
+  const appCell = (
+    <td className={cn(pad, compact && 'text-xs')}>{row.app_id ?? '—'}</td>
+  )
   const statusCell = (
-    <td className="px-3 py-2">
+    <td className={pad}>
       {row.status_code !== null ? (
-        <span
-          className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${statusBadgeClass(row.status_code)}`}
-        >
-          {row.status_code}
-        </span>
+        <span className={badgeCls(row.status_code)}>{row.status_code}</span>
       ) : (
         '—'
       )}
     </td>
   )
   const usageCell = (
-    <td className="px-3 py-2 text-right font-mono text-xs">
+    <td className={cn('text-right', mono, pad)}>
       <LogListUsageTooltipCell row={row}>
         <div className="flex flex-col items-end gap-0.5 leading-tight">
           <div>
@@ -148,22 +170,22 @@ function AuditLogTableRow({
     </td>
   )
   const costCell = (
-    <td className="px-3 py-2 text-right font-mono text-xs">
+    <td className={cn('text-right', mono, pad)}>
       {row.cost != null ? formatCostUsd(row.cost) : '—'}
     </td>
   )
   const finishCell = (
-    <td className="px-3 py-2 font-mono text-xs">{row.finish_reason ?? '—'}</td>
+    <td className={cn(mono, pad)}>{row.finish_reason ?? '—'}</td>
   )
   const latencyCell = (
-    <td className="px-3 py-2 text-right font-mono text-xs">
+    <td className={cn('text-right', mono, pad)}>
       <LogListLatencyTooltipCell row={row}>
         {formatLatencySeconds(row.latency_ms)}
       </LogListLatencyTooltipCell>
     </td>
   )
   const actionCell = (
-    <td className="px-3 py-2">
+    <td className={pad}>
       <Link
         to={`/logs/${encodeURIComponent(row.request_id)}`}
         className="text-primary underline-offset-4 hover:underline"
@@ -173,26 +195,13 @@ function AuditLogTableRow({
     </td>
   )
 
-  if (listVariant === 'v2') {
-    return (
-      <tr className="border-b border-border/80 hover:bg-muted/30">
-        {timeCell}
-        {threadCell}
-        {requestIdCell}
-        {modelCell}
-        {appCell}
-        {statusCell}
-        {usageCell}
-        {costCell}
-        {finishCell}
-        {latencyCell}
-        {actionCell}
-      </tr>
-    )
-  }
-
   return (
-    <tr className="border-b border-border/80 hover:bg-muted/30">
+    <tr
+      className={cn(
+        'border-b hover:bg-muted/30',
+        compact ? 'border-border/60 last:border-0' : 'border-border/80',
+      )}
+    >
       {timeCell}
       {requestIdCell}
       {modelCell}
@@ -205,6 +214,195 @@ function AuditLogTableRow({
       {latencyCell}
       {actionCell}
     </tr>
+  )
+}
+
+const THREAD_CHILD_LIMIT = 50
+
+type ThreadRowFilterContext = {
+  startTime: number
+  endTime: number
+  keyword: string
+  model: string
+  appId: string
+  finishReason: string
+  statusCode: string
+  tokenId: string
+}
+
+function AuditThreadTableGroup({
+  row,
+  requestListHref,
+  expanded,
+  onToggleExpand,
+  filterCtx,
+}: {
+  row: AuditThreadListItem
+  requestListHref: string
+  expanded: boolean
+  onToggleExpand: () => void
+  filterCtx: ThreadRowFilterContext
+}) {
+  const threadRequestsQuery = useMemo(
+    () =>
+      auditLogListQuery({
+        startTime: filterCtx.startTime,
+        endTime: filterCtx.endTime,
+        limit: THREAD_CHILD_LIMIT,
+        offset: 0,
+        keyword: filterCtx.keyword,
+        model: filterCtx.model,
+        appId: filterCtx.appId,
+        threadId: row.thread_id,
+        finishReason: filterCtx.finishReason,
+        statusCode: filterCtx.statusCode,
+        tokenId: filterCtx.tokenId,
+      }),
+    [
+      filterCtx.appId,
+      filterCtx.endTime,
+      filterCtx.finishReason,
+      filterCtx.keyword,
+      filterCtx.model,
+      filterCtx.startTime,
+      filterCtx.statusCode,
+      filterCtx.tokenId,
+      row.thread_id,
+    ],
+  )
+
+  const childList = useAuditLogList(threadRequestsQuery, {
+    enabled: expanded,
+  })
+
+  return (
+    <Fragment>
+      <tr className="border-b border-border/80 hover:bg-muted/30">
+        <td className="w-10 px-2 py-2 align-middle">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-8 shrink-0"
+            aria-expanded={expanded}
+            aria-label={expanded ? '收起该会话下的请求' : '展开该会话下的请求'}
+            onClick={onToggleExpand}
+          >
+            {expanded ? (
+              <ChevronDown className="size-4" aria-hidden />
+            ) : (
+              <ChevronRight className="size-4" aria-hidden />
+            )}
+          </Button>
+        </td>
+        <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+          <AuditLogTimestamp unixSeconds={row.last_seen_at} />
+        </td>
+        <td
+          className="max-w-[min(100vw,24rem)] truncate px-3 py-2 font-mono text-xs"
+          title={row.thread_id}
+        >
+          {row.thread_id}
+        </td>
+        <td className="px-3 py-2 text-right tabular-nums">{row.request_count}</td>
+        <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+          <AuditLogTimestamp unixSeconds={row.first_seen_at} />
+        </td>
+        <td className="px-3 py-2">
+          <Link
+            to={requestListHref}
+            className="text-primary underline-offset-4 hover:underline"
+          >
+            请求列表
+          </Link>
+        </td>
+      </tr>
+      {expanded ? (
+        <tr className="border-b border-border/80 bg-muted/20">
+          <td colSpan={6} className="px-3 py-2 align-top">
+            {childList.isLoading ? (
+              <p className="text-xs text-muted-foreground">加载中…</p>
+            ) : childList.isError ? (
+              <p className="text-xs text-red-600" role="alert">
+                请求列表加载失败，请稍后重试。
+              </p>
+            ) : !childList.data?.data.length ? (
+              <p className="text-xs text-muted-foreground">当前筛选下暂无请求。</p>
+            ) : (
+              <div className="rounded-md border border-border/80 bg-background/80">
+                <TooltipProvider delayDuration={250} skipDelayDuration={200}>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1000px] border-collapse text-left text-xs">
+                      <thead className="border-b border-border bg-muted/50">
+                        <tr>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            时间
+                          </th>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            request_id
+                          </th>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            模型
+                          </th>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            应用
+                          </th>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            会话
+                          </th>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            状态
+                          </th>
+                          <th
+                            scope="col"
+                            className="px-2 py-1.5 text-right font-medium"
+                          >
+                            用量 (P/C/Σ)
+                          </th>
+                          <th
+                            scope="col"
+                            className="px-2 py-1.5 text-right font-medium"
+                          >
+                            成本 (USD)
+                          </th>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            finish
+                          </th>
+                          <th
+                            scope="col"
+                            className="px-2 py-1.5 text-right font-medium"
+                          >
+                            耗时 (s)
+                          </th>
+                          <th scope="col" className="px-2 py-1.5 font-medium">
+                            操作
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {childList.data.data.map((r) => (
+                          <AuditLogTableRow
+                            key={r.request_id}
+                            row={r}
+                            density="compact"
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </TooltipProvider>
+                {childList.data.total > THREAD_CHILD_LIMIT ? (
+                  <p className="border-t border-border/80 px-2 py-1.5 text-[11px] text-muted-foreground">
+                    仅显示前 {THREAD_CHILD_LIMIT} 条，共 {childList.data.total}{' '}
+                    条；完整列表请使用「请求列表」。
+                  </p>
+                ) : null}
+              </div>
+            )}
+          </td>
+        </tr>
+      ) : null}
+    </Fragment>
   )
 }
 
@@ -246,6 +444,8 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   )
 
   const [recentModelsStorageRev, setRecentModelsStorageRev] = useState(0)
+  /** v2: at most one expanded session row for inline request list */
+  const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null)
 
   useEffect(() => {
     const sp = new URLSearchParams(searchParamsKey)
@@ -294,7 +494,43 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
     ],
   )
 
-  const { data, isLoading, isError, refetch, isFetching } = useAuditLogList(listQuery)
+  const threadExpandFilterCtx = useMemo(
+    (): ThreadRowFilterContext => ({
+      startTime,
+      endTime,
+      keyword,
+      model,
+      appId,
+      finishReason,
+      statusCode,
+      tokenId,
+    }),
+    [
+      startTime,
+      endTime,
+      keyword,
+      model,
+      appId,
+      finishReason,
+      statusCode,
+      tokenId,
+    ],
+  )
+
+  const listV1 = useAuditLogList(listQuery, { enabled: listVariant === 'v1' })
+  const listV2 = useAuditThreadList(listQuery, { enabled: listVariant === 'v2' })
+  useEffect(() => {
+    if (listVariant !== 'v2' || !listV2.data?.data.length) return
+    const ids = new Set(listV2.data.data.map((r) => r.thread_id))
+    if (expandedThreadId && !ids.has(expandedThreadId)) {
+      setExpandedThreadId(null)
+    }
+  }, [listVariant, listV2.data, expandedThreadId])
+
+  const data = listVariant === 'v1' ? listV1.data : listV2.data
+  const isLoading = listVariant === 'v1' ? listV1.isLoading : listV2.isLoading
+  const isError = listVariant === 'v1' ? listV1.isError : listV2.isError
+  const isFetching = listVariant === 'v1' ? listV1.isFetching : listV2.isFetching
   const exportMutation = useExportAuditLogs()
 
   const refreshBusyRef = useRef(false)
@@ -305,12 +541,16 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
     refreshBusyRef.current = true
     setManualRefreshSpin(true)
     try {
-      await Promise.all([refetch(), delayMs(REFRESH_SPIN_MIN_MS)])
+      await Promise.all([
+        listV1.refetch(),
+        listV2.refetch(),
+        delayMs(REFRESH_SPIN_MIN_MS),
+      ])
     } finally {
       refreshBusyRef.current = false
       setManualRefreshSpin(false)
     }
-  }, [refetch])
+  }, [listV1.refetch, listV2.refetch])
 
   const listFetchSpin = isFetching || manualRefreshSpin
 
@@ -536,6 +776,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   ] as const
 
   return (
+    <TooltipProvider delayDuration={280}>
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
@@ -544,7 +785,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
           </h1>
           <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
             {listVariant === 'v2'
-              ? '与经典列表相同数据与筛选；表格优先展示会话 (thread)，便于按会话串联请求。'
+              ? '每行一个会话 (thread)：筛选与经典列表一致；点击行首箭头可展开查看该会话下请求（最多 50 条）。请求数为维表累计次数。'
               : '审计请求日志 · 默认最近 7×24 小时至今日日末。'}
           </p>
         </div>
@@ -590,7 +831,6 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
         </div>
       </div>
 
-      <TooltipProvider delayDuration={280}>
       <Card className="overflow-hidden p-0">
         <form
           className="divide-y divide-border"
@@ -867,7 +1107,6 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
           </div>
         )}
       </Card>
-      </TooltipProvider>
 
       {isError && (
         <p className="text-sm text-red-600" role="alert">
@@ -890,97 +1129,105 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
         />
       )}
 
-      {!isLoading && data && data.data.length > 0 && (
+      {!isLoading && data && data.data.length > 0 && listVariant === 'v1' && (
         <TooltipProvider delayDuration={250} skipDelayDuration={200}>
           <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
             <thead className="border-b border-border bg-muted/40">
-              {listVariant === 'v2' ? (
-                <tr>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    时间
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    会话 (thread)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    request_id
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    模型
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    应用
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    状态
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-right">
-                    用量 (P/C/Σ)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-right">
-                    成本 (USD)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    finish
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-right">
-                    耗时 (s)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    操作
-                  </th>
-                </tr>
-              ) : (
-                <tr>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    时间
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    request_id
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    模型
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    应用
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    会话
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    状态
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-right">
-                    用量 (P/C/Σ)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-right">
-                    成本 (USD)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    finish
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium text-right">
-                    耗时 (s)
-                  </th>
-                  <th scope="col" className="px-3 py-2 font-medium">
-                    操作
-                  </th>
-                </tr>
-              )}
+              <tr>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  时间
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  request_id
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  模型
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  应用
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  会话
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  状态
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-right">
+                  用量 (P/C/Σ)
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-right">
+                  成本 (USD)
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  finish
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium text-right">
+                  耗时 (s)
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  操作
+                </th>
+              </tr>
             </thead>
             <tbody>
               {data.data.map((row) => (
-                <AuditLogTableRow
-                  key={row.request_id}
-                  row={row}
-                  listVariant={listVariant}
-                />
+                <AuditLogTableRow key={row.request_id} row={row} />
               ))}
             </tbody>
           </table>
           </div>
         </TooltipProvider>
+      )}
+
+      {!isLoading && listV2.data && listV2.data.data.length > 0 && listVariant === 'v2' && (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+            <thead className="border-b border-border bg-muted/40">
+              <tr>
+                <th
+                  scope="col"
+                  className="w-10 px-2 py-2"
+                  aria-label="展开"
+                />
+                <th scope="col" className="px-3 py-2 font-medium">
+                  最后活动
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  会话 (thread)
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  请求数
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  首次活动
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">
+                  操作
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {listV2.data.data.map((row) => (
+                <AuditThreadTableGroup
+                  key={`${row.user_id}-${row.team_id ?? 'p'}-${row.thread_id}`}
+                  row={row}
+                  requestListHref={hrefToClassicRequestListForThread(
+                    row.thread_id,
+                    searchParams,
+                  )}
+                  expanded={expandedThreadId === row.thread_id}
+                  onToggleExpand={() =>
+                    setExpandedThreadId((cur) =>
+                      cur === row.thread_id ? null : row.thread_id,
+                    )
+                  }
+                  filterCtx={threadExpandFilterCtx}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {!isLoading && data && data.data.length > 0 && (
@@ -1011,5 +1258,6 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
         </div>
       )}
     </section>
+    </TooltipProvider>
   )
 }
