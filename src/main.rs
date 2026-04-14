@@ -140,6 +140,12 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or("-")
                     .to_string();
+                let x_request_id = req
+                    .headers()
+                    .get("x-request-id")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("-")
+                    .to_string();
                 let start = std::time::Instant::now();
 
                 let fut = srv.call(req);
@@ -155,6 +161,7 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
                                 elapsed_ms = elapsed_ms,
                                 peer = %peer,
                                 user_agent = %user_agent,
+                                x_request_id = %x_request_id,
                                 "http access"
                             );
                             Ok::<ServiceResponse<EitherBody<BoxBody>>, actix_web::Error>(res)
@@ -167,6 +174,7 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
                                 elapsed_ms = elapsed_ms,
                                 peer = %peer,
                                 user_agent = %user_agent,
+                                x_request_id = %x_request_id,
                                 error = %e,
                                 "http access error"
                             );
@@ -254,6 +262,12 @@ mod tests {
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("-")
                         .to_string();
+                    let x_request_id = req
+                        .headers()
+                        .get("x-request-id")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("-")
+                        .to_string();
                     let start = std::time::Instant::now();
 
                     let fut = srv.call(req);
@@ -269,6 +283,7 @@ mod tests {
                                     elapsed_ms = elapsed_ms,
                                     peer = %peer,
                                     user_agent = %user_agent,
+                                    x_request_id = %x_request_id,
                                     "http access"
                                 );
                                 Ok(res)
@@ -281,6 +296,7 @@ mod tests {
                                     elapsed_ms = elapsed_ms,
                                     peer = %peer,
                                     user_agent = %user_agent,
+                                    x_request_id = %x_request_id,
                                     error = %e,
                                     "http access error"
                                 );
@@ -312,6 +328,12 @@ mod tests {
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("-")
                         .to_string();
+                    let x_request_id = req
+                        .headers()
+                        .get("x-request-id")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("-")
+                        .to_string();
                     let start = std::time::Instant::now();
 
                     let fut = srv.call(req);
@@ -327,6 +349,7 @@ mod tests {
                                     elapsed_ms = elapsed_ms,
                                     peer = %peer,
                                     user_agent = %user_agent,
+                                    x_request_id = %x_request_id,
                                     "http access"
                                 );
                                 Ok(res)
@@ -339,6 +362,7 @@ mod tests {
                                     elapsed_ms = elapsed_ms,
                                     peer = %peer,
                                     user_agent = %user_agent,
+                                    x_request_id = %x_request_id,
                                     error = %e,
                                     "http access error"
                                 );
