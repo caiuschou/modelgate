@@ -1129,7 +1129,10 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
         />
       )}
 
-      {!isLoading && data && data.data.length > 0 && listVariant === 'v1' && (
+      {!isLoading &&
+        listVariant === 'v1' &&
+        listV1.data &&
+        listV1.data.data.length > 0 && (
         <TooltipProvider delayDuration={250} skipDelayDuration={200}>
           <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
@@ -1171,7 +1174,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
               </tr>
             </thead>
             <tbody>
-              {data.data.map((row) => (
+              {listV1.data.data.map((row) => (
                 <AuditLogTableRow key={row.request_id} row={row} />
               ))}
             </tbody>
