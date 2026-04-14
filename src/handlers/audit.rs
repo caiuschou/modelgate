@@ -332,6 +332,7 @@ mod tests {
                     total_cached_prompt_tokens: 0,
                     total_cost: 0.05,
                     error_count: 0,
+                    total_latency_ms: 0,
                 }],
                 1,
             ))
@@ -614,6 +615,7 @@ mod tests {
             user_service: Arc::new(MockUserService),
             audit_sender: tokio::sync::mpsc::channel(4).0,
             audit_config: cfg.audit,
+            audit_notify: std::sync::Arc::new(crate::audit_notify::AuditNotifyHub::new(16)),
             key_concurrency: std::sync::Arc::new(dashmap::DashMap::new()),
         }
     }
@@ -701,6 +703,19 @@ mod tests {
         let req = test::TestRequest::get()
             .uri("/api/v1/logs/request")
             .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    async fn ws_logs_rejects_missing_credentials() {
+        let app = test::init_service(
+            App::new()
+                .app_data(web::Data::new(build_test_state()))
+                .configure(routes::configure_routes),
+        )
+        .await;
+        let req = test::TestRequest::get().uri("/api/v1/ws/logs").to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }

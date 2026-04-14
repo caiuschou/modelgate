@@ -1599,6 +1599,40 @@ pub fn audit_record_visible_to_user(
     }
 }
 
+/// Row fields for WebSocket audit notifications after an UPDATE or INSERT is visible.
+#[derive(Debug, Clone)]
+pub struct AuditNotifySnapshot {
+    pub user_id: Option<i64>,
+    pub team_id: Option<i64>,
+    pub thread_id: Option<String>,
+    pub stream_completed: Option<bool>,
+}
+
+pub fn audit_notify_snapshot(
+    conn: &Connection,
+    request_id: &str,
+) -> rusqlite::Result<Option<AuditNotifySnapshot>> {
+    let mut stmt = conn.prepare(
+        "SELECT user_id, team_id, thread_id,
+                json_extract(metadata, '$.stream_completed')
+         FROM audit_logs WHERE request_id = ?1",
+    )?;
+    let mut rows = stmt.query(params![request_id])?;
+    match rows.next()? {
+        Some(row) => {
+            let stream_raw: Option<i64> = row.get(3)?;
+            let stream_completed = stream_raw.map(|v| v != 0);
+            Ok(Some(AuditNotifySnapshot {
+                user_id: row.get(0)?,
+                team_id: row.get(1)?,
+                thread_id: row.get(2)?,
+                stream_completed,
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
 pub fn get_audit_log_by_request_id(
     conn: &Connection,
     request_id: &str,
@@ -1840,7 +1874,8 @@ pub fn query_audit_threads(
             COALESCE(SUM(al.total_tokens), 0) AS total_tokens, \
             COALESCE(SUM(al.cached_prompt_tokens), 0) AS total_cached_prompt_tokens, \
             COALESCE(SUM(al.cost), 0.0) AS total_cost, \
-            SUM(CASE WHEN al.status_code IS NOT NULL AND al.status_code >= 400 THEN 1 ELSE 0 END) AS error_count \
+            SUM(CASE WHEN al.status_code IS NOT NULL AND al.status_code >= 400 THEN 1 ELSE 0 END) AS error_count, \
+            COALESCE(SUM(COALESCE(al.latency_ms, 0)), 0) AS total_latency_ms \
          FROM audit_logs al \
          {where_sql} \
          GROUP BY al.user_id, COALESCE(al.team_id, 0), trim(al.thread_id) \
@@ -1872,6 +1907,7 @@ pub fn query_audit_threads(
             total_cached_prompt_tokens: row.get(9)?,
             total_cost: row.get(10)?,
             error_count: row.get(11)?,
+            total_latency_ms: row.get(12)?,
         })
     })?;
 
@@ -2739,6 +2775,7 @@ mod tests {
         assert_eq!(threads[0].total_cached_prompt_tokens, 0);
         assert!((threads[0].total_cost - 0.04).abs() < 1e-9);
         assert_eq!(threads[0].error_count, 0);
+        assert_eq!(threads[0].total_latency_ms, 100);
     }
 
     #[test]
@@ -2799,6 +2836,7 @@ mod tests {
         assert_eq!(total, 1);
         assert_eq!(threads[0].error_count, 1);
         assert_eq!(threads[0].request_count, 2);
+        assert_eq!(threads[0].total_latency_ms, 20);
     }
 
     #[test]

@@ -1,5 +1,6 @@
 pub mod api_key_policy;
 pub mod audit;
+pub mod audit_notify;
 pub mod auth;
 pub mod billing;
 pub mod byok;
@@ -31,6 +32,7 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::audit::{audit_writer_loop, ensure_storage_dirs, AuditConfig, AuditMessage};
+use crate::audit_notify::AuditNotifyHub;
 use crate::config::AppConfig;
 use crate::db::{create_db_pool, run_migrations, DbConn};
 
@@ -48,6 +50,7 @@ pub struct AppState {
     pub user_service: Arc<dyn services::UserService>,
     pub audit_sender: tokio::sync::mpsc::Sender<AuditMessage>,
     pub audit_config: AuditConfig,
+    pub audit_notify: Arc<AuditNotifyHub>,
     /// Per–API key in-flight chat slots (see `key_concurrency`).
     pub key_concurrency: crate::key_concurrency::KeyConcurrencyRegistry,
 }
@@ -69,6 +72,7 @@ pub fn build_state(cfg: AppConfig) -> AppState {
     ensure_storage_dirs(&cfg.audit).expect("failed to prepare audit storage dirs");
     let (audit_sender, _audit_receiver) = tokio::sync::mpsc::channel(1024);
     let service_container = services::build_service_container(db.clone());
+    let audit_notify = Arc::new(AuditNotifyHub::new(1024));
 
     AppState {
         audit_config: cfg.audit.clone(),
@@ -79,6 +83,7 @@ pub fn build_state(cfg: AppConfig) -> AppState {
         audit_service: service_container.audit,
         user_service: service_container.user,
         audit_sender,
+        audit_notify,
         key_concurrency: std::sync::Arc::new(dashmap::DashMap::new()),
     }
 }
@@ -95,8 +100,15 @@ pub async fn app_main_with_dir<P: AsRef<Path>>(dir: P, test_mode: bool) -> std::
     let (audit_sender, audit_receiver) = tokio::sync::mpsc::channel(4096);
     let writer_state = state.db.clone();
     let writer_cfg = cfg.audit.clone();
+    let audit_notify_writer = state.audit_notify.clone();
     tokio::spawn(async move {
-        audit_writer_loop(audit_receiver, writer_state, writer_cfg).await;
+        audit_writer_loop(
+            audit_receiver,
+            writer_state,
+            writer_cfg,
+            audit_notify_writer,
+        )
+        .await;
     });
     let state = AppState {
         audit_sender,
@@ -433,6 +445,7 @@ mod tests {
                 flush_interval_seconds: 5,
                 export_dir: "./exports".into(),
             },
+            audit_notify: Arc::new(crate::audit_notify::AuditNotifyHub::new(64)),
             key_concurrency: std::sync::Arc::new(dashmap::DashMap::new()),
         }
     }

@@ -7,6 +7,7 @@ pub mod proxy;
 pub mod session;
 pub mod team;
 pub mod user;
+pub mod ws_logs;
 
 use actix_web::{HttpRequest, HttpResponse};
 

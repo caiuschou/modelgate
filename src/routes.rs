@@ -54,6 +54,10 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
             web::get().to(audit::download_export_file),
         )
         .route(
+            "/api/v1/ws/logs",
+            web::get().to(handlers::ws_logs::audit_logs_ws),
+        )
+        .route(
             "/api/v1/me/api-keys",
             web::get().to(handlers::api_keys::list_my_api_keys),
         )

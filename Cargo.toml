@@ -35,4 +35,5 @@ async-stream = "0.3"
 aes-gcm = "0.10"
 subtle = "2.5"
 dashmap = "6"
+actix-ws = "0.3"
 

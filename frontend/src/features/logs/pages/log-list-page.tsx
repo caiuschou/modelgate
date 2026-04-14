@@ -337,6 +337,12 @@ function AuditThreadTableGroup({
           {row.thread_id}
         </td>
         <td className="px-3 py-2 text-right tabular-nums">{row.request_count}</td>
+        <td
+          className="px-3 py-2 text-right tabular-nums"
+          title="各次请求耗时（毫秒）之和"
+        >
+          {formatLatencySeconds(row.total_latency_ms)}
+        </td>
         <td className="max-w-[14rem] px-3 py-2 align-top">
           <AuditThreadSessionUsageCell row={row} />
         </td>
@@ -364,7 +370,7 @@ function AuditThreadTableGroup({
       </tr>
       {expanded ? (
         <tr className="border-b border-border/80 bg-muted/20">
-          <td colSpan={9} className="px-3 py-2 align-top">
+          <td colSpan={10} className="px-3 py-2 align-top">
             {childList.isLoading ? (
               <p className="text-xs text-muted-foreground">加载中…</p>
             ) : childList.isError ? (
@@ -1246,6 +1252,13 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">
                   请求数
+                </th>
+                <th
+                  scope="col"
+                  className="px-3 py-2 text-right font-medium"
+                  title="本会话下各次请求的 latency_ms 之和（缺失计 0）"
+                >
+                  累计耗时 (s)
                 </th>
                 <th
                   scope="col"

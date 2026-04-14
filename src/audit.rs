@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use rand::{distributions::Alphanumeric, Rng};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -131,6 +132,8 @@ pub struct AuditThreadListItem {
     pub total_cost: f64,
     /// Count of rows with `status_code >= 400` when `status_code` is set.
     pub error_count: i64,
+    /// Sum of per-request `latency_ms` in this thread (missing latency treated as 0).
+    pub total_latency_ms: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -463,6 +466,7 @@ pub async fn audit_writer_loop(
     mut receiver: mpsc::Receiver<AuditMessage>,
     db: crate::db::DbConn,
     config: AuditConfig,
+    audit_notify: std::sync::Arc<crate::audit_notify::AuditNotifyHub>,
 ) {
     let mut buffer: Vec<AuditRecord> = Vec::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(
@@ -498,6 +502,12 @@ pub async fn audit_writer_loop(
                                     crate::db::update_audit_log_stream_completion(&mut conn, &update)
                                 {
                                     error!(error = %err, %update.request_id, "audit stream completion update failed");
+                                } else {
+                                    notify_audit_hub_after_request(
+                                        &audit_notify,
+                                        &conn,
+                                        &update.request_id,
+                                    );
                                 }
                             }
                             Err(err) => {
@@ -524,6 +534,12 @@ pub async fn audit_writer_loop(
                                     &path,
                                 ) {
                                     error!(error = %err, %request_id, "audit request body path update failed");
+                                } else {
+                                    notify_audit_hub_after_request(
+                                        &audit_notify,
+                                        &conn,
+                                        &request_id,
+                                    );
                                 }
                             }
                             Err(err) => {
@@ -555,6 +571,12 @@ pub async fn audit_writer_loop(
                                     latency_ms,
                                 ) {
                                     error!(error = %err, %request_id, "audit rejected update failed");
+                                } else {
+                                    notify_audit_hub_after_request(
+                                        &audit_notify,
+                                        &conn,
+                                        &request_id,
+                                    );
                                 }
                             }
                             Err(err) => {
@@ -595,9 +617,30 @@ pub async fn audit_writer_loop(
             };
             if let Err(err) = crate::db::insert_audit_logs(&mut conn, &buffer) {
                 error!(error = %err, "audit batch insert failed");
+            } else {
+                for record in &buffer {
+                    audit_notify.notify(crate::audit_notify::payload_from_record(record));
+                }
             }
             buffer.clear();
         }
+    }
+}
+
+fn notify_audit_hub_after_request(
+    hub: &crate::audit_notify::AuditNotifyHub,
+    conn: &Connection,
+    request_id: &str,
+) {
+    match crate::db::audit_notify_snapshot(conn, request_id) {
+        Ok(Some(snap)) => {
+            hub.notify(crate::audit_notify::payload_from_snapshot(
+                request_id.to_string(),
+                snap,
+            ));
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!(error = %e, %request_id, "audit_notify_snapshot failed"),
     }
 }
 

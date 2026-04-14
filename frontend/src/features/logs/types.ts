@@ -42,6 +42,8 @@ export interface AuditThreadListItem {
   total_cached_prompt_tokens: number
   total_cost: number
   error_count: number
+  /** Sum of per-request latency (ms) in this thread; missing latency counts as 0. */
+  total_latency_ms: number
 }
 
 export interface AuditThreadListResponse {

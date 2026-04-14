@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiClient, apiPath } from '@/lib/api-client'
+import { useAuditLogWsConnected } from '@/hooks/use-audit-log-ws'
 import { useConsoleSessionReady } from '@/hooks/use-console-session-ready'
 import { useTeamStore } from '@/stores/team-store'
 import type {
@@ -66,6 +67,7 @@ export function useAuditLogDetail(
 ) {
   const sessionReady = useConsoleSessionReady()
   const teamId = useTeamStore((s) => s.currentTeamId)
+  const wsConnected = useAuditLogWsConnected()
   const pollIncompleteStream = options?.pollIncompleteStream !== false
   return useQuery({
     queryKey: ['logs', 'detail', requestId, teamId ?? 'personal'],
@@ -76,6 +78,7 @@ export function useAuditLogDetail(
     enabled: sessionReady && Boolean(requestId),
     staleTime: 15_000,
     refetchInterval: (q) => {
+      if (wsConnected) return false
       if (!pollIncompleteStream) return false
       const d = q.state.data
       if (!d || !requestId) return false
