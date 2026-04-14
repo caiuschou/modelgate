@@ -1,5 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import {
+  applyAuditLogWebSocketMerge,
+  cancelPendingAuditLogMergeTimers,
+} from '@/features/logs/audit-log-ws-merge'
 import { getApiBaseUrl } from '@/lib/runtime-config'
 import { useAuthStore } from '@/stores/auth-store'
 import { useAuditLogWsStore } from '@/stores/audit-log-ws-store'
@@ -29,7 +33,9 @@ function buildLogsWsUrl(token: string, teamId: number | null): string {
 
 /**
  * Subscribes to server push for audit log changes (list / detail / session threads).
- * Invalidates React Query caches when `audit_log_updated` is received.
+ * Merges the updated row into list/detail caches and debounces thread refetches — avoids
+ * invalidating entire lists (no full-table flash). Body queries for that request are
+ * invalidated so open detail panels pick up new files.
  */
 export function useAuditLogWebSocket(): void {
   const queryClient = useQueryClient()
@@ -43,6 +49,7 @@ export function useAuditLogWebSocket(): void {
       setConnected(false)
       return
     }
+    const authToken = token
 
     let ws: WebSocket | null = null
     let cancelled = false
@@ -56,7 +63,7 @@ export function useAuditLogWebSocket(): void {
     function connect() {
       if (cancelled) return
       try {
-        ws = new WebSocket(buildLogsWsUrl(token, teamId))
+        ws = new WebSocket(buildLogsWsUrl(authToken, teamId))
       } catch {
         setConnected(false)
         scheduleReconnect()
@@ -85,11 +92,10 @@ export function useAuditLogWebSocket(): void {
           }
           if (msg.type === AUDIT_LOG_UPDATED && msg.request_id) {
             const rid = msg.request_id
-            void queryClient.invalidateQueries({ queryKey: ['logs', 'detail', rid] })
-            void queryClient.invalidateQueries({ queryKey: ['logs', 'list'] })
-            void queryClient.invalidateQueries({ queryKey: ['logs', 'threads'] })
-            void queryClient.invalidateQueries({ queryKey: ['logs', 'body', rid] })
-            void queryClient.invalidateQueries({ queryKey: ['analytics'] })
+            applyAuditLogWebSocketMerge(queryClient, rid, () => {
+              const id = useTeamStore.getState().currentTeamId
+              return id ?? 'personal'
+            })
           }
         } catch {
           /* ignore malformed */
@@ -101,6 +107,7 @@ export function useAuditLogWebSocket(): void {
 
     return () => {
       cancelled = true
+      cancelPendingAuditLogMergeTimers()
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
       reconnectRef.current = null
       ws?.close()
