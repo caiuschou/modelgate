@@ -21,15 +21,40 @@ const themeChoices = [
   { value: 'system' as const, label: '跟随系统', Icon: Monitor },
 ]
 
-const menuItemsRest: { to: string; label: string; guestOk: boolean }[] = [
-  { to: '/api-keys', label: 'API 密钥', guestOk: false },
-  { to: '/byok-profiles', label: 'BYOK', guestOk: false },
-  { to: '/teams', label: '团队', guestOk: false },
-  { to: '/users', label: '用户管理', guestOk: false },
-  { to: '/logs', label: '日志中心', guestOk: false },
-  { to: '/billing', label: '充值中心', guestOk: false },
-  { to: '/analytics', label: '统计分析', guestOk: false },
-  { to: '/settings', label: '系统设置', guestOk: false },
+type SidebarItem = { to: string; label: string; guestOk: boolean }
+
+/** 侧栏分组：概览 → 接入与凭据 → 组织与协作 → 日志与分析 → 账户 → 系统 */
+const sidebarGroups: { heading: string; items: SidebarItem[] }[] = [
+  {
+    heading: '接入与凭据',
+    items: [
+      { to: '/api-keys', label: 'API 密钥', guestOk: false },
+      { to: '/byok-profiles', label: 'BYOK', guestOk: false },
+    ],
+  },
+  {
+    heading: '组织与协作',
+    items: [
+      { to: '/teams', label: '团队', guestOk: false },
+      { to: '/users', label: '用户管理', guestOk: false },
+    ],
+  },
+  {
+    heading: '日志与分析',
+    items: [
+      { to: '/logs', label: '日志中心', guestOk: false },
+      { to: '/logs/v2', label: '会话日志', guestOk: false },
+      { to: '/analytics', label: '统计分析', guestOk: false },
+    ],
+  },
+  {
+    heading: '账户',
+    items: [{ to: '/billing', label: '充值中心', guestOk: false }],
+  },
+  {
+    heading: '系统',
+    items: [{ to: '/settings', label: '系统设置', guestOk: false }],
+  },
 ]
 
 function sidebarHref(
@@ -54,6 +79,13 @@ function isConsoleTopNavActive(pathname: string): boolean {
 
 function isSidebarLinkActive(to: string, pathname: string): boolean {
   if (to === '/') return pathname === '/'
+  if (to === '/logs/v2') {
+    return pathname === '/logs/v2'
+  }
+  if (to === '/logs') {
+    if (pathname.startsWith('/logs/v2')) return false
+    return pathname === '/logs' || pathname.startsWith('/logs/')
+  }
   return pathname === to || pathname.startsWith(`${to}/`)
 }
 
@@ -86,7 +118,6 @@ export function AppLayout() {
   const homeSidebarItem = token
     ? { to: '/dashboard' as const, label: '首页', guestOk: false as const }
     : { to: '/' as const, label: '首页', guestOk: true as const }
-  const sidebarMenuItems = [homeSidebarItem, ...menuItemsRest]
   /** 访客特性首页、模型目录页与控制台分离：不展示左侧控制台菜单。 */
   const guestMarketingHome = location.pathname === '/' && !token
   const modelsStandaloneRoute =
@@ -326,24 +357,67 @@ export function AppLayout() {
           <aside
             className={`border-r border-border bg-card p-3 ${sidebarCollapsed ? 'w-20' : 'w-56'}`}
           >
-            <nav className="space-y-1">
-              {sidebarMenuItems.map((item) => {
-                const href = sidebarHref(item.to, item.guestOk, token)
-                const isActive = isSidebarLinkActive(item.to, location.pathname)
-                return (
-                  <Link
-                    key={`${item.to}-${item.label}`}
-                    to={href}
-                    className={`block rounded px-3 py-2 text-sm ${
-                      isActive
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                    }`}
-                  >
-                    {sidebarCollapsed ? item.label.slice(0, 2) : item.label}
-                  </Link>
-                )
-              })}
+            <nav className="space-y-1" aria-label="控制台侧栏">
+              <div className="space-y-1">
+                {!sidebarCollapsed ? (
+                  <div className="px-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground">
+                    概览
+                  </div>
+                ) : null}
+                {(() => {
+                  const item = homeSidebarItem
+                  const href = sidebarHref(item.to, item.guestOk, token)
+                  const isActive = isSidebarLinkActive(item.to, location.pathname)
+                  return (
+                    <Link
+                      key={`${item.to}-home`}
+                      to={href}
+                      className={`block rounded px-3 py-2 text-sm ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                      }`}
+                    >
+                      {sidebarCollapsed ? item.label.slice(0, 2) : item.label}
+                    </Link>
+                  )
+                })()}
+              </div>
+              {sidebarGroups.map((group, gi) => (
+                <div
+                  key={group.heading}
+                  className={cn(
+                    'space-y-1',
+                    gi > 0 && 'mt-3 border-t border-border/70 pt-3',
+                  )}
+                >
+                  {!sidebarCollapsed ? (
+                    <div className="px-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground">
+                      {group.heading}
+                    </div>
+                  ) : null}
+                  {group.items.map((item) => {
+                    const href = sidebarHref(item.to, item.guestOk, token)
+                    const isActive = isSidebarLinkActive(
+                      item.to,
+                      location.pathname,
+                    )
+                    return (
+                      <Link
+                        key={`${item.to}-${item.label}`}
+                        to={href}
+                        className={`block rounded px-3 py-2 text-sm ${
+                          isActive
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                        }`}
+                      >
+                        {sidebarCollapsed ? item.label.slice(0, 2) : item.label}
+                      </Link>
+                    )
+                  })}
+                </div>
+              ))}
             </nav>
           </aside>
         ) : null}
