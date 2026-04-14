@@ -87,8 +87,10 @@ test.describe('API 密钥页（已登录）', () => {
     await expect(secretPre).toHaveCount(0)
 
     const after = await listMyApiKeys(consoleBase, token)
-    expect(after.length).toBe(before.length + 1)
-    const created = after.find((k) => !before.some((b) => b.id === k.id))
+    // 并行 worker 可能为同一用户新增其它密钥，不能假定列表只 +1
+    const created = after.find(
+      (k) => !before.some((b) => b.id === k.id) && k.name === keyName,
+    )
     expect(created, '新密钥应出现在 API 列表').toBeTruthy()
     expect(created!.preview).toContain('…')
     expect(created!.preview.length).toBeLessThan(fullKey.length)

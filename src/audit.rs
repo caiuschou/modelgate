@@ -111,16 +111,26 @@ pub struct AuditListQuery {
     pub offset: Option<u32>,
 }
 
-/// One row per `(owner scope, thread_id)` from `audit_threads`, aligned with request-list filters.
+/// One row per `(owner scope, thread_id)` from grouped `audit_logs`, aligned with request-list filters.
 #[derive(Debug, Clone, Serialize)]
 pub struct AuditThreadListItem {
     pub thread_id: String,
     pub user_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<i64>,
+    /// Min `created_at` among rows matching the same filters (session bounds under current query).
     pub first_seen_at: i64,
+    /// Max `created_at` among matching rows.
     pub last_seen_at: i64,
+    /// Number of audit rows in this session under the same filters.
     pub request_count: i64,
+    pub total_prompt_tokens: i64,
+    pub total_completion_tokens: i64,
+    pub total_tokens: i64,
+    pub total_cached_prompt_tokens: i64,
+    pub total_cost: f64,
+    /// Count of rows with `status_code >= 400` when `status_code` is set.
+    pub error_count: i64,
 }
 
 #[derive(Debug, Serialize)]

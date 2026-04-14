@@ -309,9 +309,9 @@
 
 **`GET /api/v1/logs/threads`**
 
-会话汇总列表（`audit_threads`）：**每行一个 `thread_id`**，Query 参数与 **`GET /api/v1/logs/request` 相同**。返回在时间范围内 **至少有一条** 满足相同筛选条件的请求审计行的会话；排序按 **`last_seen_at` 降序**。
+会话汇总列表：**每行一个 `thread_id`**，Query 参数与 **`GET /api/v1/logs/request` 相同**。在**当前筛选条件下**对 `audit_logs` 按 `trim(thread_id)` 分组聚合；仅包含非空会话 id；排序按组内 **最后一条请求的 `created_at`（即 `last_seen_at`）降序**。
 
-**响应字段（`data[]`）：** `thread_id`、`user_id`、`team_id`（个人为 `null`）、`first_seen_at`、`last_seen_at`、`request_count`（该会话累计请求次数，与维表一致）。
+**响应字段（`data[]`）：** `thread_id`、`user_id`、`team_id`（个人为 `null`）、`first_seen_at` / `last_seen_at`（组内最小/最大 `created_at`）、`request_count`（满足筛选的请求条数）、`total_prompt_tokens`、`total_completion_tokens`、`total_tokens`、`total_cached_prompt_tokens`、`total_cost`（组内求和）、`error_count`（`status_code >= 400` 的请求条数）。
 
 ### 6.2 详情
 

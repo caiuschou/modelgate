@@ -326,6 +326,12 @@ mod tests {
                     first_seen_at: query.start_time.unwrap_or(1),
                     last_seen_at: query.start_time.unwrap_or(1),
                     request_count: 2,
+                    total_prompt_tokens: 10,
+                    total_completion_tokens: 20,
+                    total_tokens: 30,
+                    total_cached_prompt_tokens: 0,
+                    total_cost: 0.05,
+                    error_count: 0,
                 }],
                 1,
             ))

@@ -88,6 +88,20 @@ function formatListToken(n: number | null | undefined): string {
   return n.toLocaleString()
 }
 
+/** P/C/Σ for session row; missing fields (stale cache / old API) show as — not bare slashes. */
+function formatThreadUsagePcs(
+  row: Pick<
+    AuditThreadListItem,
+    'total_prompt_tokens' | 'total_completion_tokens' | 'total_tokens'
+  >,
+): string {
+  const seg = (v: number | undefined | null) => {
+    if (v == null || Number.isNaN(v)) return '—'
+    return v.toLocaleString()
+  }
+  return `${seg(row.total_prompt_tokens)}/${seg(row.total_completion_tokens)}/${seg(row.total_tokens)}`
+}
+
 function statusBadgeClass(code: number | null): string {
   if (code === null) return 'bg-muted text-muted-foreground'
   if (code >= 200 && code < 300) return 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400'
@@ -305,6 +319,24 @@ function AuditThreadTableGroup({
           {row.thread_id}
         </td>
         <td className="px-3 py-2 text-right tabular-nums">{row.request_count}</td>
+        <td className="max-w-[14rem] px-3 py-2 text-right font-mono text-xs tabular-nums">
+          {formatThreadUsagePcs(row)}
+          {(row.total_cached_prompt_tokens ?? 0) > 0 ? (
+            <span className="ml-1 text-muted-foreground">
+              (cache {(row.total_cached_prompt_tokens ?? 0).toLocaleString()})
+            </span>
+          ) : null}
+        </td>
+        <td className="px-3 py-2 text-right tabular-nums">
+          {formatCostUsd(row.total_cost)}
+        </td>
+        <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+          {row.error_count > 0 ? (
+            <span className="text-destructive">{row.error_count}</span>
+          ) : (
+            '0'
+          )}
+        </td>
         <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
           <AuditLogTimestamp unixSeconds={row.first_seen_at} />
         </td>
@@ -319,7 +351,7 @@ function AuditThreadTableGroup({
       </tr>
       {expanded ? (
         <tr className="border-b border-border/80 bg-muted/20">
-          <td colSpan={6} className="px-3 py-2 align-top">
+          <td colSpan={9} className="px-3 py-2 align-top">
             {childList.isLoading ? (
               <p className="text-xs text-muted-foreground">加载中…</p>
             ) : childList.isError ? (
@@ -1185,7 +1217,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
 
       {!isLoading && listV2.data && listV2.data.data.length > 0 && listVariant === 'v2' && (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+          <table className="w-full min-w-[1100px] border-collapse text-left text-sm">
             <thead className="border-b border-border bg-muted/40">
               <tr>
                 <th
@@ -1201,6 +1233,23 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">
                   请求数
+                </th>
+                <th
+                  scope="col"
+                  className="px-3 py-2 text-right font-medium"
+                  title="Prompt / Completion / Total（当前筛选范围内汇总）"
+                >
+                  用量 (P/C/Σ)
+                </th>
+                <th scope="col" className="px-3 py-2 text-right font-medium">
+                  成本 (USD)
+                </th>
+                <th
+                  scope="col"
+                  className="px-3 py-2 text-right font-medium"
+                  title="HTTP status ≥ 400"
+                >
+                  失败
                 </th>
                 <th scope="col" className="px-3 py-2 font-medium">
                   首次活动

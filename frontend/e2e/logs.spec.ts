@@ -229,7 +229,9 @@ test('detail page shows request and response body from audit files', async ({
   if ((await rawSummaryRequest.count()) > 0) {
     await rawSummaryRequest.click()
   }
-  await expect(requestSection.getByText(model, { exact: false }).first()).toBeVisible({
+  const requestModelLine = requestSection.getByText(model, { exact: false }).first()
+  await requestModelLine.scrollIntoViewIfNeeded()
+  await expect(requestModelLine).toBeVisible({
     timeout: 20_000,
   })
   // Structured "内容" and raw JSON both contain the user message string.

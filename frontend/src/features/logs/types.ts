@@ -36,6 +36,12 @@ export interface AuditThreadListItem {
   first_seen_at: number
   last_seen_at: number
   request_count: number
+  total_prompt_tokens: number
+  total_completion_tokens: number
+  total_tokens: number
+  total_cached_prompt_tokens: number
+  total_cost: number
+  error_count: number
 }
 
 export interface AuditThreadListResponse {

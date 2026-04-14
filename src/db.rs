@@ -1799,65 +1799,56 @@ fn build_audit_where_clause(
     (where_sql, args)
 }
 
-fn audit_thread_outer_scope_parts(scope: AuditConsoleScope) -> (Vec<String>, Vec<Value>) {
-    let mut where_clauses: Vec<String> = Vec::new();
-    let mut args: Vec<Value> = Vec::new();
-    match scope {
-        AuditConsoleScope::Personal(user_id) => {
-            where_clauses.push("at.user_id = ?".to_string());
-            args.push(Value::Integer(user_id));
-            where_clauses.push("at.team_scope = 0".to_string());
-        }
-        AuditConsoleScope::Team(team_id) => {
-            where_clauses.push("at.team_scope = ?".to_string());
-            args.push(Value::Integer(team_id));
-        }
-        AuditConsoleScope::UserOwnedTraffic(user_id) => {
-            where_clauses.push("at.user_id = ?".to_string());
-            args.push(Value::Integer(user_id));
-        }
-    }
-    (where_clauses, args)
-}
-
-/// Session/thread summary rows: one per `audit_threads` entry that has at least one matching `audit_logs` row under the same filters as [`query_audit_logs`].
+/// Session/thread summary rows: one row per non-empty `thread_id` group from `audit_logs` under the same filters as [`query_audit_logs`].
 pub fn query_audit_threads(
     conn: &Connection,
     query: &AuditListQuery,
     scope: AuditConsoleScope,
 ) -> rusqlite::Result<(Vec<AuditThreadListItem>, i64)> {
-    let (outer_parts, outer_args) = audit_thread_outer_scope_parts(scope);
-    let (inner_parts, inner_args) = audit_log_where_parts(query, scope, "al", false);
+    let (mut inner_parts, inner_args) = audit_log_where_parts(query, scope, "al", true);
     debug_assert!(
         !inner_parts.is_empty(),
         "audit log filter parts should always include accept_phase guard"
     );
-
-    let exists_inner = inner_parts.join(" AND ");
-    let exists_sql = format!(
-        "EXISTS (SELECT 1 FROM audit_logs al WHERE al.user_id = at.user_id \
-         AND COALESCE(al.team_id, 0) = at.team_scope AND al.thread_id = at.thread_id AND {exists_inner})"
-    );
-
-    let mut all_parts = outer_parts;
-    all_parts.push(exists_sql);
-    let where_sql = format!("WHERE {}", all_parts.join(" AND "));
-
-    let mut all_args = outer_args;
-    all_args.extend(inner_args);
+    inner_parts.push("al.thread_id IS NOT NULL".to_string());
+    inner_parts.push("length(trim(al.thread_id)) > 0".to_string());
+    let where_sql = format!("WHERE {}", inner_parts.join(" AND "));
 
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let offset = query.offset.unwrap_or(0);
 
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM (\
+            SELECT 1 FROM audit_logs al {where_sql} \
+            GROUP BY al.user_id, COALESCE(al.team_id, 0), trim(al.thread_id)\
+        )"
+    );
+    let total: i64 = conn.query_row(&count_sql, params_from_iter(inner_args.iter()), |row| {
+        row.get(0)
+    })?;
+
     let list_sql = format!(
-        "SELECT at.thread_id, at.user_id, at.team_scope, at.first_seen_at, at.last_seen_at, at.request_count
-         FROM audit_threads at
-         {where_sql}
-         ORDER BY at.last_seen_at DESC
+        "SELECT \
+            trim(al.thread_id) AS thread_id, \
+            al.user_id, \
+            COALESCE(al.team_id, 0) AS team_scope, \
+            MIN(al.created_at) AS first_seen_at, \
+            MAX(al.created_at) AS last_seen_at, \
+            COUNT(*) AS request_count, \
+            COALESCE(SUM(al.prompt_tokens), 0) AS total_prompt_tokens, \
+            COALESCE(SUM(al.completion_tokens), 0) AS total_completion_tokens, \
+            COALESCE(SUM(al.total_tokens), 0) AS total_tokens, \
+            COALESCE(SUM(al.cached_prompt_tokens), 0) AS total_cached_prompt_tokens, \
+            COALESCE(SUM(al.cost), 0.0) AS total_cost, \
+            SUM(CASE WHEN al.status_code IS NOT NULL AND al.status_code >= 400 THEN 1 ELSE 0 END) AS error_count \
+         FROM audit_logs al \
+         {where_sql} \
+         GROUP BY al.user_id, COALESCE(al.team_id, 0), trim(al.thread_id) \
+         ORDER BY MAX(al.created_at) DESC \
          LIMIT ? OFFSET ?"
     );
 
-    let mut list_args = all_args.clone();
+    let mut list_args = inner_args;
     list_args.push(Value::Integer(limit as i64));
     list_args.push(Value::Integer(offset as i64));
 
@@ -1875,6 +1866,12 @@ pub fn query_audit_threads(
             first_seen_at: row.get(3)?,
             last_seen_at: row.get(4)?,
             request_count: row.get(5)?,
+            total_prompt_tokens: row.get(6)?,
+            total_completion_tokens: row.get(7)?,
+            total_tokens: row.get(8)?,
+            total_cached_prompt_tokens: row.get(9)?,
+            total_cost: row.get(10)?,
+            error_count: row.get(11)?,
         })
     })?;
 
@@ -1883,10 +1880,6 @@ pub fn query_audit_threads(
         records.push(r?);
     }
 
-    let count_sql = format!("SELECT COUNT(1) FROM audit_threads at {where_sql}");
-    let total = conn.query_row(&count_sql, params_from_iter(all_args.iter()), |row| {
-        row.get(0)
-    })?;
     Ok((records, total))
 }
 
@@ -2739,6 +2732,72 @@ mod tests {
         assert_eq!(total, 1);
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].thread_id, "thread-a");
+        assert_eq!(threads[0].request_count, 2);
+        assert_eq!(threads[0].total_prompt_tokens, 2);
+        assert_eq!(threads[0].total_completion_tokens, 8);
+        assert_eq!(threads[0].total_tokens, 10);
+        assert_eq!(threads[0].total_cached_prompt_tokens, 0);
+        assert!((threads[0].total_cost - 0.04).abs() < 1e-9);
+        assert_eq!(threads[0].error_count, 0);
+    }
+
+    #[test]
+    fn query_audit_threads_counts_http_errors() {
+        use crate::audit::{AuditListQuery, AuditRecord};
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 10_000_000_i64;
+        let ok = |rid: &str, ts: i64, code: i64| AuditRecord {
+            request_id: rid.into(),
+            user_id: Some(7),
+            token_id: Some(1),
+            channel_id: None,
+            model: Some("m".into()),
+            request_type: Some("chat".into()),
+            request_body_path: None,
+            response_body_path: None,
+            status_code: Some(code),
+            error_message: None,
+            prompt_tokens: Some(1),
+            completion_tokens: Some(1),
+            cached_prompt_tokens: None,
+            total_tokens: Some(2),
+            cost: Some(0.01),
+            latency_ms: Some(10),
+            reasoning_phase_ms: None,
+            app_id: None,
+            thread_id: Some("thread-err".into()),
+            finish_reason: None,
+            metadata: Some(serde_json::json!({})),
+            created_at: ts,
+            team_id: None,
+        };
+        insert_audit_logs(&mut conn, &[ok("a", t0, 200), ok("b", t0 + 1, 500)]).expect("insert");
+
+        let filter = AuditListQuery {
+            start_time: Some(t0 - 10),
+            end_time: Some(t0 + 10_000),
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            thread_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: Some(20),
+            offset: Some(0),
+        };
+        let (threads, total) =
+            query_audit_threads(&conn, &filter, AuditConsoleScope::Personal(7)).expect("threads");
+        assert_eq!(total, 1);
+        assert_eq!(threads[0].error_count, 1);
         assert_eq!(threads[0].request_count, 2);
     }
 
