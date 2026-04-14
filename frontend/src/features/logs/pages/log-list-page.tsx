@@ -88,18 +88,36 @@ function formatListToken(n: number | null | undefined): string {
   return n.toLocaleString()
 }
 
-/** P/C/Σ for session row; missing fields (stale cache / old API) show as — not bare slashes. */
-function formatThreadUsagePcs(
-  row: Pick<
-    AuditThreadListItem,
-    'total_prompt_tokens' | 'total_completion_tokens' | 'total_tokens'
-  >,
-): string {
-  const seg = (v: number | undefined | null) => {
-    if (v == null || Number.isNaN(v)) return '—'
-    return v.toLocaleString()
-  }
-  return `${seg(row.total_prompt_tokens)}/${seg(row.total_completion_tokens)}/${seg(row.total_tokens)}`
+function formatSessionTokenField(v: number | undefined | null): string {
+  if (v == null || Number.isNaN(v)) return '—'
+  return v.toLocaleString()
+}
+
+/** Session list: stacked 合计 / 输入·输出 / 缓存 — avoids one unreadable slash line. */
+function AuditThreadSessionUsageCell({ row }: { row: AuditThreadListItem }) {
+  const cache = row.total_cached_prompt_tokens ?? 0
+  return (
+    <div className="flex max-w-[13rem] flex-col items-end gap-0.5 py-0.5 text-right leading-tight">
+      <span className="text-sm tabular-nums text-foreground">
+        合计{' '}
+        <span className="font-medium">
+          {formatSessionTokenField(row.total_tokens)}
+        </span>
+      </span>
+      <span className="text-[11px] tabular-nums text-muted-foreground">
+        输入 {formatSessionTokenField(row.total_prompt_tokens)} · 输出{' '}
+        {formatSessionTokenField(row.total_completion_tokens)}
+      </span>
+      {cache > 0 ? (
+        <span
+          className="max-w-[13rem] text-[11px] text-muted-foreground"
+          title="提示词侧命中上下文缓存的 token 量；计费口径因上游而异，通常已计入「输入」"
+        >
+          缓存命中 {formatSessionTokenField(cache)}
+        </span>
+      ) : null}
+    </div>
+  )
 }
 
 function statusBadgeClass(code: number | null): string {
@@ -319,13 +337,8 @@ function AuditThreadTableGroup({
           {row.thread_id}
         </td>
         <td className="px-3 py-2 text-right tabular-nums">{row.request_count}</td>
-        <td className="max-w-[14rem] px-3 py-2 text-right font-mono text-xs tabular-nums">
-          {formatThreadUsagePcs(row)}
-          {(row.total_cached_prompt_tokens ?? 0) > 0 ? (
-            <span className="ml-1 text-muted-foreground">
-              (cache {(row.total_cached_prompt_tokens ?? 0).toLocaleString()})
-            </span>
-          ) : null}
+        <td className="max-w-[14rem] px-3 py-2 align-top">
+          <AuditThreadSessionUsageCell row={row} />
         </td>
         <td className="px-3 py-2 text-right tabular-nums">
           {formatCostUsd(row.total_cost)}
@@ -1236,10 +1249,10 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 </th>
                 <th
                   scope="col"
-                  className="px-3 py-2 text-right font-medium"
-                  title="Prompt / Completion / Total（当前筛选范围内汇总）"
+                  className="min-w-[10rem] px-3 py-2 text-right font-medium"
+                  title="当前筛选范围内汇总：合计 token、输入/输出拆分；若有缓存命中会单独标注"
                 >
-                  用量 (P/C/Σ)
+                  用量
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">
                   成本 (USD)
