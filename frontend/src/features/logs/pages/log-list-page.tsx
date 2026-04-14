@@ -550,7 +550,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
       refreshBusyRef.current = false
       setManualRefreshSpin(false)
     }
-  }, [listV1.refetch, listV2.refetch])
+  }, [listV1, listV2])
 
   const listFetchSpin = isFetching || manualRefreshSpin
 
