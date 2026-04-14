@@ -42,6 +42,7 @@ import { useMyApiKeys } from '@/features/api-keys/hooks/use-api-keys'
 import type { ApiKeySummary } from '@/features/api-keys/types'
 import { formatCostUsd } from '@/lib/format-cost'
 import { cn } from '@/lib/utils'
+import type { AuditLogListItem } from '@/features/logs/types'
 
 const PAGE_SIZE = 20
 
@@ -82,7 +83,132 @@ function statusBadgeClass(code: number | null): string {
   return 'bg-muted text-muted-foreground'
 }
 
-export function LogListPage() {
+export type LogListVariant = 'v1' | 'v2'
+
+export interface LogListPageProps {
+  /** @default 'v1' */
+  listVariant?: LogListVariant
+}
+
+function AuditLogTableRow({
+  row,
+  listVariant,
+}: {
+  row: AuditLogListItem
+  listVariant: LogListVariant
+}) {
+  const timeCell = (
+    <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+      <AuditLogTimestamp unixSeconds={row.created_at} />
+    </td>
+  )
+  const requestIdCell = (
+    <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs">
+      {row.request_id}
+    </td>
+  )
+  const threadCell = (
+    <td className="max-w-[160px] truncate px-3 py-2 font-mono text-xs">
+      {row.thread_id ?? '—'}
+    </td>
+  )
+  const modelCell = <td className="px-3 py-2">{row.model ?? '—'}</td>
+  const appCell = <td className="px-3 py-2">{row.app_id ?? '—'}</td>
+  const statusCell = (
+    <td className="px-3 py-2">
+      {row.status_code !== null ? (
+        <span
+          className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${statusBadgeClass(row.status_code)}`}
+        >
+          {row.status_code}
+        </span>
+      ) : (
+        '—'
+      )}
+    </td>
+  )
+  const usageCell = (
+    <td className="px-3 py-2 text-right font-mono text-xs">
+      <LogListUsageTooltipCell row={row}>
+        <div className="flex flex-col items-end gap-0.5 leading-tight">
+          <div>
+            <span className="text-muted-foreground">P</span>{' '}
+            {formatListToken(row.prompt_tokens)}
+          </div>
+          <div>
+            <span className="text-muted-foreground">C</span>{' '}
+            {formatListToken(row.completion_tokens)}
+          </div>
+          <div>
+            <span className="text-muted-foreground">Σ</span>{' '}
+            {formatListToken(row.total_tokens)}
+          </div>
+        </div>
+      </LogListUsageTooltipCell>
+    </td>
+  )
+  const costCell = (
+    <td className="px-3 py-2 text-right font-mono text-xs">
+      {row.cost != null ? formatCostUsd(row.cost) : '—'}
+    </td>
+  )
+  const finishCell = (
+    <td className="px-3 py-2 font-mono text-xs">{row.finish_reason ?? '—'}</td>
+  )
+  const latencyCell = (
+    <td className="px-3 py-2 text-right font-mono text-xs">
+      <LogListLatencyTooltipCell row={row}>
+        {formatLatencySeconds(row.latency_ms)}
+      </LogListLatencyTooltipCell>
+    </td>
+  )
+  const actionCell = (
+    <td className="px-3 py-2">
+      <Link
+        to={`/logs/${encodeURIComponent(row.request_id)}`}
+        className="text-primary underline-offset-4 hover:underline"
+      >
+        详情
+      </Link>
+    </td>
+  )
+
+  if (listVariant === 'v2') {
+    return (
+      <tr className="border-b border-border/80 hover:bg-muted/30">
+        {timeCell}
+        {threadCell}
+        {requestIdCell}
+        {modelCell}
+        {appCell}
+        {statusCell}
+        {usageCell}
+        {costCell}
+        {finishCell}
+        {latencyCell}
+        {actionCell}
+      </tr>
+    )
+  }
+
+  return (
+    <tr className="border-b border-border/80 hover:bg-muted/30">
+      {timeCell}
+      {requestIdCell}
+      {modelCell}
+      {appCell}
+      {threadCell}
+      {statusCell}
+      {usageCell}
+      {costCell}
+      {finishCell}
+      {latencyCell}
+      {actionCell}
+    </tr>
+  )
+}
+
+export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   const modelFieldId = useId()
   const tokenFieldId = useId()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -413,9 +539,13 @@ export function LogListPage() {
     <section className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">日志中心</h1>
+          <h1 className="text-2xl font-semibold">
+            {listVariant === 'v2' ? '日志中心（新版）' : '日志中心'}
+          </h1>
           <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
-            审计请求日志 · 默认最近 7×24 小时至今日日末。
+            {listVariant === 'v2'
+              ? '与经典列表相同数据与筛选；表格优先展示会话 (thread)，便于按会话串联请求。'
+              : '审计请求日志 · 默认最近 7×24 小时至今日日末。'}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -444,6 +574,18 @@ export function LogListPage() {
             onClick={() => void handleExport()}
           >
             {exportMutation.isPending ? '导出中…' : '导出 CSV'}
+          </Button>
+          <Button type="button" variant="outline" size="sm" asChild>
+            <Link
+              to={
+                listVariant === 'v2'
+                  ? `/logs${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+                  : `/logs/v2${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+              }
+              replace={false}
+            >
+              {listVariant === 'v2' ? '经典列表' : '新版列表'}
+            </Link>
           </Button>
         </div>
       </div>
@@ -753,105 +895,87 @@ export function LogListPage() {
           <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full min-w-[1000px] border-collapse text-left text-sm">
             <thead className="border-b border-border bg-muted/40">
-              <tr>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  时间
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  request_id
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  模型
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  应用
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  会话
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  状态
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium text-right">
-                  用量 (P/C/Σ)
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium text-right">
-                  成本 (USD)
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  finish
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium text-right">
-                  耗时 (s)
-                </th>
-                <th scope="col" className="px-3 py-2 font-medium">
-                  操作
-                </th>
-              </tr>
+              {listVariant === 'v2' ? (
+                <tr>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    时间
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    会话 (thread)
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    request_id
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    模型
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    应用
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    状态
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium text-right">
+                    用量 (P/C/Σ)
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium text-right">
+                    成本 (USD)
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    finish
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium text-right">
+                    耗时 (s)
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    操作
+                  </th>
+                </tr>
+              ) : (
+                <tr>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    时间
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    request_id
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    模型
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    应用
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    会话
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    状态
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium text-right">
+                    用量 (P/C/Σ)
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium text-right">
+                    成本 (USD)
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    finish
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium text-right">
+                    耗时 (s)
+                  </th>
+                  <th scope="col" className="px-3 py-2 font-medium">
+                    操作
+                  </th>
+                </tr>
+              )}
             </thead>
             <tbody>
               {data.data.map((row) => (
-                <tr key={row.request_id} className="border-b border-border/80 hover:bg-muted/30">
-                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
-                    <AuditLogTimestamp unixSeconds={row.created_at} />
-                  </td>
-                  <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs">
-                    {row.request_id}
-                  </td>
-                  <td className="px-3 py-2">{row.model ?? '—'}</td>
-                  <td className="px-3 py-2">{row.app_id ?? '—'}</td>
-                  <td className="max-w-[140px] truncate px-3 py-2 font-mono text-xs">
-                    {row.thread_id ?? '—'}
-                  </td>
-                  <td className="px-3 py-2">
-                    {row.status_code !== null ? (
-                      <span
-                        className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${statusBadgeClass(row.status_code)}`}
-                      >
-                        {row.status_code}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    <LogListUsageTooltipCell row={row}>
-                      <div className="flex flex-col items-end gap-0.5 leading-tight">
-                        <div>
-                          <span className="text-muted-foreground">P</span>{' '}
-                          {formatListToken(row.prompt_tokens)}
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">C</span>{' '}
-                          {formatListToken(row.completion_tokens)}
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Σ</span>{' '}
-                          {formatListToken(row.total_tokens)}
-                        </div>
-                      </div>
-                    </LogListUsageTooltipCell>
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    {row.cost != null ? formatCostUsd(row.cost) : '—'}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs">
-                    {row.finish_reason ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
-                    <LogListLatencyTooltipCell row={row}>
-                      {formatLatencySeconds(row.latency_ms)}
-                    </LogListLatencyTooltipCell>
-                  </td>
-                  <td className="px-3 py-2">
-                    <Link
-                      to={`/logs/${encodeURIComponent(row.request_id)}`}
-                      className="text-primary underline-offset-4 hover:underline"
-                    >
-                      详情
-                    </Link>
-                  </td>
-                </tr>
+                <AuditLogTableRow
+                  key={row.request_id}
+                  row={row}
+                  listVariant={listVariant}
+                />
               ))}
             </tbody>
           </table>

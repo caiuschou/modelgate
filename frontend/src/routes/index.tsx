@@ -14,6 +14,7 @@ import { ByokProfilesPage } from '@/features/byok/pages/byok-profiles-page'
 import { ByokProfileDetailPage } from '@/features/byok/pages/byok-profile-detail-page'
 import { LogDetailPage } from '@/features/logs/pages/log-detail-page'
 import { LogListPage } from '@/features/logs/pages/log-list-page'
+import { LogListV2Page } from '@/features/logs/pages/log-list-v2-page'
 import { AnalyticsPage } from '@/features/analytics/pages/analytics-page'
 import { TeamsPage } from '@/features/teams/pages/teams-page'
 import { TeamMembersPage } from '@/features/teams/pages/team-members-page'
@@ -167,6 +168,11 @@ export const router = createBrowserRouter([
                 handle: { pageTitle: '用户管理' },
               },
               { path: 'logs', element: <LogListPage />, handle: { pageTitle: '日志' } },
+              {
+                path: 'logs/v2',
+                element: <LogListV2Page />,
+                handle: { pageTitle: '日志（新版）' },
+              },
               {
                 path: 'logs/:requestId',
                 element: <LogDetailPage />,

@@ -30,6 +30,15 @@ test('log center heading is visible when authenticated', async ({ page }) => {
   await expect(page.getByRole('heading', { name: '日志中心' })).toBeVisible()
 })
 
+test('log center v2 list heading is visible when authenticated', async ({
+  page,
+}) => {
+  await page.goto('/logs/v2')
+  await expect(
+    page.getByRole('heading', { name: '日志中心（新版）' }),
+  ).toBeVisible()
+})
+
 test('log list token cells show usage tooltip on hover', async ({ page }) => {
   const model = `e2e_tip_${Date.now()}`
   const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
