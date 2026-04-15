@@ -51,7 +51,7 @@ test('log center v2 list heading is visible when authenticated', async ({
 }) => {
   await page.goto('/logs/v2')
   await expect(
-    page.getByRole('heading', { name: '日志中心（新版）' }),
+    page.getByRole('heading', { name: '会话中心' }),
   ).toBeVisible()
   // 无数据时不渲染表头，仅校验筛选区常驻
   await expect(page.getByRole('button', { name: '查询' })).toBeVisible()
@@ -97,13 +97,15 @@ test('log center v2 shows session row and links to classic list with thread filt
   await dataRow
     .getByRole('button', { name: '查看会话下的请求' })
     .click()
-  const threadRequestsSheet = page.getByRole('dialog', { name: '会话下的请求' })
-  await expect(threadRequestsSheet).toBeVisible({ timeout: 15_000 })
+  const threadRequestsRegion = page.getByRole('region', {
+    name: '会话下的请求',
+  })
+  await expect(threadRequestsRegion).toBeVisible({ timeout: 15_000 })
   await expect(
-    threadRequestsSheet.getByRole('button', { name: '查看请求详情' }),
+    threadRequestsRegion.getByRole('button', { name: '查看请求详情' }),
   ).toBeVisible()
 
-  await threadRequestsSheet
+  await threadRequestsRegion
     .getByRole('link', { name: '在经典列表中打开' })
     .click()
   await expect(page).toHaveURL(/\/logs\?/)
@@ -112,7 +114,7 @@ test('log center v2 shows session row and links to classic list with thread filt
 
   await expect(page.getByRole('heading', { name: '日志中心' })).toBeVisible()
   await expect(
-    page.getByRole('heading', { name: '日志中心（新版）' }),
+    page.getByRole('heading', { name: '会话中心' }),
   ).not.toBeVisible()
   await expect(page.getByRole('row').filter({ hasText: model })).toBeVisible({
     timeout: 20_000,

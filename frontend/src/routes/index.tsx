@@ -171,7 +171,7 @@ export const router = createBrowserRouter([
               {
                 path: 'logs/v2',
                 element: <LogListV2Page />,
-                handle: { pageTitle: '日志（新版）' },
+                handle: { pageTitle: '会话中心' },
               },
               {
                 path: 'logs/:requestId',

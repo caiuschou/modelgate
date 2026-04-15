@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 import { Link, useSearchParams } from 'react-router-dom'
 import {
   ChevronDown,
+  ChevronRight,
   FileText,
   Info,
-  List,
   RefreshCw,
   X,
 } from 'lucide-react'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
@@ -67,7 +75,7 @@ import { LogDetailContent } from '@/features/logs/pages/log-detail-page'
 
 const PAGE_SIZE = 20
 
-/** 日志列表右侧抽屉宽度（与 e2e 中会话/详情 Sheet 断言一致） */
+/** 日志详情右侧抽屉宽度（与 e2e 中断言一致） */
 const logSheetPanelStyle = {
   width: 'calc(100vw * 2 / 3)',
   maxWidth: 'calc(100vw * 2 / 3)',
@@ -221,18 +229,21 @@ function AuditLogTableRow({
   density = 'default',
   detailSheetOpen = false,
   rowEmphasisActive,
+  omitThreadColumn = false,
   onToggleDetail,
 }: {
   row: AuditLogListItem
-  /** 嵌套在会话抽屉内请求表时使用更紧凑的单元格（列与 v1 一致） */
+  /** 嵌套在会话展开区内的请求表时使用更紧凑的单元格（列与 v1 一致） */
   density?: 'default' | 'compact'
   /** 当前行是否正在右侧详情抽屉中展示（用于文案：收起 / 详情） */
   detailSheetOpen?: boolean
   /**
    * 行与操作按钮的「展开」视觉（aria-pressed、背景）。默认与 `detailSheetOpen` 相同；
-   * 会话抽屉内可单独传入，以便详情抽屉关闭后仍能看到当前会话中选中的请求行。
+   * 会话展开区内可单独传入，以便详情抽屉关闭后仍能看到当前会话中选中的请求行。
    */
   rowEmphasisActive?: boolean
+  /** 会话中心展开区内同一 thread，省略会话列以省宽度 */
+  omitThreadColumn?: boolean
   onToggleDetail: (requestId: string) => void
 }) {
   const emphasis = rowEmphasisActive ?? detailSheetOpen
@@ -349,7 +360,7 @@ function AuditLogTableRow({
       {requestIdCell}
       {modelCell}
       {appCell}
-      {threadCell}
+      {!omitThreadColumn ? threadCell : null}
       {statusCell}
       {usageCell}
       {costCell}
@@ -397,101 +408,110 @@ function V2ThreadRequestListPanel({
     <>
       <div className="rounded-md border border-border/80 bg-background/80">
         <div className="overflow-x-auto">
-            <table className="w-full min-w-[1000px] border-collapse text-left text-xs">
-              <thead className="border-b border-border bg-muted/50">
-                <tr>
-                  <th scope="col" className="px-2 py-1.5 font-medium">
-                    时间
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 font-medium">
-                    request_id
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 font-medium">
-                    模型
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 font-medium">
-                    应用
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 font-medium">
-                    会话
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 font-medium">
-                    状态
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-2 py-1.5 text-right font-medium"
-                  >
-                    用量 (P/C/Σ)
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-2 py-1.5 text-right font-medium"
-                  >
-                    成本 (USD)
-                  </th>
-                  <th scope="col" className="px-2 py-1.5 font-medium">
-                    finish
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-2 py-1.5 text-right font-medium"
-                  >
-                    耗时 (s)
-                  </th>
-                  <th
-                    scope="col"
-                    className="w-10 px-2 py-1.5 text-center font-medium"
-                  >
-                    <span className="sr-only">操作</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.data.map((r) => (
-                  <AuditLogTableRow
-                    key={r.request_id}
-                    row={r}
-                    density="compact"
-                    detailSheetOpen={detailRequestId === r.request_id}
-                    rowEmphasisActive={
-                      rowEmphasisRequestId != null &&
-                      rowEmphasisRequestId === r.request_id
-                    }
-                    onToggleDetail={onToggleDetail}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <table className="w-full min-w-[52rem] border-collapse text-left text-xs">
+            <thead className="border-b border-border bg-muted/50">
+              <tr>
+                <th scope="col" className="px-2 py-1.5 font-medium">
+                  时间
+                </th>
+                <th scope="col" className="px-2 py-1.5 font-medium">
+                  request_id
+                </th>
+                <th scope="col" className="px-2 py-1.5 font-medium">
+                  模型
+                </th>
+                <th scope="col" className="px-2 py-1.5 font-medium">
+                  应用
+                </th>
+                <th scope="col" className="px-2 py-1.5 font-medium">
+                  状态
+                </th>
+                <th
+                  scope="col"
+                  className="px-2 py-1.5 text-right font-medium"
+                >
+                  用量 (P/C/Σ)
+                </th>
+                <th
+                  scope="col"
+                  className="px-2 py-1.5 text-right font-medium"
+                >
+                  成本 (USD)
+                </th>
+                <th scope="col" className="px-2 py-1.5 font-medium">
+                  finish
+                </th>
+                <th
+                  scope="col"
+                  className="px-2 py-1.5 text-right font-medium"
+                >
+                  耗时 (s)
+                </th>
+                <th
+                  scope="col"
+                  className="w-10 px-2 py-1.5 text-center font-medium"
+                >
+                  <span className="sr-only">操作</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.data.map((r) => (
+                <AuditLogTableRow
+                  key={r.request_id}
+                  row={r}
+                  density="compact"
+                  omitThreadColumn
+                  detailSheetOpen={detailRequestId === r.request_id}
+                  rowEmphasisActive={
+                    rowEmphasisRequestId != null &&
+                    rowEmphasisRequestId === r.request_id
+                  }
+                  onToggleDetail={onToggleDetail}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       {data.total > THREAD_CHILD_LIMIT ? (
         <p className="mt-2 text-[11px] text-muted-foreground">
           仅显示前 {THREAD_CHILD_LIMIT} 条，共 {data.total}{' '}
-          条；完整列表请使用底部「经典列表」或行内列表图标打开经典视图。
+          条；完整列表请使用底部「经典列表」或在展开区内「在经典列表中打开」。
         </p>
       ) : null}
     </>
   )
 }
 
+const SESSION_TABLE_COL_COUNT = 8
+
 function AuditThreadTableGroup({
   row,
   requestListHref,
   expanded,
   onToggleExpand,
+  expandedPanel,
 }: {
   row: AuditThreadListItem
   requestListHref: string
   expanded: boolean
   onToggleExpand: () => void
+  /** 本会话展开时渲染在下一行；未展开时为 null */
+  expandedPanel: ReactNode | null
 }) {
   return (
+    <>
     <tr
       className={cn(
-        'border-b border-border/80 hover:bg-muted/30',
+        'border-b border-border/80 hover:bg-muted/30 cursor-pointer',
         expanded && 'bg-muted/25',
       )}
+      onClick={(e) => {
+        const t = e.target as HTMLElement
+        if (t.closest('a, button')) return
+        onToggleExpand()
+      }}
     >
       <td className="w-12 px-2 py-2 text-center align-middle">
         <Tooltip>
@@ -501,6 +521,7 @@ function AuditThreadTableGroup({
               variant="ghost"
               size="icon-sm"
               aria-pressed={expanded}
+              aria-expanded={expanded}
               aria-label={
                 expanded ? '收起会话下的请求' : '查看会话下的请求'
               }
@@ -508,13 +529,22 @@ function AuditThreadTableGroup({
                 'inline-flex text-primary',
                 expanded && 'bg-muted/50',
               )}
-              onClick={onToggleExpand}
+              onClick={(e) => {
+                e.stopPropagation()
+                onToggleExpand()
+              }}
             >
-              <FileText className="size-4" aria-hidden />
+              <ChevronRight
+                className={cn(
+                  'size-4 transition-transform duration-200 ease-out',
+                  expanded && 'rotate-90',
+                )}
+                aria-hidden
+              />
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right">
-            {expanded ? '收起' : '会话下的请求'}
+            {expanded ? '收起' : '展开会话下的请求'}
           </TooltipContent>
         </Tooltip>
       </td>
@@ -554,24 +584,26 @@ function AuditThreadTableGroup({
           '0'
         )}
       </td>
-      <td className="px-3 py-2 text-center">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Link
-              to={requestListHref}
-              aria-label="在经典列表中查看该会话的请求"
-              className={cn(
-                buttonVariants({ variant: 'ghost', size: 'icon-sm' }),
-                'inline-flex text-primary',
-              )}
-            >
-              <List className="size-4" aria-hidden />
-            </Link>
-          </TooltipTrigger>
-          <TooltipContent side="left">请求列表</TooltipContent>
-        </Tooltip>
-      </td>
     </tr>
+    {expanded && expandedPanel != null ? (
+      <tr className="border-b border-border/80 bg-muted/10">
+        <td colSpan={SESSION_TABLE_COL_COUNT} className="p-0 align-top">
+          <div
+            role="region"
+            aria-label="会话下的请求"
+            className="border-t border-border/60 px-3 py-3"
+          >
+            {expandedPanel}
+            <div className="mt-3 flex justify-end border-t border-border/40 pt-3">
+              <Button variant="outline" size="sm" asChild>
+                <Link to={requestListHref}>在经典列表中打开</Link>
+              </Button>
+            </div>
+          </div>
+        </td>
+      </tr>
+    ) : null}
+    </>
   )
 }
 
@@ -613,12 +645,12 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   )
 
   const [recentModelsStorageRev, setRecentModelsStorageRev] = useState(0)
-  /** v2: 右侧抽屉展示该会话下的请求列表（同时只打开一个） */
+  /** v2: 列表内展开该会话下的请求（同时只展开一行） */
   const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null)
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null)
   /**
-   * 会话请求抽屉内：上次在详情抽屉中查看的 request_id。
-   * 用于详情抽屉盖住会话表时、或关闭详情后，仍能在会话列表上看到「展开」态。
+   * 会话展开区内：上次在详情抽屉中查看的 request_id。
+   * 用于详情抽屉打开时、或关闭详情后，仍能在会话列表上看到「展开」态。
    */
   const [threadSheetHighlightRequestId, setThreadSheetHighlightRequestId] =
     useState<string | null>(null)
@@ -1005,11 +1037,11 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">
-            {listVariant === 'v2' ? '日志中心（新版）' : '日志中心'}
+            {listVariant === 'v2' ? '会话中心' : '日志中心'}
           </h1>
           <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
             {listVariant === 'v2'
-              ? '每行一个会话 (thread)：筛选与经典列表一致；thread id 下方展示最近一次 user 消息摘要。点击行首文档图标在右侧打开该会话下的请求列表（最多 50 条），与经典列表中查看请求详情相同。请求数为维表累计次数。'
+              ? '每行一个会话 (thread)：筛选与经典列表一致；thread id 下方展示最近一次 user 消息摘要。点击会话行（或行首向右箭头）在本页展开该会话下的请求列表（最多 50 条）；行内「详情」仍从右侧抽屉打开。请求数为维表累计次数。'
               : '审计请求日志 · 默认最近 7×24 小时至今日日末。'}
           </p>
         </div>
@@ -1425,7 +1457,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                   scope="col"
                   className="w-12 px-2 py-2 text-center font-medium"
                 >
-                  <span className="sr-only">会话下的请求</span>
+                  <span className="sr-only">展开或收起会话下的请求</span>
                 </th>
                 <th
                   scope="col"
@@ -1468,12 +1500,6 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 >
                   失败
                 </th>
-                <th
-                  scope="col"
-                  className="w-12 px-3 py-2 text-center font-medium"
-                >
-                  <span className="sr-only">操作</span>
-                </th>
               </tr>
             </thead>
             <tbody>
@@ -1492,6 +1518,18 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                       cur === row.thread_id ? null : row.thread_id,
                     )
                   }}
+                  expandedPanel={
+                    expandedThreadId === row.thread_id ? (
+                      <V2ThreadRequestListPanel
+                        isLoading={threadSheetChildList.isLoading}
+                        isError={threadSheetChildList.isError}
+                        data={threadSheetChildList.data}
+                        detailRequestId={detailRequestId}
+                        rowEmphasisRequestId={threadRowEmphasisRequestId}
+                        onToggleDetail={toggleLogDetail}
+                      />
+                    ) : null
+                  }
                 />
               ))}
             </tbody>
@@ -1528,55 +1566,6 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
         </div>
       )}
     </section>
-
-    <Sheet
-      open={expandedThreadId != null}
-      onOpenChange={(open) => {
-        if (!open) setExpandedThreadId(null)
-      }}
-    >
-      <SheetContent
-        side="right"
-        className="flex h-full max-h-[100dvh] flex-col gap-0 overflow-hidden p-0"
-        style={logSheetPanelStyle}
-      >
-        <SheetHeader className="border-border shrink-0 space-y-1 border-b px-4 py-3 text-left">
-          <SheetTitle>会话下的请求</SheetTitle>
-          <SheetDescription className="sr-only">
-            当前筛选下该 thread 的请求行，最多 {THREAD_CHILD_LIMIT} 条
-          </SheetDescription>
-          {expandedThreadId ? (
-            <p className="break-all font-mono text-xs text-muted-foreground">
-              {expandedThreadId}
-            </p>
-          ) : null}
-        </SheetHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-          <V2ThreadRequestListPanel
-            isLoading={threadSheetChildList.isLoading}
-            isError={threadSheetChildList.isError}
-            data={threadSheetChildList.data}
-            detailRequestId={detailRequestId}
-            rowEmphasisRequestId={threadRowEmphasisRequestId}
-            onToggleDetail={toggleLogDetail}
-          />
-        </div>
-        <SheetFooter className="border-border shrink-0 border-t px-4 py-3 sm:flex-row sm:justify-end">
-          {expandedThreadId ? (
-            <Button variant="outline" size="sm" asChild>
-              <Link
-                to={hrefToClassicRequestListForThread(
-                  expandedThreadId,
-                  searchParams,
-                )}
-              >
-                在经典列表中打开
-              </Link>
-            </Button>
-          ) : null}
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
 
     <Sheet
       open={detailRequestId != null}
