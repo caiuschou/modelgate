@@ -639,9 +639,16 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   const [draftStatusCode, setDraftStatusCode] = useState(statusCode)
   const [draftTokenId, setDraftTokenId] = useState(tokenId)
 
-  const [advancedOpen, setAdvancedOpen] = useState(() =>
-    typeof window !== 'undefined' &&
-    urlHasAdvancedFilters(new URLSearchParams(window.location.search)),
+  const [advancedOpen, setAdvancedOpen] = useState(() => {
+    if (typeof window === 'undefined') return false
+    // 会话中心默认收起「更多条件」；仍可通过按钮展开，已应用的筛选会以 chips 展示。
+    if (listVariant === 'v2') return false
+    return urlHasAdvancedFilters(new URLSearchParams(window.location.search))
+  })
+
+  /** 会话中心：整块筛选（时间/关键词/更多条件）默认收起，仅保留一条摘要与查询入口 */
+  const [sessionFiltersExpanded, setSessionFiltersExpanded] = useState(
+    () => listVariant !== 'v2',
   )
 
   const [recentModelsStorageRev, setRecentModelsStorageRev] = useState(0)
@@ -672,10 +679,11 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   }, [searchParamsKey])
 
   useEffect(() => {
+    if (listVariant === 'v2') return
     if (urlHasAdvancedFilters(new URLSearchParams(searchParamsKey))) {
       setAdvancedOpen(true)
     }
-  }, [searchParamsKey])
+  }, [searchParamsKey, listVariant])
 
   const listQuery = useMemo(
     () =>
@@ -861,7 +869,11 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
       end_time: String(r.end),
       offset: '0',
     })
-  }, [setSearchParams])
+    if (listVariant === 'v2') {
+      setSessionFiltersExpanded(false)
+      setAdvancedOpen(false)
+    }
+  }, [listVariant, setSearchParams])
 
   const setPage = (newOffset: number) => {
     const next = new URLSearchParams(searchParams)
@@ -1041,7 +1053,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
           </h1>
           <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
             {listVariant === 'v2'
-              ? '每行一个会话 (thread)：筛选与经典列表一致；thread id 下方展示最近一次 user 消息摘要。点击会话行（或行首向右箭头）在本页展开该会话下的请求列表（最多 50 条）；行内「详情」仍从右侧抽屉打开。请求数为维表累计次数。'
+              ? '每行一个会话 (thread)：顶部默认收起筛选，点「展开筛选条件」可编辑时间与关键词（与经典列表一致）。thread id 下方为最近 user 消息摘要；点击会话行或行首箭头在本页展开该会话下的请求（最多 50 条）；行内「详情」仍从右侧抽屉打开。'
               : '审计请求日志 · 默认最近 7×24 小时至今日日末。'}
           </p>
         </div>
@@ -1089,13 +1101,80 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
 
       <Card className="overflow-hidden p-0">
         <form
-          className="divide-y divide-border"
+          className={cn(
+            'divide-y divide-border',
+            listVariant === 'v2' && !sessionFiltersExpanded && 'divide-y-0',
+          )}
           onSubmit={(e) => {
             e.preventDefault()
             applyFilters()
           }}
         >
+          {listVariant === 'v2' && !sessionFiltersExpanded ? (
+            <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0 gap-1.5"
+                  aria-expanded={false}
+                  onClick={() => setSessionFiltersExpanded(true)}
+                >
+                  <ChevronRight className="size-4" aria-hidden />
+                  展开筛选条件
+                </Button>
+                <span
+                  className="min-w-0 truncate text-xs tabular-nums text-muted-foreground"
+                  title={logRangeSummaryLine}
+                >
+                  {logRangeSummaryCompact}
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label="完整时间区间说明"
+                    >
+                      <Info className="size-3.5" aria-hidden />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" align="end" className="max-w-xs text-left">
+                    {logRangeSummaryLine}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                <Button type="submit" size="sm" title="将关键词、模型与更多条件写入地址栏并查询">
+                  查询
+                </Button>
+                <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
+                  重置
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <>
           <div className="space-y-2 p-3 sm:p-4">
+            {listVariant === 'v2' ? (
+              <div className="flex justify-end border-b border-dashed border-border/60 pb-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 px-2 text-muted-foreground hover:text-foreground"
+                  aria-expanded={true}
+                  onClick={() => {
+                    setSessionFiltersExpanded(false)
+                    setAdvancedOpen(false)
+                  }}
+                >
+                  <ChevronDown className="size-4 rotate-180 transition-transform" aria-hidden />
+                  收起筛选条件
+                </Button>
+              </div>
+            ) : null}
             <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:gap-3">
               <div className="grid min-w-0 flex-1 gap-2 sm:max-w-xl sm:grid-cols-2">
                 <LogDateField
@@ -1343,6 +1422,8 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
               </Button>
             </div>
           </div>
+            </>
+          )}
         </form>
 
         {activeChips.length > 0 && (

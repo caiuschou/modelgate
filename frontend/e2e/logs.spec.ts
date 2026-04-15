@@ -53,7 +53,10 @@ test('log center v2 list heading is visible when authenticated', async ({
   await expect(
     page.getByRole('heading', { name: '会话中心' }),
   ).toBeVisible()
-  // 无数据时不渲染表头，仅校验筛选区常驻
+  // 无数据时不渲染表头；会话中心默认收起整块筛选，仅保留摘要条与查询
+  await expect(
+    page.getByRole('button', { name: '展开筛选条件' }),
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: '查询' })).toBeVisible()
 })
 
