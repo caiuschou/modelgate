@@ -4,6 +4,8 @@ dist/
 audit_logs/
 .DS_Store
 modelgate.db
+*.db-shm
+*.db-wal
 e2e/modelgate-e2e.db
 e2e/audit_logs/
 e2e/exports/
