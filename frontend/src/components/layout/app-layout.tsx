@@ -84,7 +84,7 @@ function AppShellHeader({ showSidebarTrigger }: { showSidebarTrigger: boolean })
               className="-ms-1"
             />
           ) : null}
-          <span className="shrink-0 font-semibold">ModelGate Console</span>
+          <span className="shrink-0 font-semibold">Model Gate Console</span>
           <nav
             className="flex min-w-0 shrink-0 items-center gap-2"
             aria-label="顶层导航"

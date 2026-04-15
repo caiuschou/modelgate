@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import {
   createChatCompletion,
   createChatCompletionStream,
@@ -24,6 +24,21 @@ test.beforeAll(() => {
 
 function unixNow(): number {
   return Math.floor(Date.now() / 1000)
+}
+
+/** 与日志列表页右侧详情 Sheet 的 `width: calc(100vw * 2 / 3)` 一致（允许少量子像素 / 边框误差）。 */
+async function expectLogDetailSheetApproxTwoThirdsViewport(page: Page) {
+  const viewport = page.viewportSize()
+  expect(viewport).not.toBeNull()
+  const panel = page.locator('[data-slot="sheet-content"]')
+  await expect(panel).toBeVisible()
+  const box = await panel.boundingBox()
+  expect(box).not.toBeNull()
+  const expectedWidth = (viewport!.width * 2) / 3
+  expect(
+    Math.abs(box!.width - expectedWidth),
+    `sheet width ${box!.width}px vs expected ~${expectedWidth}px (2/3 of ${viewport!.width}px viewport)`,
+  ).toBeLessThan(8)
 }
 
 test('log center heading is visible when authenticated', async ({ page }) => {
@@ -78,16 +93,16 @@ test('log center v2 shows session row and links to classic list with thread filt
   )
 
   await dataRow
-    .getByRole('button', { name: '展开该会话下的请求' })
+    .getByRole('button', { name: '查看会话下的请求' })
     .click()
+  const threadRequestsSheet = page.getByRole('dialog', { name: '会话下的请求' })
+  await expect(threadRequestsSheet).toBeVisible({ timeout: 15_000 })
   await expect(
-    page.getByRole('link', { name: '查看请求详情' }),
-  ).toBeVisible({
-    timeout: 15_000,
-  })
+    threadRequestsSheet.getByRole('button', { name: '查看请求详情' }),
+  ).toBeVisible()
 
-  await dataRow
-    .getByRole('link', { name: '在经典列表中查看该会话的请求' })
+  await threadRequestsSheet
+    .getByRole('link', { name: '在经典列表中打开' })
     .click()
   await expect(page).toHaveURL(/\/logs\?/)
   const url = new URL(page.url())
@@ -160,7 +175,7 @@ test('list shows audit row after chat completion and opens detail', async ({
   await expect(dataRow).toContainText(appId)
   await expect(dataRow).toContainText(threadId)
 
-  await dataRow.getByRole('link', { name: '查看请求详情' }).click()
+  await dataRow.getByRole('button', { name: '查看请求详情' }).click()
 
   await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
   await expect(
@@ -194,6 +209,35 @@ test('list shows audit row after chat completion and opens detail', async ({
   )
 })
 
+test('log list detail sheet width is about two thirds of viewport', async ({
+  page,
+}) => {
+  const model = `e2e_sheet_w_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+  const chat = await createChatCompletion(backendBase, gatewayKey, model)
+  expect(chat.ok, `chat completions failed: ${await chat.text()}`).toBeTruthy()
+
+  const end = unixNow() + 3600
+  const row = await waitForAuditListRow(backendBase, session, {
+    start_time: '0',
+    end_time: String(end),
+    limit: '20',
+    offset: '0',
+    model,
+  })
+  expect(row, 'audit row did not appear (flush timeout)').not.toBeNull()
+
+  await page.goto('/logs')
+  const dataRow = page.getByRole('row').filter({ hasText: model })
+  await expect(dataRow).toBeVisible({
+    timeout: 20_000,
+  })
+  await dataRow.getByRole('button', { name: '查看请求详情' }).click()
+  await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()
+  await expectLogDetailSheetApproxTwoThirdsViewport(page)
+})
+
 test('detail page shows request and response body from audit files', async ({
   page,
 }) => {
@@ -220,7 +264,7 @@ test('detail page shows request and response body from audit files', async ({
   await page
     .getByRole('row')
     .filter({ hasText: model })
-    .getByRole('link', { name: '查看请求详情' })
+    .getByRole('button', { name: '查看请求详情' })
     .click()
 
   await expect(page.getByRole('heading', { name: '日志详情' })).toBeVisible()

@@ -35,6 +35,9 @@ server {
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto \$scheme;
+    # WebSocket (e.g. /api/v1/ws/logs); required for Upgrade handshake behind nginx
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
     proxy_buffering off;
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;

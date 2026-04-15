@@ -56,12 +56,9 @@ export function ConsoleSidebar() {
       <SidebarHeader className="border-b border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild tooltip="ModelGate 控制台">
+            <SidebarMenuButton size="lg" asChild tooltip="Model Gate 控制台">
               <Link to={token ? '/dashboard' : '/'}>
-                <span className="truncate font-semibold">MG</span>
-                <span className="truncate text-xs text-sidebar-foreground/80">
-                  ModelGate
-                </span>
+                <span className="truncate font-semibold">Model Gate</span>
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>

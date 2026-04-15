@@ -449,13 +449,12 @@ function AuditBodyPanel(props: {
   )
 }
 
-export function LogDetailPage() {
-  const { requestId } = useParams<{ requestId: string }>()
-  const decoded = requestId ? decodeURIComponent(requestId) : ''
-  const { data, isLoading, isError } = useAuditLogDetail(decoded || undefined)
+/** 详情主体：供独立页与日志列表右侧抽屉复用。 */
+export function LogDetailContent({ requestId }: { requestId: string }) {
+  const { data, isLoading, isError } = useAuditLogDetail(requestId || undefined)
   const { data: byokRes } = useMyByokProfiles()
   const responseBody = useAuditLogBody(
-    decoded || undefined,
+    requestId || undefined,
     'response',
     Boolean(data?.response_body_path),
   )
@@ -489,22 +488,8 @@ export function LogDetailPage() {
     return { name: row.name, revoked: row.revoked }
   }, [auditUpstream.profileId, byokRes?.data])
 
-  if (!decoded) {
-    return <p className="text-sm text-muted-foreground">无效的 request_id</p>
-  }
-
   return (
-    <section className="min-w-0 max-w-full space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button variant="outline" size="sm" asChild>
-          <Link to="/logs" className="inline-flex items-center gap-1.5">
-            <ChevronLeft className="size-4" aria-hidden />
-            返回列表
-          </Link>
-        </Button>
-        <h1 className="text-xl font-semibold">日志详情</h1>
-      </div>
-
+    <div className="min-w-0 max-w-full space-y-6">
       {isLoading && <p className="text-sm text-muted-foreground">加载中…</p>}
       {isError && (
         <p className="text-sm text-red-600" role="alert">
@@ -664,14 +649,14 @@ export function LogDetailPage() {
 
           <AuditBodyPanel
             title="请求体"
-            requestId={decoded}
+            requestId={requestId}
             part="request"
             hasPath={Boolean(data.request_body_path)}
             emptyHint="未记录请求体文件路径（写入失败或未配置审计目录时可能出现）。"
           />
           <AuditBodyPanel
             title="响应体"
-            requestId={decoded}
+            requestId={requestId}
             part="response"
             hasPath={Boolean(data.response_body_path)}
             streamSseNote={
@@ -701,6 +686,28 @@ export function LogDetailPage() {
         </>
         </TooltipProvider>
       )}
+    </div>
+  )
+}
+
+export function LogDetailPage() {
+  const { requestId } = useParams<{ requestId: string }>()
+  const decoded = requestId ? decodeURIComponent(requestId) : ''
+  if (!decoded) {
+    return <p className="text-sm text-muted-foreground">无效的 request_id</p>
+  }
+  return (
+    <section className="min-w-0 max-w-full space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant="outline" size="sm" asChild>
+          <Link to="/logs" className="inline-flex items-center gap-1.5">
+            <ChevronLeft className="size-4" aria-hidden />
+            返回列表
+          </Link>
+        </Button>
+        <h1 className="text-xl font-semibold">日志详情</h1>
+      </div>
+      <LogDetailContent requestId={decoded} />
     </section>
   )
 }
