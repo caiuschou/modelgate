@@ -6,7 +6,8 @@ type Theme = 'light' | 'dark' | 'system'
 interface UiState {
   sidebarCollapsed: boolean
   theme: Theme
-  toggleSidebar: () => void
+  /** `true` = 侧栏展开（与 shadcn `SidebarProvider` 的 `open` 一致） */
+  setSidebarExpanded: (expanded: boolean) => void
   setTheme: (theme: Theme) => void
 }
 
@@ -15,8 +16,7 @@ export const useUiStore = create<UiState>()(
     (set) => ({
       sidebarCollapsed: false,
       theme: 'system',
-      toggleSidebar: () =>
-        set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+      setSidebarExpanded: (expanded) => set({ sidebarCollapsed: !expanded }),
       setTheme: (theme) => set({ theme }),
     }),
     { name: 'modelgate-ui' },

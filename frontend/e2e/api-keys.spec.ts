@@ -6,6 +6,7 @@ import {
   loginApiKey,
   revokeMyApiKey,
 } from './helpers/api'
+import { consoleSidebarNav } from './helpers/console-nav'
 import { loadE2eSessionCredentials } from './load-e2e-credentials'
 
 const consoleBase = process.env.PLAYWRIGHT_BASE_URL ?? 'http://127.0.0.1:5173'
@@ -15,7 +16,7 @@ const backendBase = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8000'
 async function gotoApiKeys(page: Page) {
   await page.goto('/dashboard')
   await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
-  await page.locator('aside a[href="/api-keys"]').click()
+  await consoleSidebarNav(page).getByRole('link', { name: 'API 密钥' }).click()
   await expect(page).toHaveURL(/\/api-keys$/)
   await expect(page.getByRole('heading', { name: 'API 密钥' })).toBeVisible()
   await expect(async () => {
@@ -42,7 +43,7 @@ test.describe('API 密钥页（已登录）', () => {
   test('侧栏可进入且展示标题与主操作', async ({ page }) => {
     await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: '仪表盘' })).toBeVisible()
-    await page.locator('aside a[href="/api-keys"]').click()
+    await consoleSidebarNav(page).getByRole('link', { name: 'API 密钥' }).click()
     await expect(page).toHaveURL(/\/api-keys$/)
     await expect(page.getByRole('heading', { name: 'API 密钥' })).toBeVisible()
     await expect(

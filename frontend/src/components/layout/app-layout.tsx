@@ -1,12 +1,18 @@
 import { ChevronDown, Monitor, Moon, Sun } from 'lucide-react'
 import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { ConsoleSidebar } from '@/components/layout/console-sidebar'
 import { Button } from '@/components/ui/button'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from '@/components/ui/sidebar'
 import { cn } from '@/lib/utils'
 import { ChangePasswordModal } from '@/features/auth/components/change-password-modal'
 import { HeaderLoginModal } from '@/features/auth/components/header-login-modal'
@@ -21,53 +27,6 @@ const themeChoices = [
   { value: 'system' as const, label: '跟随系统', Icon: Monitor },
 ]
 
-type SidebarItem = { to: string; label: string; guestOk: boolean }
-
-/** 侧栏分组：概览 → 接入与凭据 → 组织与协作 → 日志与分析 → 账户 → 系统 */
-const sidebarGroups: { heading: string; items: SidebarItem[] }[] = [
-  {
-    heading: '接入与凭据',
-    items: [
-      { to: '/api-keys', label: 'API 密钥', guestOk: false },
-      { to: '/byok-profiles', label: 'BYOK', guestOk: false },
-    ],
-  },
-  {
-    heading: '组织与协作',
-    items: [
-      { to: '/teams', label: '团队', guestOk: false },
-      { to: '/users', label: '用户管理', guestOk: false },
-    ],
-  },
-  {
-    heading: '日志与分析',
-    items: [
-      { to: '/logs', label: '日志中心', guestOk: false },
-      { to: '/logs/v2', label: '会话日志', guestOk: false },
-      { to: '/analytics', label: '统计分析', guestOk: false },
-    ],
-  },
-  {
-    heading: '账户',
-    items: [{ to: '/billing', label: '充值中心', guestOk: false }],
-  },
-  {
-    heading: '系统',
-    items: [{ to: '/settings', label: '系统设置', guestOk: false }],
-  },
-]
-
-function sidebarHref(
-  to: string,
-  guestOk: boolean,
-  token: string | null,
-): string {
-  if (token || guestOk) {
-    return to
-  }
-  return `/login?redirect=${encodeURIComponent(to)}`
-}
-
 /** 顶栏「控制台」高亮：特性首页与模型页不算控制台。 */
 function isConsoleTopNavActive(pathname: string): boolean {
   return (
@@ -75,18 +34,6 @@ function isConsoleTopNavActive(pathname: string): boolean {
     pathname !== '/models' &&
     !pathname.startsWith('/models/')
   )
-}
-
-function isSidebarLinkActive(to: string, pathname: string): boolean {
-  if (to === '/') return pathname === '/'
-  if (to === '/logs/v2') {
-    return pathname === '/logs/v2'
-  }
-  if (to === '/logs') {
-    if (pathname.startsWith('/logs/v2')) return false
-    return pathname === '/logs' || pathname.startsWith('/logs/')
-  }
-  return pathname === to || pathname.startsWith(`${to}/`)
 }
 
 const topNavTabClass = (active: boolean) =>
@@ -97,7 +44,7 @@ const topNavTabClass = (active: boolean) =>
       : 'border-dashed border-border text-foreground hover:bg-accent',
   )
 
-export function AppLayout() {
+function AppShellHeader({ showSidebarTrigger }: { showSidebarTrigger: boolean }) {
   const location = useLocation()
   const navigate = useNavigate()
   const token = useAuthStore((state) => state.token)
@@ -106,8 +53,6 @@ export function AppLayout() {
   const currentTeamId = useTeamStore((s) => s.currentTeamId)
   const setTeamContext = useTeamStore((s) => s.setTeamContext)
   const { data: teamsRes } = useMyTeams()
-  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed)
-  const toggleSidebar = useUiStore((state) => state.toggleSidebar)
   const theme = useUiStore((state) => state.theme)
   const setTheme = useUiStore((state) => state.setTheme)
   const [workspaceOpen, setWorkspaceOpen] = useState(false)
@@ -115,15 +60,6 @@ export function AppLayout() {
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const [loginModalOpen, setLoginModalOpen] = useState(false)
 
-  const homeSidebarItem = token
-    ? { to: '/dashboard' as const, label: '首页', guestOk: false as const }
-    : { to: '/' as const, label: '首页', guestOk: true as const }
-  /** 访客特性首页、模型目录页与控制台分离：不展示左侧控制台菜单。 */
-  const guestMarketingHome = location.pathname === '/' && !token
-  const modelsStandaloneRoute =
-    location.pathname === '/models' ||
-    location.pathname.startsWith('/models/')
-  const showConsoleSidebar = !guestMarketingHome && !modelsStandaloneRoute
   const teams = teamsRes?.data ?? []
   const currentSpaceLabel =
     currentTeamId == null
@@ -138,17 +74,19 @@ export function AppLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-border bg-card px-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          {showConsoleSidebar ? (
-            <Button variant="outline" size="sm" onClick={toggleSidebar}>
-              {sidebarCollapsed ? '展开' : '折叠'}
-            </Button>
+    <>
+      <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          {showSidebarTrigger ? (
+            <SidebarTrigger
+              aria-label="切换侧栏"
+              title="切换侧栏（Ctrl+B）"
+              className="-ms-1"
+            />
           ) : null}
           <span className="shrink-0 font-semibold">ModelGate Console</span>
           <nav
-            className="flex shrink-0 items-center gap-2"
+            className="flex min-w-0 shrink-0 items-center gap-2"
             aria-label="顶层导航"
           >
             {token ? (
@@ -177,7 +115,7 @@ export function AppLayout() {
             </NavLink>
           </nav>
         </div>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="flex items-center gap-2 text-sm sm:gap-3">
           {token ? (
             <Popover open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
               <PopoverTrigger asChild>
@@ -312,7 +250,11 @@ export function AppLayout() {
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="w-48 p-1" sideOffset={6}>
-                <div className="flex flex-col gap-0.5" role="menu" aria-label="账号">
+                <div
+                  className="flex flex-col gap-0.5"
+                  role="menu"
+                  aria-label="账号"
+                >
                   <button
                     type="button"
                     role="menuitem"
@@ -347,91 +289,6 @@ export function AppLayout() {
         </div>
       </header>
 
-      <div
-        className={cn(
-          'mx-auto flex w-full min-w-0 max-w-[1400px]',
-          !showConsoleSidebar && 'max-w-[1200px]',
-        )}
-      >
-        {showConsoleSidebar ? (
-          <aside
-            className={`border-r border-border bg-card p-3 ${sidebarCollapsed ? 'w-20' : 'w-56'}`}
-          >
-            <nav className="space-y-1" aria-label="控制台侧栏">
-              <div className="space-y-1">
-                {!sidebarCollapsed ? (
-                  <div className="px-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground">
-                    概览
-                  </div>
-                ) : null}
-                {(() => {
-                  const item = homeSidebarItem
-                  const href = sidebarHref(item.to, item.guestOk, token)
-                  const isActive = isSidebarLinkActive(item.to, location.pathname)
-                  return (
-                    <Link
-                      key={`${item.to}-home`}
-                      to={href}
-                      className={`block rounded px-3 py-2 text-sm ${
-                        isActive
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                      }`}
-                    >
-                      {sidebarCollapsed ? item.label.slice(0, 2) : item.label}
-                    </Link>
-                  )
-                })()}
-              </div>
-              {sidebarGroups.map((group, gi) => (
-                <div
-                  key={group.heading}
-                  className={cn(
-                    'space-y-1',
-                    gi > 0 && 'mt-3 border-t border-border/70 pt-3',
-                  )}
-                >
-                  {!sidebarCollapsed ? (
-                    <div className="px-3 pb-1 text-[11px] font-semibold tracking-wide text-muted-foreground">
-                      {group.heading}
-                    </div>
-                  ) : null}
-                  {group.items.map((item) => {
-                    const href = sidebarHref(item.to, item.guestOk, token)
-                    const isActive = isSidebarLinkActive(
-                      item.to,
-                      location.pathname,
-                    )
-                    return (
-                      <Link
-                        key={`${item.to}-${item.label}`}
-                        to={href}
-                        className={`block rounded px-3 py-2 text-sm ${
-                          isActive
-                            ? 'bg-primary text-primary-foreground'
-                            : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-                        }`}
-                      >
-                        {sidebarCollapsed ? item.label.slice(0, 2) : item.label}
-                      </Link>
-                    )
-                  })}
-                </div>
-              ))}
-            </nav>
-          </aside>
-        ) : null}
-
-        <main
-          className={cn(
-            'min-h-[calc(100vh-56px)] min-w-0 flex-1 p-6',
-            !showConsoleSidebar && 'w-full',
-          )}
-        >
-          <Outlet />
-        </main>
-      </div>
-
       <ChangePasswordModal
         open={changePasswordOpen}
         onClose={() => setChangePasswordOpen(false)}
@@ -442,6 +299,54 @@ export function AppLayout() {
         onClose={() => setLoginModalOpen(false)}
         onLoggedIn={() => navigate('/dashboard')}
       />
-    </div>
+    </>
+  )
+}
+
+export function AppLayout() {
+  const location = useLocation()
+  const token = useAuthStore((state) => state.token)
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed)
+  const setSidebarExpanded = useUiStore((state) => state.setSidebarExpanded)
+
+  const guestMarketingHome = location.pathname === '/' && !token
+  const modelsStandaloneRoute =
+    location.pathname === '/models' ||
+    location.pathname.startsWith('/models/')
+  const showConsoleSidebar = !guestMarketingHome && !modelsStandaloneRoute
+
+  return (
+    <>
+      {showConsoleSidebar ? (
+        <SidebarProvider
+          open={!sidebarCollapsed}
+          onOpenChange={setSidebarExpanded}
+          className="min-h-svh w-full"
+        >
+          <ConsoleSidebar />
+          <SidebarInset>
+            <AppShellHeader showSidebarTrigger />
+            <div
+              className={cn(
+                'mx-auto min-h-0 w-full min-w-0 flex-1 p-6 max-w-[1400px]',
+              )}
+            >
+              <Outlet />
+            </div>
+          </SidebarInset>
+        </SidebarProvider>
+      ) : (
+        <div className="flex min-h-svh flex-col bg-background text-foreground">
+          <AppShellHeader showSidebarTrigger={false} />
+          <div
+            className={cn(
+              'mx-auto w-full min-w-0 flex-1 p-6 max-w-[1200px]',
+            )}
+          >
+            <Outlet />
+          </div>
+        </div>
+      )}
+    </>
   )
 }
