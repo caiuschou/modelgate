@@ -69,6 +69,7 @@ import {
 import { useMyApiKeys } from '@/features/api-keys/hooks/use-api-keys'
 import type { ApiKeySummary } from '@/features/api-keys/types'
 import { formatCostUsd } from '@/lib/format-cost'
+import { formatTokenCountKmb } from '@/lib/format-token-count-kmb'
 import { cn } from '@/lib/utils'
 import type { AuditLogListItem, AuditThreadListItem } from '@/features/logs/types'
 import { LogDetailContent } from '@/features/logs/pages/log-detail-page'
@@ -123,8 +124,7 @@ function formatListToken(n: number | null | undefined): string {
 }
 
 function formatSessionTokenField(v: number | undefined | null): string {
-  if (v == null || Number.isNaN(v)) return '—'
-  return v.toLocaleString()
+  return formatTokenCountKmb(v)
 }
 
 /** v2 会话行：合并「首次 / 最后一次」请求时间；时间与标签字号统一。 */
@@ -185,8 +185,18 @@ function AuditThreadActivityCell({ row }: { row: AuditThreadListItem }) {
 /** Session list: stacked 合计 / 输入·输出 / 缓存 — avoids one unreadable slash line. */
 function AuditThreadSessionUsageCell({ row }: { row: AuditThreadListItem }) {
   const cache = row.total_cached_prompt_tokens ?? 0
+  const fullTitle = [
+    `合计 ${(row.total_tokens ?? 0).toLocaleString()}`,
+    `输入 ${(row.total_prompt_tokens ?? 0).toLocaleString()} · 输出 ${(row.total_completion_tokens ?? 0).toLocaleString()}`,
+    cache > 0 ? `缓存命中 ${cache.toLocaleString()}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n')
   return (
-    <div className="flex max-w-[13rem] flex-col items-end gap-0.5 py-0.5 text-right leading-tight">
+    <div
+      className="flex max-w-[13rem] flex-col items-end gap-0.5 py-0.5 text-right leading-tight"
+      title={fullTitle}
+    >
       <span className="text-sm tabular-nums text-foreground">
         合计{' '}
         <span className="font-medium">
@@ -285,21 +295,22 @@ function AuditLogTableRow({
       )}
     </td>
   )
+  const fmtTok = compact ? formatTokenCountKmb : formatListToken
   const usageCell = (
     <td className={cn('text-right', mono, pad)}>
       <LogListUsageTooltipCell row={row}>
         <div className="flex flex-col items-end gap-0.5 leading-tight">
           <div>
             <span className="text-muted-foreground">P</span>{' '}
-            {formatListToken(row.prompt_tokens)}
+            {fmtTok(row.prompt_tokens)}
           </div>
           <div>
             <span className="text-muted-foreground">C</span>{' '}
-            {formatListToken(row.completion_tokens)}
+            {fmtTok(row.completion_tokens)}
           </div>
           <div>
             <span className="text-muted-foreground">Σ</span>{' '}
-            {formatListToken(row.total_tokens)}
+            {fmtTok(row.total_tokens)}
           </div>
         </div>
       </LogListUsageTooltipCell>
