@@ -4,6 +4,7 @@ pub mod audit_notify;
 pub mod auth;
 pub mod billing;
 pub mod byok;
+pub mod chat_prompt_preview;
 pub mod config;
 pub mod db;
 pub mod errors;

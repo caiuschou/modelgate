@@ -6,7 +6,7 @@ use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord, AuditThreadListItem};
 
-const MIGRATIONS: [(&str, &str); 19] = [
+const MIGRATIONS: [(&str, &str); 20] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -82,6 +82,10 @@ const MIGRATIONS: [(&str, &str); 19] = [
     (
         "0019_audit_threads.sql",
         include_str!("../migrations/0019_audit_threads.sql"),
+    ),
+    (
+        "0020_audit_threads_prompt_preview.sql",
+        include_str!("../migrations/0020_audit_threads_prompt_preview.sql"),
     ),
 ];
 
@@ -1318,19 +1322,32 @@ fn touch_audit_thread(
     team_id: Option<i64>,
     thread_id: &str,
     at: i64,
+    prompt_preview: Option<&str>,
 ) -> rusqlite::Result<()> {
     let thread_id = thread_id.trim();
     if thread_id.is_empty() {
         return Ok(());
     }
     let team_scope = team_id.unwrap_or(0);
+    let preview_param: Option<&str> = prompt_preview.map(str::trim).filter(|s| !s.is_empty());
+    let last_prompt_at: Option<i64> = preview_param.map(|_| at);
     conn.execute(
-        "INSERT INTO audit_threads (user_id, team_scope, thread_id, first_seen_at, last_seen_at, request_count)
-         VALUES (?1, ?2, ?3, ?4, ?4, 1)
+        "INSERT INTO audit_threads (user_id, team_scope, thread_id, first_seen_at, last_seen_at, request_count, last_prompt_preview, last_prompt_at)
+         VALUES (?1, ?2, ?3, ?4, ?4, 1, ?5, ?6)
          ON CONFLICT(user_id, team_scope, thread_id) DO UPDATE SET
            last_seen_at = excluded.last_seen_at,
-           request_count = audit_threads.request_count + 1",
-        params![user_id, team_scope, thread_id, at],
+           request_count = audit_threads.request_count + 1,
+           last_prompt_preview = COALESCE(excluded.last_prompt_preview, audit_threads.last_prompt_preview),
+           last_prompt_at = CASE WHEN excluded.last_prompt_preview IS NOT NULL
+             THEN excluded.last_prompt_at ELSE audit_threads.last_prompt_at END",
+        params![
+            user_id,
+            team_scope,
+            thread_id,
+            at,
+            preview_param,
+            last_prompt_at,
+        ],
     )?;
     Ok(())
 }
@@ -1388,7 +1405,14 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
             ])?;
             if !already_had_row {
                 if let (Some(uid), Some(tid)) = (record.user_id, record.thread_id.as_ref()) {
-                    touch_audit_thread(&tx, uid, record.team_id, tid, record.created_at)?;
+                    touch_audit_thread(
+                        &tx,
+                        uid,
+                        record.team_id,
+                        tid,
+                        record.created_at,
+                        record.prompt_preview.as_deref(),
+                    )?;
                 }
             }
             if let Err(e) = apply_audit_hourly_rollup_from_record(&tx, record) {
@@ -1674,6 +1698,7 @@ pub fn get_audit_log_by_request_id(
             metadata,
             created_at: row.get(21)?,
             team_id: row.get(22)?,
+            prompt_preview: None,
         })
     })?;
 
@@ -1875,7 +1900,13 @@ pub fn query_audit_threads(
             COALESCE(SUM(al.cached_prompt_tokens), 0) AS total_cached_prompt_tokens, \
             COALESCE(SUM(al.cost), 0.0) AS total_cost, \
             SUM(CASE WHEN al.status_code IS NOT NULL AND al.status_code >= 400 THEN 1 ELSE 0 END) AS error_count, \
-            COALESCE(SUM(COALESCE(al.latency_ms, 0)), 0) AS total_latency_ms \
+            COALESCE(SUM(COALESCE(al.latency_ms, 0)), 0) AS total_latency_ms, \
+            (SELECT t.last_prompt_preview FROM audit_threads t \
+             WHERE t.user_id = al.user_id AND t.team_scope = COALESCE(al.team_id, 0) AND t.thread_id = trim(al.thread_id) \
+             LIMIT 1) AS last_prompt_preview, \
+            (SELECT t.last_prompt_at FROM audit_threads t \
+             WHERE t.user_id = al.user_id AND t.team_scope = COALESCE(al.team_id, 0) AND t.thread_id = trim(al.thread_id) \
+             LIMIT 1) AS last_prompt_at \
          FROM audit_logs al \
          {where_sql} \
          GROUP BY al.user_id, COALESCE(al.team_id, 0), trim(al.thread_id) \
@@ -1908,6 +1939,8 @@ pub fn query_audit_threads(
             total_cost: row.get(10)?,
             error_count: row.get(11)?,
             total_latency_ms: row.get(12)?,
+            last_prompt_preview: row.get(13)?,
+            last_prompt_at: row.get(14)?,
         })
     })?;
 
@@ -2695,6 +2728,7 @@ mod tests {
             metadata: None,
             created_at: ts,
             team_id: None,
+            prompt_preview: None,
         };
         insert_audit_logs(&mut conn, &[row("q1", t0), row("q2", t0 + 5)]).expect("insert audit");
 
@@ -2708,6 +2742,87 @@ mod tests {
         assert_eq!(row.0, t0);
         assert_eq!(row.1, t0 + 5);
         assert_eq!(row.2, 2);
+    }
+
+    #[test]
+    fn insert_audit_logs_prompt_preview_updates_audit_threads() {
+        use crate::audit::{AuditListQuery, AuditRecord};
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 10_000_000_i64;
+        let row = |rid: &str, preview: Option<&str>, ts: i64| AuditRecord {
+            request_id: rid.into(),
+            user_id: Some(7),
+            token_id: Some(1),
+            channel_id: None,
+            model: Some("m".into()),
+            request_type: Some("chat".into()),
+            request_body_path: None,
+            response_body_path: None,
+            status_code: Some(200),
+            error_message: None,
+            prompt_tokens: Some(1),
+            completion_tokens: Some(1),
+            cached_prompt_tokens: None,
+            total_tokens: Some(2),
+            cost: Some(0.01),
+            latency_ms: Some(10),
+            reasoning_phase_ms: None,
+            app_id: None,
+            thread_id: Some("thr-p".into()),
+            finish_reason: None,
+            metadata: None,
+            created_at: ts,
+            team_id: None,
+            prompt_preview: preview.map(|s| s.to_string()),
+        };
+        insert_audit_logs(&mut conn, &[row("r1", Some("first ask"), t0)]).expect("insert");
+        let p1: String = conn
+            .query_row(
+                "SELECT last_prompt_preview FROM audit_threads WHERE thread_id = 'thr-p'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("preview");
+        assert_eq!(p1, "first ask");
+
+        insert_audit_logs(&mut conn, &[row("r2", Some("second ask"), t0 + 3)]).expect("insert2");
+        let p2: String = conn
+            .query_row(
+                "SELECT last_prompt_preview FROM audit_threads WHERE thread_id = 'thr-p'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("preview2");
+        assert_eq!(p2, "second ask");
+
+        let filter = AuditListQuery {
+            start_time: Some(t0 - 10),
+            end_time: Some(t0 + 10_000),
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            thread_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: Some(20),
+            offset: Some(0),
+        };
+        let (threads, _) =
+            query_audit_threads(&conn, &filter, AuditConsoleScope::Personal(7)).expect("threads");
+        assert_eq!(
+            threads[0].last_prompt_preview.as_deref(),
+            Some("second ask")
+        );
+        assert_eq!(threads[0].last_prompt_at, Some(t0 + 3));
     }
 
     #[test]
@@ -2741,6 +2856,7 @@ mod tests {
             metadata: Some(serde_json::json!({})),
             created_at: ts,
             team_id: None,
+            prompt_preview: None,
         };
         insert_audit_logs(&mut conn, &[row("q1", t0), row("q2", t0 + 5)]).expect("insert audit");
 
@@ -2809,6 +2925,7 @@ mod tests {
             metadata: Some(serde_json::json!({})),
             created_at: ts,
             team_id: None,
+            prompt_preview: None,
         };
         insert_audit_logs(&mut conn, &[ok("a", t0, 200), ok("b", t0 + 1, 500)]).expect("insert");
 
@@ -2870,6 +2987,7 @@ mod tests {
             metadata: None,
             created_at: t0,
             team_id: None,
+            prompt_preview: None,
         };
         insert_audit_logs(&mut conn, std::slice::from_ref(&row)).expect("first insert");
         let mut updated = row;
@@ -2920,6 +3038,7 @@ mod tests {
                     metadata: None,
                     created_at: t0,
                     team_id: None,
+                    prompt_preview: None,
                 },
                 AuditRecord {
                     request_id: "q2".into(),
@@ -2945,6 +3064,7 @@ mod tests {
                     metadata: None,
                     created_at: t0 + 4000,
                     team_id: None,
+                    prompt_preview: None,
                 },
             ],
         )
@@ -3014,6 +3134,7 @@ mod tests {
                 metadata: None,
                 created_at: t0,
                 team_id: None,
+                prompt_preview: None,
             }],
         )
         .expect("insert audit");
@@ -3086,6 +3207,7 @@ mod tests {
                 metadata: None,
                 created_at: t0,
                 team_id: Some(team_id),
+                prompt_preview: None,
             }],
         )
         .expect("insert audit");

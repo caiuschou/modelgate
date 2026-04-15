@@ -220,15 +220,22 @@ function AuditLogTableRow({
   row,
   density = 'default',
   detailSheetOpen = false,
+  rowEmphasisActive,
   onToggleDetail,
 }: {
   row: AuditLogListItem
   /** 嵌套在会话抽屉内请求表时使用更紧凑的单元格（列与 v1 一致） */
   density?: 'default' | 'compact'
-  /** 当前行是否正在右侧详情抽屉中展示 */
+  /** 当前行是否正在右侧详情抽屉中展示（用于文案：收起 / 详情） */
   detailSheetOpen?: boolean
+  /**
+   * 行与操作按钮的「展开」视觉（aria-pressed、背景）。默认与 `detailSheetOpen` 相同；
+   * 会话抽屉内可单独传入，以便详情抽屉关闭后仍能看到当前会话中选中的请求行。
+   */
+  rowEmphasisActive?: boolean
   onToggleDetail: (requestId: string) => void
 }) {
+  const emphasis = rowEmphasisActive ?? detailSheetOpen
   const compact = density === 'compact'
   const pad = compact ? 'px-2 py-1.5' : 'px-3 py-2'
   const mono = compact ? 'font-mono text-[11px]' : 'font-mono text-xs'
@@ -310,13 +317,13 @@ function AuditLogTableRow({
             type="button"
             variant="ghost"
             size="icon-sm"
-            aria-pressed={detailSheetOpen}
+            aria-pressed={emphasis}
             aria-label={
               detailSheetOpen ? '收起请求详情' : '查看请求详情'
             }
             className={cn(
               'inline-flex text-primary',
-              detailSheetOpen && 'bg-muted/50',
+              emphasis && 'bg-muted/50',
             )}
             onClick={() => onToggleDetail(row.request_id)}
           >
@@ -334,6 +341,7 @@ function AuditLogTableRow({
     <tr
       className={cn(
         'border-b hover:bg-muted/30',
+        emphasis && 'bg-muted/25',
         compact ? 'border-border/60 last:border-0' : 'border-border/80',
       )}
     >
@@ -358,13 +366,16 @@ function V2ThreadRequestListPanel({
   isLoading,
   isError,
   data,
-  activeDetailRequestId,
+  detailRequestId,
+  rowEmphasisRequestId,
   onToggleDetail,
 }: {
   isLoading: boolean
   isError: boolean
   data?: { data: AuditLogListItem[]; total: number }
-  activeDetailRequestId: string | null
+  detailRequestId: string | null
+  /** 详情 id 或会话内上次打开的 id，用于关闭详情后仍显示「展开」态 */
+  rowEmphasisRequestId: string | null
   onToggleDetail: (requestId: string) => void
 }) {
   if (isLoading) {
@@ -385,8 +396,7 @@ function V2ThreadRequestListPanel({
   return (
     <>
       <div className="rounded-md border border-border/80 bg-background/80">
-        <TooltipProvider delayDuration={250} skipDelayDuration={200}>
-          <div className="overflow-x-auto">
+        <div className="overflow-x-auto">
             <table className="w-full min-w-[1000px] border-collapse text-left text-xs">
               <thead className="border-b border-border bg-muted/50">
                 <tr>
@@ -443,14 +453,17 @@ function V2ThreadRequestListPanel({
                     key={r.request_id}
                     row={r}
                     density="compact"
-                    detailSheetOpen={activeDetailRequestId === r.request_id}
+                    detailSheetOpen={detailRequestId === r.request_id}
+                    rowEmphasisActive={
+                      rowEmphasisRequestId != null &&
+                      rowEmphasisRequestId === r.request_id
+                    }
                     onToggleDetail={onToggleDetail}
                   />
                 ))}
               </tbody>
             </table>
           </div>
-        </TooltipProvider>
       </div>
       {data.total > THREAD_CHILD_LIMIT ? (
         <p className="mt-2 text-[11px] text-muted-foreground">
@@ -506,11 +519,20 @@ function AuditThreadTableGroup({
         </Tooltip>
       </td>
       <AuditThreadActivityCell row={row} />
-      <td
-        className="max-w-[min(100vw,24rem)] truncate px-3 py-2 font-mono text-xs"
-        title={row.thread_id}
-      >
-        {row.thread_id}
+      <td className="max-w-[min(100vw,22rem)] px-3 py-2 align-top">
+        <div
+          className="flex flex-col gap-1"
+          title={
+            row.last_prompt_preview?.trim()
+              ? `${row.thread_id}\n\n${row.last_prompt_preview}`
+              : row.thread_id
+          }
+        >
+          <div className="truncate font-mono text-xs">{row.thread_id}</div>
+          <div className="line-clamp-2 break-words text-xs leading-snug text-muted-foreground">
+            {row.last_prompt_preview?.trim() ? row.last_prompt_preview : '—'}
+          </div>
+        </div>
       </td>
       <td className="px-3 py-2 text-right tabular-nums">{row.request_count}</td>
       <td
@@ -594,6 +616,13 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   /** v2: 右侧抽屉展示该会话下的请求列表（同时只打开一个） */
   const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null)
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null)
+  /**
+   * 会话请求抽屉内：上次在详情抽屉中查看的 request_id。
+   * 用于详情抽屉盖住会话表时、或关闭详情后，仍能在会话列表上看到「展开」态。
+   */
+  const [threadSheetHighlightRequestId, setThreadSheetHighlightRequestId] =
+    useState<string | null>(null)
+  const prevExpandedThreadIdRef = useRef<string | null>(null)
 
   const toggleLogDetail = useCallback((requestId: string) => {
     setDetailRequestId((prev) => (prev === requestId ? null : requestId))
@@ -683,6 +712,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   useEffect(() => {
     if (listVariant !== 'v2') {
       setExpandedThreadId((id) => (id ? null : id))
+      setThreadSheetHighlightRequestId(null)
       return
     }
     if (!listV2.data?.data.length) return
@@ -691,6 +721,32 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
       setExpandedThreadId(null)
     }
   }, [listVariant, listV2.data, expandedThreadId])
+
+  useEffect(() => {
+    const prev = prevExpandedThreadIdRef.current
+    const curr = expandedThreadId
+    if (prev !== curr) {
+      prevExpandedThreadIdRef.current = curr
+      if (!curr) {
+        setThreadSheetHighlightRequestId(null)
+        return
+      }
+      setThreadSheetHighlightRequestId(null)
+    }
+    if (detailRequestId && curr) {
+      setThreadSheetHighlightRequestId(detailRequestId)
+    }
+  }, [expandedThreadId, detailRequestId])
+
+  const threadRowEmphasisRequestId = useMemo(() => {
+    if (listVariant !== 'v2' || expandedThreadId == null) return null
+    return detailRequestId ?? threadSheetHighlightRequestId
+  }, [
+    listVariant,
+    expandedThreadId,
+    detailRequestId,
+    threadSheetHighlightRequestId,
+  ])
 
   const data = listVariant === 'v1' ? listV1.data : listV2.data
   const isLoading = listVariant === 'v1' ? listV1.isLoading : listV2.isLoading
@@ -953,7 +1009,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
           </h1>
           <p className="mt-1 text-xs text-muted-foreground sm:text-sm">
             {listVariant === 'v2'
-              ? '每行一个会话 (thread)：筛选与经典列表一致；点击行首文档图标在右侧打开该会话下的请求列表（最多 50 条），与经典列表中查看请求详情相同。请求数为维表累计次数。'
+              ? '每行一个会话 (thread)：筛选与经典列表一致；thread id 下方展示最近一次 user 消息摘要。点击行首文档图标在右侧打开该会话下的请求列表（最多 50 条），与经典列表中查看请求详情相同。请求数为维表累计次数。'
               : '审计请求日志 · 默认最近 7×24 小时至今日日末。'}
           </p>
         </div>
@@ -1378,7 +1434,11 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
                 >
                   活动时间
                 </th>
-                <th scope="col" className="px-3 py-2 font-medium">
+                <th
+                  scope="col"
+                  className="min-w-[12rem] max-w-[22rem] px-3 py-2 font-medium"
+                  title="会话标识；其下方为最近一次 user 消息摘要（截断存储）"
+                >
                   会话 (thread)
                 </th>
                 <th scope="col" className="px-3 py-2 text-right font-medium">
@@ -1496,7 +1556,8 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
             isLoading={threadSheetChildList.isLoading}
             isError={threadSheetChildList.isError}
             data={threadSheetChildList.data}
-            activeDetailRequestId={detailRequestId}
+            detailRequestId={detailRequestId}
+            rowEmphasisRequestId={threadRowEmphasisRequestId}
             onToggleDetail={toggleLogDetail}
           />
         </div>

@@ -333,6 +333,8 @@ mod tests {
                     total_cost: 0.05,
                     error_count: 0,
                     total_latency_ms: 0,
+                    last_prompt_preview: None,
+                    last_prompt_at: None,
                 }],
                 1,
             ))
@@ -367,6 +369,7 @@ mod tests {
                 metadata: None,
                 created_at: 1,
                 team_id: None,
+                prompt_preview: None,
             })
         }
 

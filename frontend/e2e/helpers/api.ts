@@ -229,7 +229,11 @@ export async function waitForAuditThreadListRow(
   token: string,
   query: Record<string, string>,
   timeoutMs = 25_000,
-): Promise<{ thread_id: string; request_count: number } | null> {
+): Promise<{
+  thread_id: string
+  request_count: number
+  last_prompt_preview?: string | null
+} | null> {
   const qs = new URLSearchParams(query)
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -238,12 +242,17 @@ export async function waitForAuditThreadListRow(
     })
     if (r.ok) {
       const body = (await r.json()) as {
-        data: { thread_id: string; request_count: number }[]
+        data: {
+          thread_id: string
+          request_count: number
+          last_prompt_preview?: string | null
+        }[]
       }
       if (body.data?.length) {
         return {
           thread_id: body.data[0].thread_id,
           request_count: body.data[0].request_count,
+          last_prompt_preview: body.data[0].last_prompt_preview,
         }
       }
     }

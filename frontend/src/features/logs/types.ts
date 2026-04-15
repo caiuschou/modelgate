@@ -44,6 +44,10 @@ export interface AuditThreadListItem {
   error_count: number
   /** Sum of per-request latency (ms) in this thread; missing latency counts as 0. */
   total_latency_ms: number
+  /** Last user message preview from the most recent chat completion in this thread. */
+  last_prompt_preview?: string | null
+  /** Unix seconds when `last_prompt_preview` was last updated. */
+  last_prompt_at?: number | null
 }
 
 export interface AuditThreadListResponse {

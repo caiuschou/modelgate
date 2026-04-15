@@ -187,6 +187,7 @@ pub async fn chat_completions(
 
     let is_stream = upstream::is_stream_request(&body);
     let model = parse_model_from_request(&body);
+    let prompt_preview = crate::chat_prompt_preview::extract_chat_user_prompt_preview(&body);
 
     let auth_row = state.auth_service.get_api_key_auth(api_key)?;
     let token_id = auth_row.id;
@@ -206,6 +207,7 @@ pub async fn chat_completions(
         is_stream,
         &req,
         audit_created_at,
+        prompt_preview.clone(),
     )
     .await;
 
@@ -351,6 +353,7 @@ pub async fn chat_completions(
                     )),
                     created_at: audit_created_at,
                     team_id: key_team_id,
+                    prompt_preview: prompt_preview.clone(),
                 },
             )
             .await;
@@ -414,6 +417,7 @@ pub async fn chat_completions(
                 )),
                 created_at: audit_created_at,
                 team_id: key_team_id,
+                prompt_preview: prompt_preview.clone(),
             },
         )
         .await;
@@ -639,6 +643,7 @@ pub async fn chat_completions(
                 )),
                 created_at: audit_created_at,
                 team_id: key_team_id,
+                prompt_preview: prompt_preview.clone(),
             },
         )
         .await;
@@ -934,6 +939,7 @@ async fn send_accept_phase_audit(
     is_stream: bool,
     req: &HttpRequest,
     created_at: i64,
+    prompt_preview: Option<String>,
 ) {
     send_audit_record(
         state,
@@ -961,6 +967,7 @@ async fn send_accept_phase_audit(
             metadata: Some(accept_phase_audit_metadata(req, is_stream)),
             created_at,
             team_id: key_team_id,
+            prompt_preview,
         },
     )
     .await;

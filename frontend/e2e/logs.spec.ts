@@ -80,6 +80,7 @@ test('log center v2 shows session row and links to classic list with thread filt
   expect(thread, 'threads API did not list session (flush timeout)').not.toBeNull()
   expect(thread!.thread_id).toBe(threadId)
   expect(thread!.request_count).toBeGreaterThanOrEqual(1)
+  expect(thread!.last_prompt_preview).toContain('e2e audit ping')
 
   await page.goto('/logs/v2')
   await expect(
@@ -87,7 +88,8 @@ test('log center v2 shows session row and links to classic list with thread filt
   ).toBeVisible({ timeout: 25_000 })
   const dataRow = page.getByRole('row').filter({ hasText: threadId })
   await expect(dataRow).toBeVisible({ timeout: 25_000 })
-  // 列：展开 · 活动时间 · 会话 · 请求数 · …
+  await expect(dataRow.getByText('e2e audit ping')).toBeVisible()
+  // 列：展开 · 活动时间 · 会话(thread+摘要) · 请求数 · …
   await expect(dataRow.getByRole('cell').nth(3)).toHaveText(
     String(thread!.request_count),
   )

@@ -50,6 +50,9 @@ pub struct AuditRecord {
     /// Team context for gateway keys; personal keys use `None`.
     #[serde(default)]
     pub team_id: Option<i64>,
+    /// Latest user message preview (chat); not persisted on `audit_logs`, used when updating `audit_threads`.
+    #[serde(default)]
+    pub prompt_preview: Option<String>,
 }
 
 /// Second-phase update for streaming chat completions (response file + usage + metadata).
@@ -134,6 +137,12 @@ pub struct AuditThreadListItem {
     pub error_count: i64,
     /// Sum of per-request `latency_ms` in this thread (missing latency treated as 0).
     pub total_latency_ms: i64,
+    /// Last extracted user prompt preview for this thread (from most recent qualifying request).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_prompt_preview: Option<String>,
+    /// Unix seconds when `last_prompt_preview` was last set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_prompt_at: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
