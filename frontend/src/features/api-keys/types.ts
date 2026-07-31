@@ -19,7 +19,15 @@ export interface ApiKeySummary {
   team_id?: number | null
   /** When set, chat without `X-MG-Byok-Id` uses this BYOK; `null` = ModelGate `[upstream]`. */
   default_byok_profile_id?: number | null
+  /** Session-level upstream affinity (RR + bindings); default false. */
+  session_affinity_enabled?: boolean
+  /** Ordered pool for affinity; omitted when unset. */
+  upstream_pool?: UpstreamPoolEntry[] | null
 }
+
+export type UpstreamPoolEntry =
+  | { kind: 'platform' }
+  | { kind: 'byok'; byok_profile_id: number }
 
 export interface ApiKeyListResponse {
   data: ApiKeySummary[]

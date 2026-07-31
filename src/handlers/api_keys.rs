@@ -217,6 +217,11 @@ pub struct PatchMyApiKeyBody {
     pub max_concurrent_requests: Option<Option<i32>>,
     #[serde(default)]
     pub quota_monthly_spend_minor: Option<Option<String>>,
+    #[serde(default)]
+    pub session_affinity_enabled: Option<bool>,
+    /// `null` clears pool; omit = unchanged; array replaces pool order (Round Robin order).
+    #[serde(default)]
+    pub upstream_pool: Option<Option<Vec<crate::session_upstream::UpstreamPoolEntry>>>,
 }
 
 fn patch_db_has_changes(p: &ApiKeyPatchDb) -> bool {
@@ -230,6 +235,8 @@ fn patch_db_has_changes(p: &ApiKeyPatchDb) -> bool {
         || p.default_byok_profile_id.is_some()
         || p.max_concurrent_requests.is_some()
         || p.quota_monthly_spend_minor.is_some()
+        || p.session_affinity_enabled.is_some()
+        || p.upstream_pool_json.is_some()
 }
 
 pub async fn patch_my_api_key(
@@ -326,6 +333,64 @@ pub async fn patch_my_api_key(
                 Some(v)
             }
         });
+    }
+    if b.session_affinity_enabled.is_some() || b.upstream_pool.is_some() {
+        let conn = state
+            .db
+            .get()
+            .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
+        let row = crate::db::get_api_key_row_for_console(&conn, user_id, key_id)
+            .map_err(|_| ApiError::NotFound("API key not found".into()))?;
+        let current_pool: Vec<crate::session_upstream::UpstreamPoolEntry> = row
+            .upstream_pool_json
+            .as_ref()
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+        let merged_pool = match &b.upstream_pool {
+            None => current_pool,
+            Some(None) => Vec::new(),
+            Some(Some(v)) => v.clone(),
+        };
+        let merged_enabled = b
+            .session_affinity_enabled
+            .unwrap_or(row.session_affinity_enabled != 0);
+        if !merged_pool.is_empty() {
+            crate::session_upstream::validate_upstream_pool(&merged_pool)
+                .map_err(|m| ApiError::BadRequest(format!("upstream_pool: {m}")))?;
+            for e in &merged_pool {
+                if let crate::session_upstream::UpstreamPoolEntry::Byok { byok_profile_id } = e {
+                    let ok = crate::byok::profile_bindable_for_gateway_key(
+                        &conn,
+                        *byok_profile_id,
+                        row.user_id,
+                        row.team_id,
+                    )
+                    .map_err(|e| ApiError::InternalError(format!("database error: {e}")))?;
+                    if !ok {
+                        return Err(ApiError::BadRequest(
+                            "BYOK profile in upstream_pool not in this key's scope".into(),
+                        ));
+                    }
+                }
+            }
+        }
+        if merged_enabled && merged_pool.is_empty() {
+            return Err(ApiError::BadRequest(
+                "session_affinity_enabled requires a non-empty upstream_pool".into(),
+            ));
+        }
+        if let Some(en) = b.session_affinity_enabled {
+            patch.session_affinity_enabled = Some(en);
+        }
+        if b.upstream_pool.is_some() {
+            patch.upstream_pool_json = Some(if merged_pool.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&merged_pool).map_err(|e| {
+                    ApiError::InternalError(format!("serialize upstream_pool: {e}"))
+                })?)
+            });
+        }
     }
     if !patch_db_has_changes(&patch) {
         return Err(ApiError::BadRequest("no fields to update".into()));

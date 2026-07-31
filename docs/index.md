@@ -48,6 +48,7 @@
 - **[Rust 代码架构](architecture/rust-code-architecture.md)** - Rust 项目结构与组件设计
 - **[前端架构](architecture/frontend-architecture.md)** - React + Vite + shadcn/ui + TailwindCSS 前端架构方案
 - **[API 架构设计方案](architecture/api-architecture.md)** - 目标态扩展架构（文档内注明与当前 SQLite 原型差异）
+- **[会话级上游亲和（多上游 / 同会话固定线路）](architecture/session-upstream-affinity.md)** - 规划：网关（会话键、RR + 库绑定、无状态哈希备选）与 **控制台**（`/api-keys/:id` 上游池、开关）；不依赖 `X-MG-Byok-Id`
 
 ### 开发文档
 

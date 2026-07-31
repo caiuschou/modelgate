@@ -6,6 +6,7 @@ use crate::audit::{
     AuditAnalyticsResponse, AuditListItem, AuditListQuery, AuditRecord, AuditThreadListItem,
 };
 use crate::db::{self, AuditConsoleScope};
+use crate::session_upstream;
 
 use super::error::RepositoryError;
 
@@ -37,6 +38,12 @@ pub struct ApiKeySummary {
     /// Default BYOK profile for Chat when no `X-MG-Byok-Id`; `null` = ModelGate `[upstream]`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_byok_profile_id: Option<i64>,
+    /// When true and `upstream_pool` is non-empty, Chat routes by session (see session affinity docs).
+    #[serde(default)]
+    pub session_affinity_enabled: bool,
+    /// Ordered upstream pool for session affinity; `null` when unset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_pool: Option<Vec<session_upstream::UpstreamPoolEntry>>,
 }
 
 fn mask_api_key_preview(full: &str) -> String {
@@ -105,6 +112,11 @@ fn row_to_summary(now: i64, r: db::ApiKeyRow) -> ApiKeySummary {
         status,
         team_id: r.team_id,
         default_byok_profile_id: r.default_byok_profile_id,
+        session_affinity_enabled: r.session_affinity_enabled != 0,
+        upstream_pool: r
+            .upstream_pool_json
+            .as_ref()
+            .and_then(|s| serde_json::from_str(s).ok()),
     }
 }
 
@@ -782,6 +794,11 @@ fn patch_has_changes(p: &db::ApiKeyPatchDb) -> bool {
         || p.quota_monthly_tokens.is_some()
         || p.model_allowlist.is_some()
         || p.ip_allowlist.is_some()
+        || p.default_byok_profile_id.is_some()
+        || p.max_concurrent_requests.is_some()
+        || p.quota_monthly_spend_minor.is_some()
+        || p.session_affinity_enabled.is_some()
+        || p.upstream_pool_json.is_some()
 }
 
 #[cfg(test)]

@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find . -maxdepth 3 -type f -name *.md -o -name *.txt -o -name *.json)"
+      "Bash(find . -maxdepth 3 -type f -name *.md -o -name *.txt -o -name *.json)",
+      "WebSearch",
+      "WebFetch(domain:agentic-engineering.swmansion.com)"
     ]
   }
 }

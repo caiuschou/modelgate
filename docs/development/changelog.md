@@ -8,8 +8,13 @@
 
 ## [Unreleased]
 
+### E2E
+
+- Playwright：新增 `frontend/e2e/session-upstream-affinity.spec.ts`（`X-Thread-Id` / body `user` 与会话亲和 PATCH、详情页「会话上游」可见）；`helpers/api.ts` 增加 `patchMyApiKey` 与 `createChatCompletion` 的 `user` 选项。
+
 ### 文档
 
+- 会话级上游亲和：**已实现** 迁移 `0021_session_upstream_affinity.sql`、网关选路与控制台 PATCH；规格见 [architecture/session-upstream-affinity.md](../architecture/session-upstream-affinity.md)。
 - 新增 `docs/implementation-status.md`：产品文档与代码实现对照。
 - 新增 `docs/development/api.md`、`deployment.md`：当前服务端 API 与部署说明。
 - 更新 `docs/index.md`、`README.md` 与多份产品/设计文档中的「实现范围」说明。

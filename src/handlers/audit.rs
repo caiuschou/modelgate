@@ -60,6 +60,7 @@ pub async fn get_audit_analytics(
         max_completion_tokens: None,
         limit: None,
         offset: None,
+        cursor: None,
     };
     let resp = state
         .audit_service
@@ -78,12 +79,18 @@ pub async fn list_audit_logs(
     let offset = query.offset.unwrap_or(0);
 
     let (data, total) = state.audit_service.list_audit_logs(&query, scope)?;
+    // Keyset cursor for the next page: the last (oldest) row of this page under
+    // `ORDER BY created_at DESC, request_id DESC`. None on an empty page.
+    let next_cursor = data
+        .last()
+        .map(|r| crate::audit::encode_audit_cursor(r.created_at, &r.request_id));
 
     Ok(HttpResponse::Ok().json(AuditListResponse {
         data,
         total,
         limit,
         offset,
+        next_cursor,
     }))
 }
 
@@ -269,6 +276,9 @@ mod tests {
                     team_id: None,
                     default_byok_profile_id: None,
                     max_concurrent_requests: None,
+                    session_affinity_enabled: false,
+                    upstream_pool_json: None,
+                    session_rr_cursor: 0,
                 })
             } else {
                 Err(ServiceError::Unauthorized(

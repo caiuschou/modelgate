@@ -135,6 +135,7 @@ impl AuditService for DefaultAuditService {
                 max_completion_tokens: None,
                 limit: Some(page_size),
                 offset: Some(offset),
+                cursor: None,
             };
             let (rows, _total) = self
                 .repo

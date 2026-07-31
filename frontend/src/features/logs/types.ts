@@ -26,6 +26,8 @@ export interface AuditLogListResponse {
   total: number
   limit: number
   offset: number
+  /** Keyset cursor for the next page; pass back as `cursor`. Absent on an empty page. */
+  next_cursor?: string | null
 }
 
 /** One row per session (`thread_id`) from `GET /api/v1/logs/threads`. */

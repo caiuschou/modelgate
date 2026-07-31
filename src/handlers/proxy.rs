@@ -94,7 +94,7 @@ pub async fn list_models(
         .touch_api_key_last_used(token_id, now)
         .map_err(ApiError::from)?;
 
-    let resolved = resolve_chat_upstream(&req, &state, &auth_row)?;
+    let resolved = resolve_chat_upstream(&req, &state, &auth_row, None, now)?;
 
     let mut upstream_url = upstream::build_models_url(&resolved.base_url);
     if let Some(qs) = req.uri().query() {
@@ -259,7 +259,9 @@ pub async fn chat_completions(
         return Err(err);
     }
 
-    let resolved = match resolve_chat_upstream(&req, &state, &auth_row) {
+    let session_key = crate::session_upstream::parse_session_key(thread_id.clone(), body.as_ref());
+    let resolved = match resolve_chat_upstream(&req, &state, &auth_row, session_key.as_deref(), now)
+    {
         Ok(r) => r,
         Err(e) => {
             audit_mark_rejected_api_error(&state, &request_id, &e, start).await;
@@ -1132,10 +1134,62 @@ fn parse_x_byok_profile_id(req: &HttpRequest) -> Result<Option<i64>, ApiError> {
     Ok(Some(v))
 }
 
+fn resolve_picked_upstream(
+    state: &web::Data<AppState>,
+    auth_row: &ApiKeyAuthRow,
+    pick: crate::session_upstream::PickedUpstream,
+) -> Result<ResolvedUpstream, ApiError> {
+    let user_id = auth_row.user_id;
+    let api_key_team_id = auth_row.team_id;
+    match pick {
+        crate::session_upstream::PickedUpstream::Platform => Ok(ResolvedUpstream {
+            base_url: state.cfg.upstream.base_url.clone(),
+            api_key: state.cfg.upstream.api_key.clone(),
+            is_byok: false,
+            byok_profile_id: None,
+        }),
+        crate::session_upstream::PickedUpstream::Byok(pid) => {
+            if pid <= 0 {
+                return Err(ApiError::BadRequest(
+                    "invalid BYOK profile id in session pool".into(),
+                ));
+            }
+            let master = state
+                .cfg
+                .byok
+                .master_key_32()
+                .map_err(ApiError::ServiceUnavailable)?;
+            let conn = state
+                .db
+                .get()
+                .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
+            match byok::resolve_byok_for_gateway(&conn, pid, user_id, api_key_team_id, &master) {
+                Ok(r) => Ok(ResolvedUpstream {
+                    base_url: r.base_url,
+                    api_key: r.api_key,
+                    is_byok: true,
+                    byok_profile_id: Some(r.profile_id),
+                }),
+                Err(ByokResolveError::NotFound) => {
+                    Err(ApiError::NotFound("BYOK profile not found".into()))
+                }
+                Err(ByokResolveError::Decrypt) => Err(ApiError::InternalError(
+                    "failed to decrypt BYOK credentials".into(),
+                )),
+                Err(ByokResolveError::Db(e)) => {
+                    Err(ApiError::InternalError(format!("database error: {e}")))
+                }
+            }
+        }
+    }
+}
+
 fn resolve_chat_upstream(
     req: &HttpRequest,
     state: &web::Data<AppState>,
     auth_row: &ApiKeyAuthRow,
+    session_key: Option<&str>,
+    now: i64,
 ) -> Result<ResolvedUpstream, ApiError> {
     let user_id = auth_row.user_id;
     let api_key_team_id = auth_row.team_id;
@@ -1147,6 +1201,32 @@ fn resolve_chat_upstream(
             is_byok: false,
             byok_profile_id: None,
         });
+    }
+
+    if auth_row.session_affinity_enabled {
+        if let Ok(pool) = crate::session_upstream::parse_upstream_pool_json(
+            auth_row.upstream_pool_json.as_deref(),
+        ) {
+            if !pool.is_empty() {
+                if let Some(sk) = session_key.filter(|s| !s.is_empty()) {
+                    let mut conn = state
+                        .db
+                        .get()
+                        .map_err(|_| ApiError::InternalError("database pool unavailable".into()))?;
+                    let pick = crate::session_upstream::pick_session_upstream(
+                        &mut conn,
+                        auth_row.id,
+                        &pool,
+                        sk,
+                        now,
+                    )
+                    .map_err(|e| {
+                        ApiError::InternalError(format!("session upstream binding: {e}"))
+                    })?;
+                    return resolve_picked_upstream(state, auth_row, pick);
+                }
+            }
+        }
     }
 
     let explicit = parse_x_byok_profile_id(req)?;

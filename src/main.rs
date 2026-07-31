@@ -17,6 +17,7 @@ pub mod routes;
 pub mod secrets;
 pub mod services;
 pub mod session_auth;
+pub mod session_upstream;
 #[cfg(test)]
 pub(crate) mod test_utils;
 pub mod upstream;
@@ -58,7 +59,7 @@ pub struct AppState {
 
 pub fn build_state(cfg: AppConfig) -> AppState {
     let http = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs(3600))
         .build()
         .expect("failed to build http client");
 

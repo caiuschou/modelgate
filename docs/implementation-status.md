@@ -1,7 +1,7 @@
 # ModelGate 实现状态（文档与代码对照）
 
-**版本:** 1.3  
-**更新日期:** 2026年4月8日  
+**版本:** 1.5  
+**更新日期:** 2026年4月17日  
 
 本文档说明**当前仓库代码已落地的能力**，与 `docs/product/`、`docs/design/` 中描述的**产品目标与交互规格**区分。阅读产品文档时，请同时参考本节，避免将「规划能力」误认为已上线。
 
@@ -21,6 +21,7 @@
 | 当前用户 API 密钥 | ✅ | `GET/POST /api/v1/me/api-keys`、`GET/PATCH /api/v1/me/api-keys/{id}`、`POST .../revoke`；名称/描述/禁用/过期/配额/策略、**`default_byok_profile_id`**（默认 BYOK）；`api_key_audit_log` 记录创建/更新/吊销；`last_used_at` 节流更新；可选请求头 **`X-Team-Id`** 切换个人 / 团队密钥上下文（团队下列出全部团队密钥；新建须 owner/admin） |
 | 团队与成员 | ✅ | `GET/POST /api/v1/teams`、详情与 PATCH/DELETE；成员列表与角色 PATCH、移除；邀请与接受 `POST /api/v1/invitations/accept`；数据表见迁移 `0007_teams.sql`、`0008_team_scope_api_audit.sql` |
 | 多渠道配置与路由 | ❌ | 上游为 **一个** `base_url` + `api_key`（环境变量 `UPSTREAM_*`） |
+| 会话级上游亲和（RR + `session_upstream_bindings`） | ✅ | 网关：`POST /v1/chat/completions` 在启用且带会话键时选路；控制台：`PATCH` `session_affinity_enabled` / `upstream_pool`；见 [会话级上游亲和](architecture/session-upstream-affinity.md) |
 | BYOK（用户/团队上游密钥） | ✅ | 表 `byok_profiles`、`/api/v1/me/byok-profiles*`；Chat 支持 `X-MG-Use-Platform-Upstream`、`X-MG-Byok-Id`、Key **`default_byok_profile_id`**；吊销 BYOK 时清空引用；审计 `metadata.is_byok`；需配置 `byok.master_key_hex` 或 `BYOK_MASTER_KEY`；规格见 [BYOK 设计](architecture/byok-design.md) |
 | `/v1/completions`、`/v1/embeddings`、Images、Audio | ❌ | 未注册路由 |
 | 用量 API `GET /v1/usage` 等 | ❌ | |
@@ -64,7 +65,8 @@
 2. **产品愿景与完整规格：** [产品概述](product/overview.md)、[功能详解](product/features.md)、[API 产品规格](product/api.md)（其中部分接口为未来形态）。  
 3. **用户 API Key 管理（产品）：** [API 密钥管理](product/api-key-management.md)。  
 4. **BYOK（规划）：** [BYOK 设计](architecture/byok-design.md)。  
-5. **审计与日志中心：** [产品-审计日志](product/audit-log.md)、[日志中心交互](design/interaction/log-center.md)。  
+5. **会话级上游亲和（规划）：** [会话级上游亲和](architecture/session-upstream-affinity.md)（含控制台 §7）。  
+6. **审计与日志中心：** [产品-审计日志](product/audit-log.md)、[日志中心交互](design/interaction/log-center.md)。  
 
 ---
 

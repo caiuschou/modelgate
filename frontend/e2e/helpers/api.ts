@@ -68,7 +68,7 @@ export async function createChatCompletion(
   backendBaseUrl: string,
   apiKey: string,
   model: string,
-  options?: { appId?: string; threadId?: string },
+  options?: { appId?: string; threadId?: string; user?: string },
 ): Promise<Response> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -80,14 +80,18 @@ export async function createChatCompletion(
   if (options?.threadId) {
     headers['X-Thread-Id'] = options.threadId
   }
+  const body: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: 'e2e audit ping' }],
+    stream: false,
+  }
+  if (options?.user != null && options.user !== '') {
+    body.user = options.user
+  }
   return fetch(`${backendBaseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers,
-    body: JSON.stringify({
-      model,
-      messages: [{ role: 'user', content: 'e2e audit ping' }],
-      stream: false,
-    }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -111,6 +115,29 @@ export type ApiKeySummary = {
   status: string
   team_id?: number | null
   default_byok_profile_id?: number | null
+  session_affinity_enabled?: boolean
+  upstream_pool?: { kind: string; byok_profile_id?: number }[] | null
+}
+
+export async function patchMyApiKey(
+  consoleBaseUrl: string,
+  token: string,
+  keyId: number,
+  body: Record<string, unknown>,
+  options?: { teamId?: number | null },
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  }
+  if (options?.teamId != null) {
+    headers['X-Team-Id'] = String(options.teamId)
+  }
+  return fetch(`${consoleBaseUrl}/api/v1/me/api-keys/${keyId}`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify(body),
+  })
 }
 
 export async function listMyApiKeys(
@@ -217,6 +244,47 @@ export async function waitForAuditListRow(
       if (body.data?.length) {
         return { request_id: body.data[0].request_id }
       }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+  return null
+}
+
+export type AuditLogPage = {
+  data: { request_id: string; created_at: number }[]
+  total: number
+  next_cursor?: string | null
+}
+
+/** Fetch one page of `GET /api/v1/logs/request` (console session Bearer), including `next_cursor`. */
+export async function fetchAuditLogPage(
+  backendBaseUrl: string,
+  token: string,
+  query: Record<string, string>,
+): Promise<AuditLogPage> {
+  const qs = new URLSearchParams(query)
+  const r = await fetch(`${backendBaseUrl}/api/v1/logs/request?${qs}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!r.ok) {
+    throw new Error(`logs/request failed: ${r.status} ${await r.text()}`)
+  }
+  return (await r.json()) as AuditLogPage
+}
+
+/** Poll `GET /api/v1/logs/request` until at least `minTotal` rows match (background flush). */
+export async function waitForAuditLogTotalAtLeast(
+  backendBaseUrl: string,
+  token: string,
+  query: Record<string, string>,
+  minTotal: number,
+  timeoutMs = 25_000,
+): Promise<AuditLogPage | null> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const page = await fetchAuditLogPage(backendBaseUrl, token, query)
+    if (page.total >= minTotal && page.data.length >= minTotal) {
+      return page
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }

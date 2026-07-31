@@ -172,6 +172,12 @@ npm scripts（落地时增加）：
 - **未登录**：清空 `storageState` 访问 `/api-keys` → 跳转登录页。
 - **辅助**：`e2e/helpers/api.ts` 增加 `listMyApiKeys` / `createMyApiKey` / `revokeMyApiKey`（经 Vite 代理打真实 Rust）。
 
+### 6.4.1 会话上游亲和（`session-upstream-affinity.spec.ts`）
+
+- **API**：`PATCH` 启用 `session_affinity_enabled` + `upstream_pool`（单条 `platform`，与 E2E Mock 上游一致）；`createChatCompletion` 带相同 `X-Thread-Id` 或相同 body `user` 各两次，断言 **200** 与 `choices`。
+- **UI**：密钥详情页可见「会话上游（亲和）」标题与「保存会话上游」按钮。
+- **辅助**：`patchMyApiKey`、`createChatCompletion(..., { user })` 见 `frontend/e2e/helpers/api.ts`。
+
 ### 6.5 Admin 用例（后续）
 
 - 使用 `role: admin` 的用户执行 `storageState` 或在 setup 中分配角色（取决于后端种子能力）。
@@ -240,6 +246,6 @@ npm scripts（落地时增加）：
 | OpenAI 兼容上游 Mock（非流式 + 简易 SSE） | `e2e/mock-openai-upstream.mjs` |
 | Mock + `cargo run`（cwd=`e2e/`，读 `e2e/config.toml`） | `e2e/run-modelgate-stack.mjs` |
 | E2E 后端配置（邀请码、Mock 基址、独立 sqlite） | `e2e/config.toml` |
-| Playwright 与用例 | `frontend/playwright.config.ts`、`frontend/e2e/*.ts`（日志：`logs.spec.ts`；API 密钥：`api-keys.spec.ts`；辅助：`e2e/helpers/api.ts`） |
+| Playwright 与用例 | `frontend/playwright.config.ts`、`frontend/e2e/*.ts`（日志：`logs.spec.ts`；API 密钥：`api-keys.spec.ts`；会话亲和：`session-upstream-affinity.spec.ts`；辅助：`e2e/helpers/api.ts`） |
 | 脚本 | `frontend`：`npm run test:e2e` / `test:e2e:ui` |
 | CI | `.github/workflows/ci-e2e.yml` |

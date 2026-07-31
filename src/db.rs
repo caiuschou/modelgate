@@ -6,7 +6,7 @@ use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord, AuditThreadListItem};
 
-const MIGRATIONS: [(&str, &str); 20] = [
+const MIGRATIONS: [(&str, &str); 23] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -86,6 +86,18 @@ const MIGRATIONS: [(&str, &str); 20] = [
     (
         "0020_audit_threads_prompt_preview.sql",
         include_str!("../migrations/0020_audit_threads_prompt_preview.sql"),
+    ),
+    (
+        "0021_session_upstream_affinity.sql",
+        include_str!("../migrations/0021_session_upstream_affinity.sql"),
+    ),
+    (
+        "0022_audit_logs_composite_indexes.sql",
+        include_str!("../migrations/0022_audit_logs_composite_indexes.sql"),
+    ),
+    (
+        "0023_audit_logs_keyset_tiebreaker.sql",
+        include_str!("../migrations/0023_audit_logs_keyset_tiebreaker.sql"),
     ),
 ];
 
@@ -249,6 +261,12 @@ pub struct ApiKeyRow {
     pub quota_monthly_spend_minor: Option<String>,
     pub quota_used_spend_minor: String,
     pub quota_spend_period_start: Option<i64>,
+    /// 1 = session affinity (RR + bindings) enabled for Chat when pool is non-empty.
+    pub session_affinity_enabled: i32,
+    /// JSON array of upstream pool entries; see `session_upstream` module.
+    pub upstream_pool_json: Option<String>,
+    /// Next Round Robin index for new session bindings (server-side).
+    pub session_rr_cursor: i64,
 }
 
 fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
@@ -274,6 +292,9 @@ fn map_api_key_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ApiKeyRow> {
         quota_monthly_spend_minor: row.get(18)?,
         quota_used_spend_minor: row.get(19)?,
         quota_spend_period_start: row.get(20)?,
+        session_affinity_enabled: row.get(21)?,
+        upstream_pool_json: row.get(22)?,
+        session_rr_cursor: row.get(23)?,
     })
 }
 
@@ -282,7 +303,8 @@ pub fn list_api_keys_for_user(conn: &Connection, user_id: i64) -> rusqlite::Resu
     let mut stmt = conn.prepare(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
                 quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
-                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start,
+                session_affinity_enabled, upstream_pool_json, session_rr_cursor
          FROM api_keys WHERE user_id = ?1 AND team_id IS NULL ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![user_id], map_api_key_row)?;
@@ -294,7 +316,8 @@ pub fn list_api_keys_for_team(conn: &Connection, team_id: i64) -> rusqlite::Resu
     let mut stmt = conn.prepare(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
                 quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
-                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start,
+                session_affinity_enabled, upstream_pool_json, session_rr_cursor
          FROM api_keys WHERE team_id = ?1 ORDER BY id DESC",
     )?;
     let rows = stmt.query_map(params![team_id], map_api_key_row)?;
@@ -309,7 +332,8 @@ pub fn get_api_key_row_for_user(
     conn.query_row(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
                 quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
-                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start,
+                session_affinity_enabled, upstream_pool_json, session_rr_cursor
          FROM api_keys WHERE id = ?1 AND user_id = ?2 AND team_id IS NULL",
         params![key_id, user_id],
         map_api_key_row,
@@ -320,7 +344,8 @@ pub fn get_api_key_row_by_id(conn: &Connection, key_id: i64) -> rusqlite::Result
     conn.query_row(
         "SELECT id, user_id, api_key, key_preview, created_at, revoked, name, description, disabled, last_used_at, expires_at,
                 quota_monthly_tokens, quota_used_tokens, model_allowlist, ip_allowlist, team_id, default_byok_profile_id,
-                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start
+                max_concurrent_requests, quota_monthly_spend_minor, quota_used_spend_minor, quota_spend_period_start,
+                session_affinity_enabled, upstream_pool_json, session_rr_cursor
          FROM api_keys WHERE id = ?1",
         params![key_id],
         map_api_key_row,
@@ -394,6 +419,9 @@ pub struct ApiKeyPatchDb {
     pub default_byok_profile_id: Option<Option<i64>>,
     pub max_concurrent_requests: Option<Option<i32>>,
     pub quota_monthly_spend_minor: Option<Option<i128>>,
+    pub session_affinity_enabled: Option<bool>,
+    /// `Some(None)` clears pool JSON; `None` = no change.
+    pub upstream_pool_json: Option<Option<String>>,
 }
 
 pub fn update_api_key_for_user(
@@ -517,6 +545,24 @@ pub fn update_api_key_for_user(
             }
             Some(_) => conn.execute(
                 "UPDATE api_keys SET quota_monthly_spend_minor = NULL, quota_used_spend_minor = '0', quota_spend_period_start = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+                params![key_id, user_id],
+            )?,
+        };
+    }
+    if let Some(on) = patch.session_affinity_enabled {
+        total += conn.execute(
+            "UPDATE api_keys SET session_affinity_enabled = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+            params![if on { 1 } else { 0 }, key_id, user_id],
+        )?;
+    }
+    if let Some(ref pool) = patch.upstream_pool_json {
+        total += match pool {
+            Some(s) => conn.execute(
+                "UPDATE api_keys SET upstream_pool_json = ?1 WHERE id = ?2 AND user_id = ?3 AND revoked = 0",
+                params![s, key_id, user_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET upstream_pool_json = NULL WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
                 params![key_id, user_id],
             )?,
         };
@@ -732,6 +778,24 @@ fn update_api_key_by_id(
             }
             Some(_) => conn.execute(
                 "UPDATE api_keys SET quota_monthly_spend_minor = NULL, quota_used_spend_minor = '0', quota_spend_period_start = NULL WHERE id = ?1 AND revoked = 0",
+                params![key_id],
+            )?,
+        };
+    }
+    if let Some(on) = patch.session_affinity_enabled {
+        total += conn.execute(
+            "UPDATE api_keys SET session_affinity_enabled = ?1 WHERE id = ?2 AND revoked = 0",
+            params![if on { 1 } else { 0 }, key_id],
+        )?;
+    }
+    if let Some(ref pool) = patch.upstream_pool_json {
+        total += match pool {
+            Some(s) => conn.execute(
+                "UPDATE api_keys SET upstream_pool_json = ?1 WHERE id = ?2 AND revoked = 0",
+                params![s, key_id],
+            )?,
+            None => conn.execute(
+                "UPDATE api_keys SET upstream_pool_json = NULL WHERE id = ?1 AND revoked = 0",
                 params![key_id],
             )?,
         };
@@ -1172,6 +1236,9 @@ pub struct ApiKeyAuthRow {
     pub team_id: Option<i64>,
     pub default_byok_profile_id: Option<i64>,
     pub max_concurrent_requests: Option<i32>,
+    pub session_affinity_enabled: bool,
+    pub upstream_pool_json: Option<String>,
+    pub session_rr_cursor: i64,
 }
 
 pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Result<ApiKeyAuthRow> {
@@ -1182,7 +1249,8 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
     let hash = crate::secrets::api_key_sha256_hex(api_key);
     conn.query_row(
         "SELECT id, user_id, model_allowlist, ip_allowlist, quota_monthly_tokens,
-                quota_used_tokens, quota_period_start, team_id, default_byok_profile_id, max_concurrent_requests
+                quota_used_tokens, quota_period_start, team_id, default_byok_profile_id, max_concurrent_requests,
+                session_affinity_enabled, upstream_pool_json, session_rr_cursor
          FROM api_keys WHERE (api_key_hash = ?1 OR api_key = ?2) AND revoked = 0 AND disabled = 0
          AND (expires_at IS NULL OR expires_at > ?3)",
         params![hash, api_key, now],
@@ -1198,6 +1266,9 @@ pub fn get_api_key_auth_row(conn: &Connection, api_key: &str) -> rusqlite::Resul
                 team_id: row.get(7)?,
                 default_byok_profile_id: row.get(8)?,
                 max_concurrent_requests: row.get(9)?,
+                session_affinity_enabled: row.get::<_, i32>(10)? != 0,
+                upstream_pool_json: row.get(11)?,
+                session_rr_cursor: row.get(12)?,
             })
         },
     )
@@ -1556,9 +1627,42 @@ pub fn query_audit_logs(
     query: &AuditListQuery,
     scope: AuditConsoleScope,
 ) -> rusqlite::Result<(Vec<AuditListItem>, i64)> {
-    let (where_sql, where_args) = build_audit_where_clause(query, scope);
+    // Base filter (no cursor): used for the stable total count and as the seed for the list.
+    let (base_parts, base_args) = audit_log_where_parts(query, scope, "", true);
+    debug_assert!(
+        !base_parts.is_empty(),
+        "audit log filter parts should always include the accept_phase guard"
+    );
+    let base_where = format!("WHERE {}", base_parts.join(" AND "));
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
     let offset = query.offset.unwrap_or(0);
+
+    // Keyset/seek pagination: when a cursor is supplied, seek strictly past the last row of the
+    // previous page under `ORDER BY created_at DESC, request_id DESC` instead of scanning + discarding
+    // `offset` rows. request_id (the PK) is the tiebreaker so rows sharing a created_at second are never
+    // skipped or duplicated. Composite index `(scope, created_at DESC, request_id DESC)` serves both the
+    // seek predicate and the ordering with no sort (see migration 0023).
+    let cursor = query
+        .cursor
+        .as_deref()
+        .and_then(crate::audit::decode_audit_cursor);
+    let mut list_parts = base_parts.clone();
+    let mut list_args = base_args.clone();
+    if let Some((c_created_at, c_request_id)) = &cursor {
+        // Row-value comparison: (created_at, request_id) < (cursor) is lexicographic — created_at
+        // strictly older, or same second with a smaller request_id. SQLite turns this into an index
+        // range seek on the composite (scope, created_at DESC, request_id DESC).
+        list_parts.push("(created_at, request_id) < (?, ?)".to_string());
+        list_args.push(Value::Integer(*c_created_at));
+        list_args.push(Value::Text(c_request_id.clone()));
+    }
+    let list_where = format!("WHERE {}", list_parts.join(" AND "));
+    // Cursor mode ignores offset (the seek predicate already positions the window).
+    let tail = if cursor.is_some() {
+        "LIMIT ?".to_string()
+    } else {
+        "LIMIT ? OFFSET ?".to_string()
+    };
 
     let list_sql = format!(
         "SELECT
@@ -1566,14 +1670,15 @@ pub fn query_audit_logs(
             status_code, error_message, prompt_tokens, completion_tokens, cached_prompt_tokens,
             total_tokens, cost, latency_ms, reasoning_phase_ms, app_id, thread_id, finish_reason, created_at
          FROM audit_logs
-         {where_sql}
-         ORDER BY created_at DESC
-         LIMIT ? OFFSET ?"
+         {list_where}
+         ORDER BY created_at DESC, request_id DESC
+         {tail}"
     );
 
-    let mut list_args = where_args.clone();
     list_args.push(Value::Integer(limit as i64));
-    list_args.push(Value::Integer(offset as i64));
+    if cursor.is_none() {
+        list_args.push(Value::Integer(offset as i64));
+    }
     let mut stmt = conn.prepare(&list_sql)?;
     let rows = stmt.query_map(params_from_iter(list_args.iter()), |row| {
         Ok(AuditListItem {
@@ -1605,8 +1710,9 @@ pub fn query_audit_logs(
         records.push(row?);
     }
 
-    let count_sql = format!("SELECT COUNT(1) FROM audit_logs {where_sql}");
-    let total = conn.query_row(&count_sql, params_from_iter(where_args.iter()), |row| {
+    // Count reflects the whole filtered set (cursor-independent) so page numbers stay stable.
+    let count_sql = format!("SELECT COUNT(1) FROM audit_logs {base_where}");
+    let total = conn.query_row(&count_sql, params_from_iter(base_args.iter()), |row| {
         row.get(0)
     })?;
     Ok((records, total))
@@ -2815,6 +2921,7 @@ mod tests {
             max_completion_tokens: None,
             limit: Some(20),
             offset: Some(0),
+            cursor: None,
         };
         let (threads, _) =
             query_audit_threads(&conn, &filter, AuditConsoleScope::Personal(7)).expect("threads");
@@ -2878,6 +2985,7 @@ mod tests {
             max_completion_tokens: None,
             limit: Some(20),
             offset: Some(0),
+            cursor: None,
         };
         let (threads, total) =
             query_audit_threads(&conn, &filter, AuditConsoleScope::Personal(7)).expect("threads");
@@ -2892,6 +3000,121 @@ mod tests {
         assert!((threads[0].total_cost - 0.04).abs() < 1e-9);
         assert_eq!(threads[0].error_count, 0);
         assert_eq!(threads[0].total_latency_ms, 100);
+    }
+
+    fn keyset_base_query(limit: u32) -> AuditListQuery {
+        AuditListQuery {
+            start_time: None,
+            end_time: None,
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            thread_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: Some(limit),
+            offset: None,
+            cursor: None,
+        }
+    }
+
+    #[test]
+    fn query_audit_logs_keyset_pages_without_skips_or_dupes() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
+        // r1 and r2 share created_at=1000 to exercise the request_id tiebreaker at a page boundary.
+        let rows = [
+            ("r1", 1000i64),
+            ("r2", 1000),
+            ("r3", 1001),
+            ("r4", 1002),
+            ("r5", 1003),
+            ("r6", 1004),
+            ("r7", 1005),
+        ];
+        for (rid, ts) in rows {
+            conn.execute(
+                "INSERT INTO audit_logs (request_id, user_id, team_id, status_code, created_at)
+                 VALUES (?1, 5, NULL, 200, ?2)",
+                params![rid, ts],
+            )
+            .unwrap();
+        }
+
+        let mut seen = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..10 {
+            let mut q = keyset_base_query(3);
+            q.cursor = cursor.clone();
+            let (page, total) =
+                query_audit_logs(&conn, &q, AuditConsoleScope::Personal(5)).expect("page");
+            assert_eq!(total, 7, "count must be cursor-independent");
+            if page.is_empty() {
+                break;
+            }
+            for it in &page {
+                seen.push(it.request_id.clone());
+            }
+            let last = page.last().unwrap();
+            cursor = Some(crate::audit::encode_audit_cursor(
+                last.created_at,
+                &last.request_id,
+            ));
+            if page.len() < 3 {
+                break;
+            }
+        }
+
+        // All 7 exactly once, newest-first; within created_at=1000, request_id DESC => r2 before r1.
+        assert_eq!(
+            seen,
+            vec!["r7", "r6", "r5", "r4", "r3", "r2", "r1"],
+            "keyset order/coverage wrong: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn query_audit_logs_keyset_plan_uses_index_without_sort() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
+        for i in 0..300i64 {
+            conn.execute(
+                "INSERT INTO audit_logs (request_id, user_id, team_id, status_code, created_at)
+                 VALUES (?1, 5, NULL, 200, ?2)",
+                params![format!("r{i:04}"), 1000 + i / 3],
+            )
+            .unwrap();
+        }
+        conn.execute_batch("ANALYZE").unwrap();
+        let sql = "SELECT request_id FROM audit_logs \
+             WHERE user_id = 5 AND team_id IS NULL \
+               AND (created_at, request_id) < (1050, 'r0150') \
+             ORDER BY created_at DESC, request_id DESC LIMIT 3";
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let plan: String = stmt
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        assert!(
+            plan.contains("idx_audit_logs_user_created")
+                || plan.contains("idx_audit_logs_team_created"),
+            "keyset seek not using composite index: {plan}"
+        );
+        assert!(
+            !plan.to_uppercase().contains("TEMP B-TREE"),
+            "keyset seek still sorts: {plan}"
+        );
     }
 
     #[test]
@@ -2947,6 +3170,7 @@ mod tests {
             max_completion_tokens: None,
             limit: Some(20),
             offset: Some(0),
+            cursor: None,
         };
         let (threads, total) =
             query_audit_threads(&conn, &filter, AuditConsoleScope::Personal(7)).expect("threads");
@@ -3088,6 +3312,7 @@ mod tests {
             max_completion_tokens: None,
             limit: None,
             offset: None,
+            cursor: None,
         };
 
         let resp = query_audit_analytics(&conn, &filter, AuditConsoleScope::Personal(7))
@@ -3157,6 +3382,7 @@ mod tests {
             max_completion_tokens: None,
             limit: None,
             offset: None,
+            cursor: None,
         };
 
         let resp = query_audit_analytics(&conn, &filter, AuditConsoleScope::Personal(7))
@@ -3230,6 +3456,7 @@ mod tests {
             max_completion_tokens: None,
             limit: None,
             offset: None,
+            cursor: None,
         };
 
         let personal = query_audit_analytics(&conn, &filter, AuditConsoleScope::Personal(uid))

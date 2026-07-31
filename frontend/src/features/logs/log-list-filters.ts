@@ -25,6 +25,8 @@ export type AuditLogListQueryInput = {
   endTime: number
   limit: number
   offset: number
+  /** Keyset cursor (request list only). When set, the query seeks past it and omits `offset`. */
+  cursor?: string | null
   keyword: string
   model: string
   appId: string
@@ -45,7 +47,8 @@ export function auditLogListQuery(
     start_time: input.startTime,
     end_time: input.endTime,
     limit: input.limit,
-    offset: input.offset,
+    // Cursor and offset are mutually exclusive: keyset seek vs. legacy offset paging.
+    ...(input.cursor ? { cursor: input.cursor } : { offset: input.offset }),
     ...(input.keyword.trim() ? { keyword: input.keyword.trim() } : {}),
     ...(input.model.trim() ? { model: input.model.trim() } : {}),
     ...(input.appId.trim() ? { app_id: input.appId.trim() } : {}),

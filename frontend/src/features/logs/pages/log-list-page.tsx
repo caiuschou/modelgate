@@ -68,6 +68,7 @@ import {
 } from '@/features/logs/log-list-range'
 import { useMyApiKeys } from '@/features/api-keys/hooks/use-api-keys'
 import type { ApiKeySummary } from '@/features/api-keys/types'
+import { useIsMobile } from '@/hooks/use-mobile'
 import { formatCostUsd } from '@/lib/format-cost'
 import { formatTokenCountKmb } from '@/lib/format-token-count-kmb'
 import { cn } from '@/lib/utils'
@@ -76,10 +77,15 @@ import { LogDetailContent } from '@/features/logs/pages/log-detail-page'
 
 const PAGE_SIZE = 20
 
-/** 日志详情右侧抽屉宽度（与 e2e 中断言一致） */
-const logSheetPanelStyle = {
+/** 桌面端：日志详情右侧抽屉约为视口 2/3（与 e2e 中断言一致）；窄屏全宽。 */
+const logSheetPanelStyleDesktop = {
   width: 'calc(100vw * 2 / 3)',
   maxWidth: 'calc(100vw * 2 / 3)',
+} as const
+
+const logSheetPanelStyleMobile = {
+  width: '100%',
+  maxWidth: '100%',
 } as const
 
 /** Ensures the refresh icon spins long enough to perceive on fast LAN responses. */
@@ -663,6 +669,22 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   )
 
   const [recentModelsStorageRev, setRecentModelsStorageRev] = useState(0)
+  /**
+   * v1 请求列表用 keyset/seek 翻页：cursor 栈，索引 i 为拉取「第 i+1 页」所用 cursor，
+   * `[null]` 表示第 1 页（无 cursor）。会话列表 (v2) 仍用 offset，不走此栈。
+   */
+  const [v1PageCursors, setV1PageCursors] = useState<(string | null)[]>([null])
+  const [v1PageIndex, setV1PageIndex] = useState(0)
+  /** 除 offset 外的 URL 筛选键；其变化即把 keyset 翻页重置回第 1 页。 */
+  const filtersKey = useMemo(() => {
+    const sp = new URLSearchParams(searchParamsKey)
+    sp.delete('offset')
+    return sp.toString()
+  }, [searchParamsKey])
+  useEffect(() => {
+    setV1PageCursors([null])
+    setV1PageIndex(0)
+  }, [filtersKey, listVariant])
   /** v2: 列表内展开该会话下的请求（同时只展开一行） */
   const [expandedThreadId, setExpandedThreadId] = useState<string | null>(null)
   const [detailRequestId, setDetailRequestId] = useState<string | null>(null)
@@ -673,6 +695,15 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   const [threadSheetHighlightRequestId, setThreadSheetHighlightRequestId] =
     useState<string | null>(null)
   const prevExpandedThreadIdRef = useRef<string | null>(null)
+
+  const isMobileViewport = useIsMobile()
+  const logDetailSheetPanelStyle = useMemo(
+    () =>
+      isMobileViewport
+        ? logSheetPanelStyleMobile
+        : logSheetPanelStyleDesktop,
+    [isMobileViewport],
+  )
 
   const toggleLogDetail = useCallback((requestId: string) => {
     setDetailRequestId((prev) => (prev === requestId ? null : requestId))
@@ -696,7 +727,40 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
     }
   }, [searchParamsKey, listVariant])
 
-  const listQuery = useMemo(
+  const v1Cursor = v1PageCursors[v1PageIndex] ?? null
+  /** v1 请求列表查询：keyset cursor（第 1 页 cursor 为 null，退化为 offset=0）。 */
+  const requestListQuery = useMemo(
+    () =>
+      auditLogListQuery({
+        startTime,
+        endTime,
+        limit,
+        offset: 0,
+        cursor: v1Cursor,
+        keyword,
+        model,
+        appId,
+        threadId,
+        finishReason,
+        statusCode,
+        tokenId,
+      }),
+    [
+      startTime,
+      endTime,
+      limit,
+      v1Cursor,
+      keyword,
+      model,
+      appId,
+      threadId,
+      finishReason,
+      statusCode,
+      tokenId,
+    ],
+  )
+  /** v2 会话列表查询：仍用 offset 分页（GROUP BY 聚合不走 keyset）。 */
+  const threadListQuery = useMemo(
     () =>
       auditLogListQuery({
         startTime,
@@ -758,8 +822,12 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
     enabled: listVariant === 'v2' && expandedThreadId != null,
   })
 
-  const listV1 = useAuditLogList(listQuery, { enabled: listVariant === 'v1' })
-  const listV2 = useAuditThreadList(listQuery, { enabled: listVariant === 'v2' })
+  const listV1 = useAuditLogList(requestListQuery, {
+    enabled: listVariant === 'v1',
+  })
+  const listV2 = useAuditThreadList(threadListQuery, {
+    enabled: listVariant === 'v2',
+  })
   useEffect(() => {
     if (listVariant !== 'v2') {
       setExpandedThreadId((id) => (id ? null : id))
@@ -892,6 +960,32 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
     setSearchParams(next)
   }
 
+  /** 上一页：v1 走 cursor 栈回退；v2 走 offset。 */
+  const goToPrevPage = () => {
+    if (listVariant === 'v1') {
+      setV1PageIndex((i) => Math.max(0, i - 1))
+    } else {
+      setPage(Math.max(0, offset - limit))
+    }
+  }
+
+  /** 下一页：v1 把本页 next_cursor 压栈并前进；v2 走 offset。 */
+  const goToNextPage = () => {
+    if (listVariant === 'v1') {
+      const nextCursor = listV1.data?.next_cursor
+      if (!nextCursor) return
+      setV1PageCursors((prev) => {
+        // 截断前向历史后压入本页 cursor，保证「上一页」回退一致。
+        const copy = prev.slice(0, v1PageIndex + 1)
+        copy[v1PageIndex + 1] = nextCursor
+        return copy
+      })
+      setV1PageIndex((i) => i + 1)
+    } else {
+      setPage(offset + limit)
+    }
+  }
+
   const patchTimeAndOffset = useCallback(
     (patch: { start_time?: number; end_time?: number; which: 'start' | 'end' }) => {
       const nextStart = patch.start_time ?? startTime
@@ -987,8 +1081,11 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
   }
 
   const total = data?.total ?? 0
-  const page = Math.floor(offset / limit) + 1
   const pageCount = Math.max(1, Math.ceil(total / limit))
+  const isV1List = listVariant === 'v1'
+  // v1 用 cursor 栈的位置作为页码；v2 仍用 offset 推导。
+  const page = isV1List ? v1PageIndex + 1 : Math.floor(offset / limit) + 1
+  const notFirstPage = isV1List ? v1PageIndex > 0 : offset > 0
 
   const apiKeyRows = useMemo(() => apiKeysRes?.data ?? [], [apiKeysRes?.data])
 
@@ -1470,7 +1567,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
         <EmptyState
           title="暂无日志"
           description={
-            offset > 0 && total > 0
+            notFirstPage && total > 0
               ? '当前页没有结果，可尝试上一页或调整筛选。'
               : '调整时间范围或筛选条件后再试。'
           }
@@ -1640,8 +1737,8 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
               type="button"
               variant="outline"
               size="sm"
-              disabled={offset <= 0}
-              onClick={() => setPage(Math.max(0, offset - limit))}
+              disabled={!notFirstPage}
+              onClick={goToPrevPage}
             >
               上一页
             </Button>
@@ -1649,8 +1746,8 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
               type="button"
               variant="outline"
               size="sm"
-              disabled={offset + limit >= total}
-              onClick={() => setPage(offset + limit)}
+              disabled={page >= pageCount}
+              onClick={goToNextPage}
             >
               下一页
             </Button>
@@ -1668,7 +1765,7 @@ export function LogListPage({ listVariant = 'v1' }: LogListPageProps) {
       <SheetContent
         side="right"
         className="flex h-full max-h-[100dvh] flex-col gap-0 overflow-hidden p-0"
-        style={logSheetPanelStyle}
+        style={logDetailSheetPanelStyle}
       >
         <SheetHeader className="border-border shrink-0 border-b px-4 py-3 text-left">
           <SheetTitle>日志详情</SheetTitle>

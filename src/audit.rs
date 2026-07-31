@@ -113,6 +113,27 @@ pub struct AuditListQuery {
     pub max_completion_tokens: Option<i64>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
+    /// Keyset cursor from a previous page's `next_cursor`; when present, the request list
+    /// seeks past it (`ORDER BY created_at DESC, request_id DESC`) and ignores `offset`.
+    pub cursor: Option<String>,
+}
+
+/// Opaque keyset cursor for `GET /api/v1/logs/request`: encodes the last row's
+/// `(created_at, request_id)` so the next page can seek past it. `created_at` is a plain
+/// integer, so splitting on the first `_` is unambiguous regardless of `request_id`.
+pub fn encode_audit_cursor(created_at: i64, request_id: &str) -> String {
+    format!("{created_at}_{request_id}")
+}
+
+/// Parse a cursor produced by [`encode_audit_cursor`]; returns `None` for malformed input
+/// (caller then falls back to offset paging).
+pub fn decode_audit_cursor(raw: &str) -> Option<(i64, String)> {
+    let (ts, id) = raw.split_once('_')?;
+    let ts: i64 = ts.parse().ok()?;
+    if id.is_empty() {
+        return None;
+    }
+    Some((ts, id.to_string()))
 }
 
 /// One row per `(owner scope, thread_id)` from grouped `audit_logs`, aligned with request-list filters.
@@ -185,6 +206,9 @@ pub struct AuditListResponse {
     pub total: i64,
     pub limit: u32,
     pub offset: u32,
+    /// Keyset cursor to fetch the next page (pass back as `cursor`); absent when the page is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 /// Query string for `GET /api/v1/analytics` (console session).

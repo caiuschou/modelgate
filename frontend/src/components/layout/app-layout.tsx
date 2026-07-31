@@ -1,4 +1,4 @@
-import { ChevronDown, Monitor, Moon, Sun } from 'lucide-react'
+import { ChevronDown, Monitor, Moon, MoreHorizontal, Sun } from 'lucide-react'
 import { useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ConsoleSidebar } from '@/components/layout/console-sidebar'
@@ -20,6 +20,7 @@ import { useMyTeams } from '@/features/teams/hooks/use-teams'
 import { useAuthStore } from '@/stores/auth-store'
 import { useTeamStore } from '@/stores/team-store'
 import { useUiStore } from '@/stores/ui-store'
+import type { Team } from '@/features/teams/types'
 
 const themeChoices = [
   { value: 'light' as const, label: '浅色', Icon: Sun },
@@ -38,11 +39,103 @@ function isConsoleTopNavActive(pathname: string): boolean {
 
 const topNavTabClass = (active: boolean) =>
   cn(
-    'inline-flex h-8 shrink-0 items-center rounded-md border px-3 text-sm font-medium transition-colors',
+    'inline-flex min-h-10 shrink-0 items-center rounded-md border px-2.5 text-xs font-medium transition-colors sm:h-8 sm:min-h-0 sm:px-3 sm:text-sm',
     active
       ? 'border-transparent bg-secondary text-secondary-foreground'
       : 'border-dashed border-border text-foreground hover:bg-accent',
   )
+
+function WorkspacePickerBody({
+  teams,
+  currentTeamId,
+  setTeamContext,
+  onPick,
+}: {
+  teams: Team[]
+  currentTeamId: number | null
+  setTeamContext: (id: number | null) => void
+  onPick: () => void
+}) {
+  return (
+    <div
+      role="listbox"
+      aria-label="工作空间"
+      className="flex max-h-[min(60vh,320px)] flex-col gap-0.5 overflow-y-auto"
+    >
+      <button
+        type="button"
+        role="option"
+        aria-selected={currentTeamId == null}
+        className={cn(
+          'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
+          'hover:bg-accent hover:text-accent-foreground',
+          'focus-visible:ring-2 focus-visible:ring-ring/50',
+          currentTeamId == null && 'bg-accent text-accent-foreground',
+        )}
+        onClick={() => {
+          setTeamContext(null)
+          onPick()
+        }}
+      >
+        个人空间
+      </button>
+      {teams.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="option"
+          aria-selected={currentTeamId === t.id}
+          className={cn(
+            'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
+            'hover:bg-accent hover:text-accent-foreground',
+            'focus-visible:ring-2 focus-visible:ring-ring/50',
+            currentTeamId === t.id && 'bg-accent text-accent-foreground',
+          )}
+          onClick={() => {
+            setTeamContext(t.id)
+            onPick()
+          }}
+        >
+          {t.name}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function ThemeToggleBar({
+  theme,
+  setTheme,
+}: {
+  theme: 'light' | 'dark' | 'system'
+  setTheme: (value: 'light' | 'dark' | 'system') => void
+}) {
+  return (
+    <div
+      data-slot="button-group"
+      className="flex items-center rounded-lg border border-border bg-muted/40 p-0.5"
+      role="radiogroup"
+      aria-label="主题"
+    >
+      {themeChoices.map(({ value, label, Icon }) => (
+        <Button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={theme === value}
+          variant={theme === value ? 'secondary' : 'ghost'}
+          size="icon-sm"
+          className="shrink-0"
+          title={label}
+          aria-label={label}
+          onClick={() => setTheme(value)}
+        >
+          <Icon className="size-4" aria-hidden />
+        </Button>
+      ))}
+    </div>
+  )
+}
 
 function AppShellHeader({ showSidebarTrigger }: { showSidebarTrigger: boolean }) {
   const location = useLocation()
@@ -59,6 +152,7 @@ function AppShellHeader({ showSidebarTrigger }: { showSidebarTrigger: boolean })
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [changePasswordOpen, setChangePasswordOpen] = useState(false)
   const [loginModalOpen, setLoginModalOpen] = useState(false)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
 
   const teams = teamsRes?.data ?? []
   const currentSpaceLabel =
@@ -75,18 +169,21 @@ function AppShellHeader({ showSidebarTrigger }: { showSidebarTrigger: boolean })
 
   return (
     <>
-      <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-4">
-        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+      <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between border-b border-border bg-card px-3 sm:px-4">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2 md:gap-3">
           {showSidebarTrigger ? (
             <SidebarTrigger
               aria-label="切换侧栏"
               title="切换侧栏（Ctrl+B）"
-              className="-ms-1"
+              className="-ms-1 shrink-0"
             />
           ) : null}
-          <span className="shrink-0 font-semibold">Model Gate Console</span>
+          <span className="shrink-0 font-semibold">
+            <span className="inline md:hidden">ModelGate</span>
+            <span className="hidden md:inline">Model Gate Console</span>
+          </span>
           <nav
-            className="flex min-w-0 shrink-0 items-center gap-2"
+            className="flex min-w-0 shrink-0 items-center gap-1 sm:gap-2"
             aria-label="顶层导航"
           >
             {token ? (
@@ -115,120 +212,110 @@ function AppShellHeader({ showSidebarTrigger }: { showSidebarTrigger: boolean })
             </NavLink>
           </nav>
         </div>
-        <div className="flex items-center gap-2 text-sm sm:gap-3">
-          {token ? (
-            <Popover open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
+        <div className="flex shrink-0 items-center gap-1.5 text-sm sm:gap-2 md:gap-3">
+          {/* 窄屏：工作空间与主题收入「更多」 */}
+          <div className="flex items-center md:hidden">
+            <Popover open={moreMenuOpen} onOpenChange={setMoreMenuOpen}>
               <PopoverTrigger asChild>
                 <Button
                   type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-auto max-w-[220px] gap-1.5 px-2 py-1.5 font-medium sm:max-w-[280px]"
-                  aria-label="切换工作空间"
-                  aria-expanded={workspaceOpen}
+                  variant="outline"
+                  size="icon"
+                  className="size-9 shrink-0"
+                  aria-label="更多选项（工作空间、主题）"
+                  aria-expanded={moreMenuOpen}
                 >
-                  <span className="min-w-0 flex-1 truncate text-left text-sm text-foreground">
-                    {currentSpaceLabel}
-                  </span>
-                  <ChevronDown
-                    className="size-4 shrink-0 text-muted-foreground"
-                    aria-hidden
-                  />
+                  <MoreHorizontal className="size-4" aria-hidden />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-56 p-1" sideOffset={6}>
-                <div
-                  role="listbox"
-                  aria-label="工作空间"
-                  className="flex max-h-[min(60vh,320px)] flex-col gap-0.5 overflow-y-auto"
-                >
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={currentTeamId == null}
-                    className={cn(
-                      'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
-                      'hover:bg-accent hover:text-accent-foreground',
-                      'focus-visible:ring-2 focus-visible:ring-ring/50',
-                      currentTeamId == null &&
-                        'bg-accent text-accent-foreground',
-                    )}
-                    onClick={() => {
-                      setTeamContext(null)
-                      setWorkspaceOpen(false)
-                    }}
-                  >
-                    个人空间
-                  </button>
-                  {teams.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      role="option"
-                      aria-selected={currentTeamId === t.id}
-                      className={cn(
-                        'w-full truncate rounded-md px-2 py-1.5 text-left text-sm outline-none transition-colors',
-                        'hover:bg-accent hover:text-accent-foreground',
-                        'focus-visible:ring-2 focus-visible:ring-ring/50',
-                        currentTeamId === t.id &&
-                          'bg-accent text-accent-foreground',
-                      )}
-                      onClick={() => {
-                        setTeamContext(t.id)
-                        setWorkspaceOpen(false)
-                      }}
-                    >
-                      {t.name}
-                    </button>
-                  ))}
-                </div>
+              <PopoverContent align="end" className="w-[min(100vw-2rem,18rem)] p-3" sideOffset={6}>
+                {token ? (
+                  <>
+                    <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                      工作空间
+                    </p>
+                    <WorkspacePickerBody
+                      teams={teams}
+                      currentTeamId={currentTeamId}
+                      setTeamContext={setTeamContext}
+                      onPick={() => setMoreMenuOpen(false)}
+                    />
+                    <div className="my-3 h-px bg-border" role="separator" />
+                  </>
+                ) : null}
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">
+                  主题
+                </p>
+                <ThemeToggleBar theme={theme} setTheme={setTheme} />
               </PopoverContent>
             </Popover>
-          ) : (
+          </div>
+
+          {!token ? (
             <span
-              className="max-w-[220px] truncate text-muted-foreground sm:max-w-[280px]"
+              className="max-w-[3.5rem] truncate text-xs text-muted-foreground md:hidden"
               title="登录后可切换个人空间与团队"
             >
-              访客模式
+              访客
             </span>
-          )}
+          ) : null}
+
+          <div className="hidden items-center gap-2 md:flex md:gap-3">
+            {token ? (
+              <Popover open={workspaceOpen} onOpenChange={setWorkspaceOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto max-w-[220px] gap-1.5 px-2 py-1.5 font-medium sm:max-w-[280px]"
+                    aria-label="切换工作空间"
+                    aria-expanded={workspaceOpen}
+                  >
+                    <span className="min-w-0 flex-1 truncate text-left text-sm text-foreground">
+                      {currentSpaceLabel}
+                    </span>
+                    <ChevronDown
+                      className="size-4 shrink-0 text-muted-foreground"
+                      aria-hidden
+                    />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" className="w-56 p-1" sideOffset={6}>
+                  <WorkspacePickerBody
+                    teams={teams}
+                    currentTeamId={currentTeamId}
+                    setTeamContext={setTeamContext}
+                    onPick={() => setWorkspaceOpen(false)}
+                  />
+                </PopoverContent>
+              </Popover>
+            ) : (
+              <span
+                className="max-w-[220px] truncate text-muted-foreground sm:max-w-[280px]"
+                title="登录后可切换个人空间与团队"
+              >
+                访客模式
+              </span>
+            )}
+            <ThemeToggleBar theme={theme} setTheme={setTheme} />
+          </div>
+
           {!token ? (
             <>
               <Button
                 type="button"
                 size="sm"
+                className="shrink-0"
                 onClick={() => setLoginModalOpen(true)}
               >
                 登录
               </Button>
-              <Button variant="outline" size="sm" asChild>
+              <Button variant="outline" size="sm" className="shrink-0" asChild>
                 <Link to="/register">注册</Link>
               </Button>
             </>
           ) : null}
-          <div
-            data-slot="button-group"
-            className="flex items-center rounded-lg border border-border bg-muted/40 p-0.5"
-            role="radiogroup"
-            aria-label="主题"
-          >
-            {themeChoices.map(({ value, label, Icon }) => (
-              <Button
-                key={value}
-                type="button"
-                role="radio"
-                aria-checked={theme === value}
-                variant={theme === value ? 'secondary' : 'ghost'}
-                size="icon-sm"
-                className="shrink-0"
-                title={label}
-                aria-label={label}
-                onClick={() => setTheme(value)}
-              >
-                <Icon className="size-4" aria-hidden />
-              </Button>
-            ))}
-          </div>
           {token ? (
             <Popover open={userMenuOpen} onOpenChange={setUserMenuOpen}>
               <PopoverTrigger asChild>
@@ -236,7 +323,7 @@ function AppShellHeader({ showSidebarTrigger }: { showSidebarTrigger: boolean })
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-auto max-w-[200px] gap-1.5 px-2 py-1.5 font-medium text-muted-foreground hover:text-foreground"
+                  className="h-auto max-w-[7rem] gap-1.5 px-2 py-1.5 font-medium text-muted-foreground hover:text-foreground sm:max-w-[200px]"
                   aria-label={`账号菜单：${user?.username ?? 'guest'}`}
                   aria-expanded={userMenuOpen}
                 >
@@ -328,7 +415,7 @@ export function AppLayout() {
             <AppShellHeader showSidebarTrigger />
             <div
               className={cn(
-                'mx-auto min-h-0 w-full min-w-0 flex-1 p-6 max-w-[1400px]',
+                'mx-auto min-h-0 w-full min-w-0 flex-1 px-3 py-4 sm:px-4 sm:py-5 md:p-6 max-w-[1400px]',
               )}
             >
               <Outlet />
@@ -340,7 +427,7 @@ export function AppLayout() {
           <AppShellHeader showSidebarTrigger={false} />
           <div
             className={cn(
-              'mx-auto w-full min-w-0 flex-1 p-6 max-w-[1200px]',
+              'mx-auto w-full min-w-0 flex-1 px-3 py-4 sm:px-4 sm:py-5 md:p-6 max-w-[1200px]',
             )}
           >
             <Outlet />

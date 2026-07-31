@@ -2,10 +2,12 @@ import { expect, test, type Page } from '@playwright/test'
 import {
   createChatCompletion,
   createChatCompletionStream,
+  fetchAuditLogPage,
   getGatewayApiKeyForSession,
   loginApiKey,
   waitForAuditDetailResponsePath,
   waitForAuditListRow,
+  waitForAuditLogTotalAtLeast,
   waitForAuditThreadListRow,
 } from './helpers/api'
 import { loadE2eSessionCredentials } from './load-e2e-credentials'
@@ -26,7 +28,7 @@ function unixNow(): number {
   return Math.floor(Date.now() / 1000)
 }
 
-/** 与日志列表页右侧详情 Sheet 的 `width: calc(100vw * 2 / 3)` 一致（允许少量子像素 / 边框误差）。 */
+/** 与桌面端日志详情 Sheet 的 `width: calc(100vw * 2 / 3)` 一致（允许少量子像素 / 边框误差）。窄屏为全宽，测此断言前请把 viewport 设为 ≥768px。 */
 async function expectLogDetailSheetApproxTwoThirdsViewport(page: Page) {
   const viewport = page.viewportSize()
   expect(viewport).not.toBeNull()
@@ -216,9 +218,61 @@ test('list shows audit row after chat completion and opens detail', async ({
   )
 })
 
+test('logs/request keyset pagination pages without skips or dupes', async () => {
+  const model = `e2e_keyset_${Date.now()}`
+  const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
+  const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)
+
+  // Three audit rows under one unique model → a deterministic 3-row set under `model=` filter.
+  for (let i = 0; i < 3; i++) {
+    const chat = await createChatCompletion(backendBase, gatewayKey, model)
+    expect(chat.ok, `chat ${i} failed: ${await chat.text()}`).toBeTruthy()
+  }
+
+  const end = unixNow() + 3600
+  const baseQuery = { start_time: '0', end_time: String(end), model }
+
+  // Wait until all three are flushed; this single-page fetch is the ordering source of truth.
+  const full = await waitForAuditLogTotalAtLeast(
+    backendBase,
+    session,
+    { ...baseQuery, limit: '10', offset: '0' },
+    3,
+  )
+  expect(full, 'three audit rows did not appear (flush timeout)').not.toBeNull()
+  expect(full!.total).toBe(3)
+  const fullIds = full!.data.slice(0, 3).map((r) => r.request_id)
+  expect(new Set(fullIds).size, 'full fetch has duplicate ids').toBe(3)
+
+  // Page 1: limit=2, no cursor.
+  const page1 = await fetchAuditLogPage(backendBase, session, {
+    ...baseQuery,
+    limit: '2',
+  })
+  expect(page1.total).toBe(3)
+  expect(page1.data).toHaveLength(2)
+  expect(typeof page1.next_cursor, 'page 1 missing next_cursor').toBe('string')
+  expect(page1.next_cursor).toBeTruthy()
+
+  // Page 2: follow the cursor. Count stays 3 (cursor-independent); one row remains.
+  const page2 = await fetchAuditLogPage(backendBase, session, {
+    ...baseQuery,
+    limit: '2',
+    cursor: page1.next_cursor!,
+  })
+  expect(page2.total).toBe(3)
+  expect(page2.data).toHaveLength(1)
+
+  // Keyset pages must reproduce the full ordered result exactly — no skips, no dupes, same order.
+  const pagedIds = [...page1.data, ...page2.data].map((r) => r.request_id)
+  expect(new Set(pagedIds).size, 'keyset pages overlap or skip rows').toBe(3)
+  expect(pagedIds).toEqual(fullIds)
+})
+
 test('log list detail sheet width is about two thirds of viewport', async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
   const model = `e2e_sheet_w_${Date.now()}`
   const session = await loginApiKey(consoleBase, e2eUser, e2ePass)
   const gatewayKey = await getGatewayApiKeyForSession(consoleBase, session)

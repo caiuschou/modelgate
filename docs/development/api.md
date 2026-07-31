@@ -160,6 +160,8 @@
   - `quota_monthly_spend_minor`：`null` 表示取消月度消费上限；否则为 **正整数 minor 字符串**  
   - `model_allowlist` / `ip_allowlist`：`null` 表示清除策略  
   - `default_byok_profile_id`：设为 BYOK 的 `id`；`null` 表示清除（恢复默认走 `[upstream]`）。须为**正整数**且该 profile 在当前密钥的归属范围内可用。  
+  - `session_affinity_enabled`：布尔；为 `true` 时须已有或通过同请求提供 **非空** `upstream_pool`。  
+  - `upstream_pool`：JSON 数组，元素为 `{ "kind": "platform" }` 或 `{ "kind": "byok", "byok_profile_id": <正整数> }`；**顺序**即 Round Robin 顺序；至多一条 `platform`；`null` 表示清空池中配置。  
 - **成功：** `200`，无 JSON 体  
 - **失败：** `400`（无可更新字段或校验失败）、`404`
 
@@ -253,14 +255,15 @@
 - **Body：** OpenAI Chat Completions 请求体（JSON）  
 - **行为：** 默认将请求转发至配置的 `upstream.base_url`，使用 `upstream.api_key` 访问上游。  
 - **BYOK 与默认上游：** 须配置 `byok.master_key_hex`（或 `BYOK_MASTER_KEY`）；未配置时，任何需要解密 BYOK 的路径返回 **`503`**。  
-  - **解析顺序：** **`X-MG-Use-Platform-Upstream: 1`**（或 `true` / `yes`，不区分大小写）→ **强制**使用实例 `[upstream]`，忽略 Key 默认与 `X-MG-Byok-Id`。  
+  - **解析顺序：** **`X-MG-Use-Platform-Upstream: 1`**（或 `true` / `yes`，不区分大小写）→ **强制**使用实例 `[upstream]`，忽略 Key 默认、`X-MG-Byok-Id` 与会话亲和。  
+  - 否则若该 Key 启用了 **会话上游亲和**（控制台 `session_affinity_enabled` + 非空 **`upstream_pool`**），且请求带有会话键：**优先** `X-Thread-Id`（非空），否则使用 JSON body 的 **`user`** 字符串。此时在池内 **Round Robin** 首次选路并 **落库绑定**，同一会话后续请求固定同一条上游（平台或池内 BYOK）。  
   - 否则若有 **`X-MG-Byok-Id: <正整数>`**：使用该 BYOK（须与当前网关 Key 归属一致：个人 Key → 本人个人 BYOK；团队 Key → 该团队 BYOK）。非正整数或无法解析 → **`400`**。  
   - 否则若该网关 Key 在控制台设置了 **`default_byok_profile_id`**：使用该 BYOK（同样校验归属与未吊销）。  
   - 否则：使用实例 `[upstream]`。  
 - **吊销 BYOK：** 吊销某 profile 后，服务端会将引用该 profile 的 `api_keys.default_byok_profile_id` 清空。  
 - **流式：** 支持 `stream: true`（SSE 透传）  
 - **预付费：** 若启用 `[billing].enabled`，见 **3.4**（余额不足 **`402`**；扣费与上游 `cost` / `cost_details` 对齐）。  
-- **可选请求头：** `X-App-Id` — 写入审计日志的 `app_id`；`X-Thread-Id` — 写入审计日志的 `thread_id`（会话/线程标识）  
+- **可选请求头：** `X-App-Id` — 写入审计日志的 `app_id`；`X-Thread-Id` — 写入审计日志的 `thread_id`（会话/线程标识）；在启用会话亲和时亦为 **会话键**（与 body `user` 二选一，优先头）。  
 - **审计 `metadata`：** 含 `is_byok`（bool）、可选 `byok_profile_id`（int），以及原有 `stream` 等字段。  
 - **可选环境变量（转发到上游）：** `OPENAI_ORGANIZATION`、`OPENAI_PROJECT`
 

@@ -8,7 +8,7 @@ import {
   usePatchMyApiKey,
   useRevokeMyApiKey,
 } from '@/features/api-keys/hooks/use-api-keys'
-import type { ApiKeySummary } from '@/features/api-keys/types'
+import type { ApiKeySummary, UpstreamPoolEntry } from '@/features/api-keys/types'
 import { useMyByokProfiles } from '@/features/byok/hooks/use-byok-profiles'
 
 function formatTime(ts: number): string {
@@ -246,6 +246,173 @@ function ApiKeyPoliciesEditor({
         onClick={() => void handleSavePolicies()}
       >
         保存策略
+      </Button>
+    </Card>
+  )
+}
+
+function poolRowsFromServer(data: ApiKeySummary): UpstreamPoolEntry[] {
+  const p = data.upstream_pool
+  if (p != null && p.length > 0) {
+    return p
+  }
+  return [{ kind: 'platform' }]
+}
+
+function ApiKeySessionAffinitySection({
+  data,
+  patchMutation,
+}: {
+  data: ApiKeySummary
+  patchMutation: ReturnType<typeof usePatchMyApiKey>
+}) {
+  const { data: byokRes, isLoading, isError } = useMyByokProfiles()
+  const activeProfiles = (byokRes?.data ?? []).filter((p) => !p.revoked)
+  const [enabled, setEnabled] = useState(
+    () => data.session_affinity_enabled ?? false,
+  )
+  const [rows, setRows] = useState<UpstreamPoolEntry[]>(() =>
+    poolRowsFromServer(data),
+  )
+
+  const handleSave = async () => {
+    if (enabled && rows.length === 0) {
+      window.alert('启用会话亲和时，上游池至少需一项')
+      return
+    }
+    let platformRows = 0
+    const seenByok = new Set<number>()
+    for (const r of rows) {
+      if (r.kind === 'platform') {
+        platformRows += 1
+      } else {
+        if (seenByok.has(r.byok_profile_id)) {
+          window.alert('上游池中 BYOK 不可重复')
+          return
+        }
+        seenByok.add(r.byok_profile_id)
+      }
+    }
+    if (platformRows > 1) {
+      window.alert('上游池最多包含一条平台（ModelGate）线路')
+      return
+    }
+    try {
+      await patchMutation.mutateAsync({
+        id: data.id,
+        body: {
+          session_affinity_enabled: enabled,
+          upstream_pool: rows,
+        },
+      })
+    } catch {
+      /* ky throws */
+    }
+  }
+
+  const setRowKind = (index: number, raw: string) => {
+    setRows((prev) => {
+      const next = [...prev]
+      if (raw === 'platform') {
+        next[index] = { kind: 'platform' }
+      } else {
+        const pid = Number.parseInt(raw, 10)
+        if (!Number.isNaN(pid)) {
+          next[index] = { kind: 'byok', byok_profile_id: pid }
+        }
+      }
+      return next
+    })
+  }
+
+  const rowValue = (r: UpstreamPoolEntry): string => {
+    if (r.kind === 'platform') return 'platform'
+    return String(r.byok_profile_id)
+  }
+
+  return (
+    <Card className="space-y-4 p-4">
+      <h2 className="text-sm font-medium">会话上游（亲和）</h2>
+      <p className="text-xs text-muted-foreground">
+        开启后，同一 <code className="text-xs">X-Thread-Id</code>（或请求体{' '}
+        <code className="text-xs">user</code>）的会话固定到一条上游；新会话按下列顺序轮流分配（Round
+        Robin）并写入绑定。未传会话键时仍走上方「默认 Chat 上游」。
+      </p>
+      <label className="flex cursor-pointer items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="rounded border border-border"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+          aria-label="启用会话亲和"
+        />
+        启用会话亲和与上游池
+      </label>
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">上游池顺序（由上到下即 RR 顺序）</p>
+        {rows.map((r, i) => (
+          <div key={`row-${i}`} className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">#{i + 1}</span>
+            <select
+              className="min-w-[200px] flex-1 rounded border border-border bg-background px-2 py-2 text-sm"
+              value={rowValue(r)}
+              onChange={(e) => setRowKind(i, e.target.value)}
+              disabled={isLoading}
+              aria-label={`上游池第 ${i + 1} 项`}
+            >
+              <option value="platform">ModelGate（[upstream]）</option>
+              {activeProfiles.map((p) => (
+                <option key={p.id} value={String(p.id)}>
+                  BYOK「{p.name}」(#{p.id})
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={rows.length <= 1}
+              onClick={() => setRows((prev) => prev.filter((_, j) => j !== i))}
+            >
+              移除
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            setRows((prev) => {
+              const hasPlat = prev.some((x) => x.kind === 'platform')
+              if (!hasPlat) {
+                return [...prev, { kind: 'platform' }]
+              }
+              const fp = activeProfiles[0]?.id
+              if (fp == null) {
+                window.alert(
+                  '已有一条平台线路；请先在当前空间创建 BYOK 后再添加第二项。',
+                )
+                return prev
+              }
+              return [...prev, { kind: 'byok', byok_profile_id: fp }]
+            })
+          }}
+        >
+          添加上游
+        </Button>
+      </div>
+      {isError ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          无法加载 BYOK 列表；仍可配置平台线路。
+        </p>
+      ) : null}
+      <Button
+        size="sm"
+        disabled={patchMutation.isPending || isLoading}
+        onClick={() => void handleSave()}
+      >
+        保存会话上游
       </Button>
     </Card>
   )
@@ -511,6 +678,11 @@ export function ApiKeyDetailPage() {
         <>
           <ApiKeyDefaultUpstreamSection
             key={`def-up-${data.id}-${data.default_byok_profile_id ?? 'platform'}`}
+            data={data}
+            patchMutation={patchMutation}
+          />
+          <ApiKeySessionAffinitySection
+            key={`sess-${data.id}-${data.session_affinity_enabled ? '1' : '0'}-${JSON.stringify(data.upstream_pool ?? [])}`}
             data={data}
             patchMutation={patchMutation}
           />
