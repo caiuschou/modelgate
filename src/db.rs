@@ -6,7 +6,7 @@ use tracing::debug;
 
 use crate::audit::{AuditListItem, AuditListQuery, AuditRecord, AuditThreadListItem};
 
-const MIGRATIONS: [(&str, &str); 23] = [
+const MIGRATIONS: [(&str, &str); 25] = [
     (
         "0001_create_users.sql",
         include_str!("../migrations/0001_create_users.sql"),
@@ -98,6 +98,14 @@ const MIGRATIONS: [(&str, &str); 23] = [
     (
         "0023_audit_logs_keyset_tiebreaker.sql",
         include_str!("../migrations/0023_audit_logs_keyset_tiebreaker.sql"),
+    ),
+    (
+        "0024_audit_logs_visible_partial_indexes.sql",
+        include_str!("../migrations/0024_audit_logs_visible_partial_indexes.sql"),
+    ),
+    (
+        "0025_audit_threads_aggregates.sql",
+        include_str!("../migrations/0025_audit_threads_aggregates.sql"),
     ),
 ];
 
@@ -1423,6 +1431,65 @@ fn touch_audit_thread(
     Ok(())
 }
 
+/// Adds one finalized request's numbers to its `audit_threads` summary row (see migration 0025).
+///
+/// Called at the same three points as the hourly rollups — insert of an already-final row,
+/// stream completion, rejection — so each request is aggregated exactly once. The upsert arm
+/// only fires in the edge case where the accept-phase row carried no thread id (the row then
+/// never went through [`touch_audit_thread`]); it seeds the summary instead of dropping data.
+#[allow(clippy::too_many_arguments)]
+fn apply_audit_thread_rollup(
+    conn: &Connection,
+    user_id: Option<i64>,
+    team_id: Option<i64>,
+    thread_id: Option<&str>,
+    created_at: i64,
+    status_code: Option<i64>,
+    prompt_tokens: Option<i64>,
+    completion_tokens: Option<i64>,
+    cached_prompt_tokens: Option<i64>,
+    total_tokens: Option<i64>,
+    cost: Option<f64>,
+    latency_ms: Option<i64>,
+) -> rusqlite::Result<()> {
+    let Some(uid) = user_id else {
+        return Ok(());
+    };
+    let Some(tid) = thread_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(());
+    };
+    let error_inc = i64::from(status_code.is_some_and(|sc| sc >= 400));
+    conn.execute(
+        "INSERT INTO audit_threads (
+            user_id, team_scope, thread_id, first_seen_at, last_seen_at, request_count,
+            total_prompt_tokens, total_completion_tokens, total_tokens,
+            total_cached_prompt_tokens, total_cost, error_count, total_latency_ms
+        ) VALUES (?1, ?2, ?3, ?4, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(user_id, team_scope, thread_id) DO UPDATE SET
+            total_prompt_tokens = audit_threads.total_prompt_tokens + excluded.total_prompt_tokens,
+            total_completion_tokens = audit_threads.total_completion_tokens + excluded.total_completion_tokens,
+            total_tokens = audit_threads.total_tokens + excluded.total_tokens,
+            total_cached_prompt_tokens = audit_threads.total_cached_prompt_tokens + excluded.total_cached_prompt_tokens,
+            total_cost = audit_threads.total_cost + excluded.total_cost,
+            error_count = audit_threads.error_count + excluded.error_count,
+            total_latency_ms = audit_threads.total_latency_ms + excluded.total_latency_ms",
+        params![
+            uid,
+            team_id.unwrap_or(0),
+            tid,
+            created_at,
+            prompt_tokens.unwrap_or(0),
+            completion_tokens.unwrap_or(0),
+            total_tokens.unwrap_or(0),
+            cached_prompt_tokens.unwrap_or(0),
+            cost.unwrap_or(0.0),
+            error_inc,
+            latency_ms.unwrap_or(0),
+        ],
+    )?;
+    Ok(())
+}
+
 pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusqlite::Result<()> {
     if records.is_empty() {
         return Ok(());
@@ -1489,6 +1556,26 @@ pub fn insert_audit_logs(conn: &mut Connection, records: &[AuditRecord]) -> rusq
             if let Err(e) = apply_audit_hourly_rollup_from_record(&tx, record) {
                 tracing::error!(error = %e, request_id = %record.request_id, "audit_hourly_rollup insert failed");
             }
+            // Same skip rule as the hourly rollup: accept-phase / streaming rows are
+            // aggregated later, when they are finalized (completion or rejection).
+            if !audit_record_skip_rollup_on_insert(record) {
+                if let Err(e) = apply_audit_thread_rollup(
+                    &tx,
+                    record.user_id,
+                    record.team_id,
+                    record.thread_id.as_deref(),
+                    record.created_at,
+                    record.status_code,
+                    record.prompt_tokens,
+                    record.completion_tokens,
+                    record.cached_prompt_tokens,
+                    record.total_tokens,
+                    record.cost,
+                    record.latency_ms,
+                ) {
+                    tracing::error!(error = %e, request_id = %record.request_id, "audit_thread_rollup insert failed");
+                }
+            }
         }
     }
     tx.commit()
@@ -1530,7 +1617,7 @@ pub fn update_audit_log_stream_completion(
     )?;
     if rows > 0 {
         let snapshot = conn.query_row(
-            "SELECT user_id, team_id, created_at, status_code, prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms
+            "SELECT user_id, team_id, created_at, status_code, prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms, thread_id
              FROM audit_logs WHERE request_id = ?1",
             params![update.request_id],
             |row| {
@@ -1545,10 +1632,11 @@ pub fn update_audit_log_stream_completion(
                     row.get::<_, Option<i64>>(7)?,
                     row.get::<_, Option<f64>>(8)?,
                     row.get::<_, Option<i64>>(9)?,
+                    row.get::<_, Option<String>>(10)?,
                 ))
             },
         );
-        if let Ok((uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat)) = snapshot {
+        if let Ok((uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat, thread)) = snapshot {
             if let Err(e) = apply_audit_hourly_rollup_from_audit_row(
                 conn, uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat,
             ) {
@@ -1556,6 +1644,26 @@ pub fn update_audit_log_stream_completion(
                     error = %e,
                     request_id = %update.request_id,
                     "audit_hourly_rollup stream completion failed"
+                );
+            }
+            if let Err(e) = apply_audit_thread_rollup(
+                conn,
+                uid,
+                tid,
+                thread.as_deref(),
+                created_at,
+                sc,
+                pt,
+                ct,
+                cpt,
+                tt,
+                cost,
+                lat,
+            ) {
+                tracing::error!(
+                    error = %e,
+                    request_id = %update.request_id,
+                    "audit_thread_rollup stream completion failed"
                 );
             }
         }
@@ -1590,7 +1698,7 @@ pub fn update_audit_log_rejected(
         return Ok(());
     }
     let snapshot = conn.query_row(
-        "SELECT user_id, team_id, created_at, status_code, prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms
+        "SELECT user_id, team_id, created_at, status_code, prompt_tokens, completion_tokens, cached_prompt_tokens, total_tokens, cost, latency_ms, thread_id
          FROM audit_logs WHERE request_id = ?1",
         params![request_id],
         |row| {
@@ -1605,10 +1713,11 @@ pub fn update_audit_log_rejected(
                 row.get::<_, Option<i64>>(7)?,
                 row.get::<_, Option<f64>>(8)?,
                 row.get::<_, Option<i64>>(9)?,
+                row.get::<_, Option<String>>(10)?,
             ))
         },
     );
-    if let Ok((uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat)) = snapshot {
+    if let Ok((uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat, thread)) = snapshot {
         if let Err(e) = apply_audit_hourly_rollup_from_audit_row(
             conn, uid, tid, created_at, sc, pt, ct, cpt, tt, cost, lat,
         ) {
@@ -1616,6 +1725,26 @@ pub fn update_audit_log_rejected(
                 error = %e,
                 %request_id,
                 "audit_hourly_rollup rejected update failed"
+            );
+        }
+        if let Err(e) = apply_audit_thread_rollup(
+            conn,
+            uid,
+            tid,
+            thread.as_deref(),
+            created_at,
+            sc,
+            pt,
+            ct,
+            cpt,
+            tt,
+            cost,
+            lat,
+        ) {
+            tracing::error!(
+                error = %e,
+                %request_id,
+                "audit_thread_rollup rejected update failed"
             );
         }
     }
@@ -1640,8 +1769,10 @@ pub fn query_audit_logs(
     // Keyset/seek pagination: when a cursor is supplied, seek strictly past the last row of the
     // previous page under `ORDER BY created_at DESC, request_id DESC` instead of scanning + discarding
     // `offset` rows. request_id (the PK) is the tiebreaker so rows sharing a created_at second are never
-    // skipped or duplicated. Composite index `(scope, created_at DESC, request_id DESC)` serves both the
-    // seek predicate and the ordering with no sort (see migration 0023).
+    // skipped or duplicated. Partial composite index `(scope, created_at DESC, request_id DESC) WHERE
+    // <accept-phase guard>` serves the seek predicate, the ordering, and the guard with no sort and no
+    // row lookups (see migration 0024); it also makes the COUNT below an index-only scan. This works
+    // only because audit_log_where_parts() always emits the guard verbatim — keep the two in sync.
     let cursor = query
         .cursor
         .as_deref()
@@ -1964,12 +2095,91 @@ fn build_audit_where_clause(
     (where_sql, args)
 }
 
+/// True when the session list can be served from the `audit_threads` summary table:
+/// no time bounds and no per-request filters, i.e. the aggregates maintained by
+/// [`apply_audit_thread_rollup`] describe exactly the rows the GROUP BY path would visit.
+fn audit_threads_summary_eligible(query: &AuditListQuery) -> bool {
+    query.start_time.is_none() && query.end_time.is_none() && audit_analytics_rollup_eligible(query)
+}
+
+/// Fast path for the session-center default view: one pre-aggregated row per thread,
+/// ordered by recency. O(page) instead of GROUP BY over every audit row in scope.
+fn query_audit_threads_from_summary(
+    conn: &Connection,
+    query: &AuditListQuery,
+    scope: AuditConsoleScope,
+) -> rusqlite::Result<(Vec<AuditThreadListItem>, i64)> {
+    let (scope_sql, scope_args): (&str, Vec<Value>) = match scope {
+        AuditConsoleScope::Personal(uid) => {
+            ("user_id = ? AND team_scope = 0", vec![Value::Integer(uid)])
+        }
+        AuditConsoleScope::Team(tid) => ("team_scope = ?", vec![Value::Integer(tid)]),
+        AuditConsoleScope::UserOwnedTraffic(uid) => ("user_id = ?", vec![Value::Integer(uid)]),
+    };
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let offset = query.offset.unwrap_or(0);
+
+    let count_sql = format!("SELECT COUNT(*) FROM audit_threads WHERE {scope_sql}");
+    let total: i64 = conn.query_row(&count_sql, params_from_iter(scope_args.iter()), |row| {
+        row.get(0)
+    })?;
+
+    let list_sql = format!(
+        "SELECT thread_id, user_id, team_scope, first_seen_at, last_seen_at, request_count, \
+            total_prompt_tokens, total_completion_tokens, total_tokens, \
+            total_cached_prompt_tokens, total_cost, error_count, total_latency_ms, \
+            last_prompt_preview, last_prompt_at \
+         FROM audit_threads \
+         WHERE {scope_sql} \
+         ORDER BY last_seen_at DESC, thread_id DESC \
+         LIMIT ? OFFSET ?"
+    );
+    let mut list_args = scope_args;
+    list_args.push(Value::Integer(limit as i64));
+    list_args.push(Value::Integer(offset as i64));
+
+    let mut stmt = conn.prepare(&list_sql)?;
+    let rows = stmt.query_map(params_from_iter(list_args.iter()), |row| {
+        let team_scope: i64 = row.get(2)?;
+        Ok(AuditThreadListItem {
+            thread_id: row.get(0)?,
+            user_id: row.get(1)?,
+            team_id: if team_scope == 0 {
+                None
+            } else {
+                Some(team_scope)
+            },
+            first_seen_at: row.get(3)?,
+            last_seen_at: row.get(4)?,
+            request_count: row.get(5)?,
+            total_prompt_tokens: row.get(6)?,
+            total_completion_tokens: row.get(7)?,
+            total_tokens: row.get(8)?,
+            total_cached_prompt_tokens: row.get(9)?,
+            total_cost: row.get(10)?,
+            error_count: row.get(11)?,
+            total_latency_ms: row.get(12)?,
+            last_prompt_preview: row.get(13)?,
+            last_prompt_at: row.get(14)?,
+        })
+    })?;
+
+    let mut records = Vec::new();
+    for r in rows {
+        records.push(r?);
+    }
+    Ok((records, total))
+}
+
 /// Session/thread summary rows: one row per non-empty `thread_id` group from `audit_logs` under the same filters as [`query_audit_logs`].
 pub fn query_audit_threads(
     conn: &Connection,
     query: &AuditListQuery,
     scope: AuditConsoleScope,
 ) -> rusqlite::Result<(Vec<AuditThreadListItem>, i64)> {
+    if audit_threads_summary_eligible(query) {
+        return query_audit_threads_from_summary(conn, query, scope);
+    }
     let (mut inner_parts, inner_args) = audit_log_where_parts(query, scope, "al", true);
     debug_assert!(
         !inner_parts.is_empty(),
@@ -3002,6 +3212,172 @@ mod tests {
         assert_eq!(threads[0].total_latency_ms, 100);
     }
 
+    /// The no-filter fast path (audit_threads summary) must agree with the GROUP BY
+    /// path across all three aggregate write points: final insert, stream completion,
+    /// and accept-phase rejection.
+    #[test]
+    fn query_audit_threads_summary_matches_group_by() {
+        use crate::audit::{AuditListQuery, AuditRecord, AuditStreamCompletionUpdate};
+
+        let mut conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        let t0 = 20_000_000_i64;
+        let base = |rid: &str, ts: i64, thread: &str| AuditRecord {
+            request_id: rid.into(),
+            user_id: Some(7),
+            token_id: Some(1),
+            channel_id: None,
+            model: Some("m-a".into()),
+            request_type: Some("chat".into()),
+            request_body_path: None,
+            response_body_path: None,
+            status_code: Some(200),
+            error_message: None,
+            prompt_tokens: Some(100),
+            completion_tokens: Some(10),
+            cached_prompt_tokens: Some(40),
+            total_tokens: Some(110),
+            cost: Some(0.5),
+            latency_ms: Some(800),
+            reasoning_phase_ms: None,
+            app_id: None,
+            thread_id: Some(thread.into()),
+            finish_reason: Some("stop".into()),
+            metadata: Some(serde_json::json!({})),
+            created_at: ts,
+            team_id: None,
+            prompt_preview: Some("hello".into()),
+        };
+
+        // Thread A: a success, an HTTP 500, and a streaming request finalized later.
+        let ok = base("q_ok", t0, "th-a");
+        let mut err = base("q_err", t0 + 1, "th-a");
+        err.status_code = Some(500);
+        let mut stream = base("q_stream", t0 + 2, "th-a");
+        stream.status_code = None;
+        stream.prompt_tokens = None;
+        stream.completion_tokens = None;
+        stream.cached_prompt_tokens = None;
+        stream.total_tokens = None;
+        stream.cost = None;
+        stream.latency_ms = None;
+        stream.metadata = Some(serde_json::json!({"stream": true}));
+        // Thread B: an accept-phase row rejected before reaching the upstream.
+        let mut accept = base("q_rejected", t0 + 3, "th-b");
+        accept.status_code = None;
+        accept.prompt_tokens = None;
+        accept.completion_tokens = None;
+        accept.cached_prompt_tokens = None;
+        accept.total_tokens = None;
+        accept.cost = None;
+        accept.latency_ms = None;
+        accept.metadata = Some(serde_json::json!({"accept_phase": true}));
+        insert_audit_logs(&mut conn, &[ok, err, stream, accept]).expect("insert audit");
+
+        update_audit_log_stream_completion(
+            &mut conn,
+            &AuditStreamCompletionUpdate {
+                request_id: "q_stream".into(),
+                response_body_path: "20200101/q_stream-response.json".into(),
+                prompt_tokens: Some(7),
+                completion_tokens: Some(3),
+                cached_prompt_tokens: Some(2),
+                total_tokens: Some(10),
+                cost: Some(0.25),
+                finish_reason: Some("stop".into()),
+                latency_ms: 1200,
+                reasoning_phase_ms: None,
+                metadata: serde_json::json!({"stream": true, "stream_completed": true}),
+                error_message: None,
+            },
+        )
+        .expect("stream completion");
+        update_audit_log_rejected(&mut conn, "q_rejected", 429, "quota exceeded", 5)
+            .expect("rejected update");
+
+        let query = |start: Option<i64>| AuditListQuery {
+            start_time: start,
+            end_time: start.map(|_| t0 + 10_000),
+            user_id: None,
+            token_id: None,
+            channel_id: None,
+            model: None,
+            status_code: None,
+            keyword: None,
+            app_id: None,
+            thread_id: None,
+            finish_reason: None,
+            min_prompt_tokens: None,
+            max_prompt_tokens: None,
+            min_completion_tokens: None,
+            max_completion_tokens: None,
+            limit: Some(20),
+            offset: Some(0),
+            cursor: None,
+        };
+        let scope = AuditConsoleScope::Personal(7);
+        // No filters -> summary fast path; wide time range -> GROUP BY path.
+        let (fast, fast_total) = query_audit_threads(&conn, &query(None), scope).expect("fast");
+        let (slow, slow_total) =
+            query_audit_threads(&conn, &query(Some(t0 - 10)), scope).expect("slow");
+
+        assert_eq!(fast_total, slow_total);
+        assert_eq!(fast.len(), slow.len());
+        for (f, s) in fast.iter().zip(slow.iter()) {
+            assert_eq!(f.thread_id, s.thread_id);
+            assert_eq!(f.user_id, s.user_id);
+            assert_eq!(f.team_id, s.team_id);
+            assert_eq!(f.first_seen_at, s.first_seen_at, "{}", f.thread_id);
+            assert_eq!(f.last_seen_at, s.last_seen_at, "{}", f.thread_id);
+            assert_eq!(f.request_count, s.request_count, "{}", f.thread_id);
+            assert_eq!(
+                f.total_prompt_tokens, s.total_prompt_tokens,
+                "{}",
+                f.thread_id
+            );
+            assert_eq!(
+                f.total_completion_tokens, s.total_completion_tokens,
+                "{}",
+                f.thread_id
+            );
+            assert_eq!(f.total_tokens, s.total_tokens, "{}", f.thread_id);
+            assert_eq!(
+                f.total_cached_prompt_tokens, s.total_cached_prompt_tokens,
+                "{}",
+                f.thread_id
+            );
+            assert!(
+                (f.total_cost - s.total_cost).abs() < 1e-9,
+                "{}",
+                f.thread_id
+            );
+            assert_eq!(f.error_count, s.error_count, "{}", f.thread_id);
+            assert_eq!(f.total_latency_ms, s.total_latency_ms, "{}", f.thread_id);
+            assert_eq!(
+                f.last_prompt_preview, s.last_prompt_preview,
+                "{}",
+                f.thread_id
+            );
+            assert_eq!(f.last_prompt_at, s.last_prompt_at, "{}", f.thread_id);
+        }
+
+        // Spot-check the summary numbers themselves (th-b sorts first: last_seen t0+3).
+        assert_eq!(fast[0].thread_id, "th-b");
+        assert_eq!(fast[0].request_count, 1);
+        assert_eq!(fast[0].error_count, 1);
+        assert_eq!(fast[0].total_latency_ms, 5);
+        // th-a = q_ok(100/10) + q_err(100/10) + q_stream completion (7/3).
+        assert_eq!(fast[1].thread_id, "th-a");
+        assert_eq!(fast[1].request_count, 3);
+        assert_eq!(fast[1].error_count, 1);
+        assert_eq!(fast[1].total_prompt_tokens, 207);
+        assert_eq!(fast[1].total_completion_tokens, 23);
+        assert_eq!(fast[1].total_tokens, 230);
+        assert_eq!(fast[1].total_cached_prompt_tokens, 82);
+        assert!((fast[1].total_cost - 1.25).abs() < 1e-9);
+        assert_eq!(fast[1].total_latency_ms, 800 + 800 + 1200);
+    }
+
     fn keyset_base_query(limit: u32) -> AuditListQuery {
         AuditListQuery {
             start_time: None,
@@ -3095,9 +3471,12 @@ mod tests {
             .unwrap();
         }
         conn.execute_batch("ANALYZE").unwrap();
+        // Includes the accept-phase guard exactly as audit_log_where_parts() emits it — the
+        // 0024 indexes are partial on that predicate and unusable without it.
         let sql = "SELECT request_id FROM audit_logs \
              WHERE user_id = 5 AND team_id IS NULL \
                AND (created_at, request_id) < (1050, 'r0150') \
+               AND NOT (status_code IS NULL AND COALESCE(json_extract(metadata, '$.accept_phase'), 0) = 1) \
              ORDER BY created_at DESC, request_id DESC LIMIT 3";
         let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
         let plan: String = stmt
@@ -3114,6 +3493,47 @@ mod tests {
         assert!(
             !plan.to_uppercase().contains("TEMP B-TREE"),
             "keyset seek still sorts: {plan}"
+        );
+    }
+
+    #[test]
+    fn query_audit_logs_count_uses_partial_index() {
+        let conn = Connection::open_in_memory().expect("open db");
+        run_migrations(&conn).expect("migration");
+        conn.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
+        // Mixed owners so ANALYZE sees the (user_id, team_id) prefix as selective; with a single
+        // owner the planner prefers a full scan and the assertion would be vacuous.
+        for i in 0..3000i64 {
+            let uid = if i % 10 == 0 { 5 } else { 100 + (i % 50) };
+            conn.execute(
+                "INSERT INTO audit_logs (request_id, user_id, team_id, status_code, created_at)
+                 VALUES (?1, ?2, NULL, 200, ?3)",
+                params![format!("r{i:05}"), uid, 1000 + i],
+            )
+            .unwrap();
+        }
+        conn.execute_batch("ANALYZE").unwrap();
+        // The exact count SQL query_audit_logs runs for Personal scope. The guard term must match
+        // the 0024 partial-index predicate verbatim or the index becomes unusable; SQLite then
+        // answers from the index without fetching rows for metadata (it never prints COVERING for
+        // partial indexes, but the full EXPLAIN contains no table-column reads).
+        let sql = "SELECT COUNT(1) FROM audit_logs \
+             WHERE user_id = 5 AND team_id IS NULL \
+               AND NOT (status_code IS NULL AND COALESCE(json_extract(metadata, '$.accept_phase'), 0) = 1)";
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        let plan: String = stmt
+            .query_map([], |r| r.get::<_, String>(3))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        // Any of the three 0024 partial indexes proves the guard text still matches the index
+        // predicate; which one the planner picks depends on synthetic-data statistics.
+        assert!(
+            plan.contains("INDEX idx_audit_logs_user_created")
+                || plan.contains("INDEX idx_audit_logs_token_created")
+                || plan.contains("INDEX idx_audit_logs_team_created"),
+            "count not using a 0024 partial index: {plan}"
         );
     }
 
