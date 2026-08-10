@@ -32,7 +32,7 @@ export function AuditLogTimestamp({
           {human}
         </time>
       </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-sm">
+      <TooltipContent side="top" surface="panel" className="max-w-sm">
         <p className="text-[11px] text-muted-foreground">原始时间</p>
         <p className="font-mono text-xs">{raw}</p>
       </TooltipContent>

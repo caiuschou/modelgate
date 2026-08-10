@@ -216,6 +216,7 @@ export function LogListUsageTooltipCell({
       <TooltipContent
         side="left"
         align="center"
+        surface="panel"
         className="w-[min(100vw-2rem,26rem)] max-w-none overflow-visible p-3 text-xs"
       >
         <p className="mb-2 font-medium leading-snug">用量与计费</p>

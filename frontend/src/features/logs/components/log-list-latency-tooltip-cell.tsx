@@ -43,7 +43,7 @@ export function LogListLatencyTooltipCell({
           {children}
         </span>
       </TooltipTrigger>
-      <TooltipContent side="left" className="max-w-xs text-xs">
+      <TooltipContent side="left" surface="panel" className="max-w-xs text-xs">
         <div className="flex flex-col gap-1.5">
           <RowLine label="总耗时（端到端）" value={total} />
           {hasReasoning ? (
